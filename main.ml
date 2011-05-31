@@ -114,7 +114,7 @@ let () = Lwt_main.run (main ())
 module Tcp =
 struct
   type socket = {fd : Lwt_unix.file_descr;
-		 pid : tcp_msg pid;
+		 pid : msg pid;
 		 mutable writer : unit Lwt.u option;
 		 mutable buffer : Buffer.t;
 		 mutable buffer_limit : int;
@@ -122,7 +122,7 @@ struct
 		 mutable timeout : float;
 		}
 
-  and tcp_msg =
+  and msg =
       [ `Tcp_data of socket * string
       | `Tcp_close of socket ]
 
@@ -170,7 +170,7 @@ struct
   let of_fd fd pid =
     let socket =
       {fd;
-       pid = (pid :> tcp_msg pid);
+       pid = (pid :> msg pid);
        writer = None;
        buffer = Buffer.create 100;
        buffer_limit = -1;
@@ -250,68 +250,177 @@ struct
 	    Lwt.fail exn
     )
 
+end
 
-  (*let send' socket data =
-    let rec write socket str pos len =
-      lwt n = Lwt_unix.write socket.fd str pos len in
-        if len = n
-	then Lwt.return ()
-	else write socket str (pos + n) (len - n)
+module XMLReceiver =
+struct
+  type msg =
+      [ `XmlStreamStart of Xml.name * Xml.attribute list
+      | `XmlStreamElement of Xml.element
+      | `XmlStreamEnd of Xml.name
+      | `XmlStreamError of string
+      ]
+
+  type t = {pid : msg pid;
+	    xml_parser : Xml.t}
+
+  let create pid =
+    let pid = (pid :> msg pid) in
+    let element_callback el =
+      pid $! `XmlStreamElement el
     in
-    let len = String.length data in
-      socket.writer <-
-	socket.writer >> write socket data 0 len;
-      socket.writer
+    let start_callback name attrs =
+      pid $! `XmlStreamStart (name, attrs)
+    in
+    let end_callback name =
+      pid $! `XmlStreamEnd name
+    in
+    let xml_parser =
+      Xml.create_parser
+	~depth:1
+	~element_callback
+	~start_callback
+	~end_callback
+	()
+    in
+      {pid;
+       xml_parser}
 
-  let send socket data =
-    if socket.timeout <= 0.0
-    then send' socket data
-    else Lwt_unix.with_timeout socket.timeout (fun () -> send' socket data)
+  let parse st data =
+    try
+      Xml.parse st.xml_parser data false
+    with
+      | Expat.Parse_error error ->
+	  st.pid $! `XmlStreamError error
+end
 
-  let send_async socket data =
-    if socket.buffer_limit >= 0 && socket.buffer_limit < socket.buffered
-    then (socket.pid $! `Tcp_close socket;
-    ignore (
-      try_lwt
-	send socket data
-      with
-	| Lwt_unix.Timeout as exn ->
-	    socket.pid $! `Tcp_close socket;
-	    Lwt.fail exn
-    )
-  *)
 
+module GenServer =
+struct
+  type msg = [ `System ]
+  type 'a result =
+      [ `Continue of 'a
+      | `Stop of 'a
+      ] Lwt.t
+
+  module type Type =
+  sig
+    type msg
+    type state
+    type init_data
+    val init : init_data -> msg pid -> state
+    val handle : msg -> state -> state result
+    val terminate : state -> unit
+  end
+
+  module type S =
+  sig
+    type msg
+    type init_data
+    val start : init_data -> msg pid
+  end
+
+  module Make (T : Type with type msg = private [> msg]) :
+  sig
+    type msg = [ `System ]
+    type init_data = T.init_data
+    val start : init_data -> T.msg pid
+  end =
+  struct
+    type msg = [ `System ]
+    type init_data = T.init_data
+    let start init_data =
+      let rec loop self state =
+	lwt msg = receive self in
+          match msg with
+	    | #msg ->
+		loop self state
+	    | m ->
+		lwt result = T.handle m state in
+		  match result with
+		    | `Continue state ->
+			loop self state
+		    | `Stop state ->
+			T.terminate state;
+			Lwt.return ()
+      in
+        spawn (fun self ->
+		 let state = T.init init_data self in
+		   loop self state)
+  end
+
+(*
+  type msg = [ `System ]
+
+  let (start : init:(([> msg ] as 'a) pid -> 'b) ->
+	handle:(([> ] as 'm) -> 'b -> 'b) -> terminate:'c -> ['m | msg] pid
+      ) ~init ~handle ~terminate =
+    let rec loop self state =
+      lwt msg = receive self in
+        match msg with
+	  | #msg ->
+	      loop self state
+	  | m ->
+	      let state = handle m state in
+		loop self state
+    in
+      spawn (fun self ->
+	       let state = init self in
+		 loop self state)
+*)
 end
 
 
 module C2S :
 sig
-  type msg = [ Tcp.tcp_msg | `Zxc of string * int ]
+  type msg = [ Tcp.msg | XMLReceiver.msg | GenServer.msg | `Zxc of string * int ]
+  type init_data = Lwt_unix.file_descr
+  type state
   val start : Lwt_unix.file_descr -> msg pid -> unit Lwt.t
+  val init : init_data -> msg pid -> state
+  val handle : msg -> state -> state GenServer.result
+  val terminate : state -> unit
 end =
 struct
-  type msg = [ Tcp.tcp_msg | `Zxc of string * int ]
+  type msg = [ Tcp.msg | XMLReceiver.msg | GenServer.msg | `Zxc of string * int ]
 
   type state = {pid : msg pid;
-		socket : Tcp.socket}
+		socket : Tcp.socket;
+		xml_receiver : XMLReceiver.t}
 
   let rec loop state =
     lwt msg = receive state.pid in
       match msg with
 	| `Tcp_data (socket, data) when socket == state.socket ->
 	    lwt () = Lwt_io.printf "tcp data %d %S\n" (String.length data) data in
+              XMLReceiver.parse state.xml_receiver data;
 	      Tcp.activate state.socket state.pid;
-	      state.pid $! `Zxc (data, 1);
+	      (*state.pid $! `Zxc (data, 1);*)
 	      loop state
 	| `Tcp_data (_socket, _data) -> assert false
 	| `Tcp_close socket when socket == state.socket ->
 	    lwt () = Lwt_io.printf "tcp close\n" in
-              Gc.print_stat stdout;
+              (*Gc.print_stat stdout;
               Gc.compact ();
-              Gc.print_stat stdout; flush stdout;
+              Gc.print_stat stdout; flush stdout;*)
 	      Lwt.return ()
-	| `Tcp_close _socket ->
-	    assert false
+	| `Tcp_close _socket -> assert false
+	| `XmlStreamStart (name, attrs) ->
+	    lwt () = Lwt_io.printf "stream start: %s %s\n"
+	      name (Xml.attrs_to_string attrs)
+            in
+	      loop state
+	| `XmlStreamElement el ->
+	    lwt () = Lwt_io.printf "stream el: %s\n"
+	      (Xml.element_to_string el)
+            in
+	      loop state
+	| `XmlStreamEnd name ->
+	    lwt () = Lwt_io.printf "stream end: %s\n" name in
+	      loop state
+	| `XmlStreamError error ->
+	    lwt () = Lwt_io.printf "stream error: %s\n" error in
+	      Lwt.return ()
 	| `Zxc (s, n) ->
 	    if n <= 1000000 then (
 	      Tcp.send_async state.socket (string_of_int n ^ s);
@@ -319,20 +428,79 @@ struct
 	    );
 	    Lwt_main.yield () >>
 	    loop state
+	| #GenServer.msg -> assert false
 
   let start socket self =
     let socket = Tcp.of_fd socket self in
+    let xml_receiver = XMLReceiver.create self in
     let state = {pid = self;
-		 socket = socket} in
+		 socket;
+		 xml_receiver} in
       Tcp.activate socket self;
       loop state
+
+  type init_data = Lwt_unix.file_descr
+
+  let init socket self =
+    let socket = Tcp.of_fd socket self in
+    let xml_receiver = XMLReceiver.create self in
+    let state = {pid = self;
+		 socket;
+		 xml_receiver} in
+      Tcp.activate socket self;
+      state
+
+  let handle msg state =
+    match msg with
+      | `Tcp_data (socket, data) when socket == state.socket ->
+          lwt () = Lwt_io.printf "tcp data %d %S\n" (String.length data) data in
+            XMLReceiver.parse state.xml_receiver data;
+            Tcp.activate state.socket state.pid;
+            (*state.pid $! `Zxc (data, 1);*)
+            Lwt.return (`Continue state)
+      | `Tcp_data (_socket, _data) -> assert false
+      | `Tcp_close socket when socket == state.socket ->
+          lwt () = Lwt_io.printf "tcp close\n" in
+            (*Gc.print_stat stdout;
+            Gc.compact ();
+            Gc.print_stat stdout; flush stdout;*)
+            Lwt.return (`Stop state)
+      | `Tcp_close _socket -> assert false
+      | `XmlStreamStart (name, attrs) ->
+          lwt () = Lwt_io.printf "stream start: %s %s\n"
+            name (Xml.attrs_to_string attrs)
+          in
+            Lwt.return (`Continue state)
+      | `XmlStreamElement el ->
+          lwt () = Lwt_io.printf "stream el: %s\n"
+            (Xml.element_to_string el)
+          in
+            Lwt.return (`Continue state)
+      | `XmlStreamEnd name ->
+          lwt () = Lwt_io.printf "stream end: %s\n" name in
+            Lwt.return (`Continue state)
+      | `XmlStreamError error ->
+          lwt () = Lwt_io.printf "stream error: %s\n" error in
+            Lwt.return (`Stop state)
+      | `Zxc (s, n) ->
+          if n <= 1000000 then (
+            Tcp.send_async state.socket (string_of_int n ^ s);
+            state.pid $! `Zxc (s, n + 1)
+          );
+          Lwt_main.yield () >>
+          Lwt.return (`Continue state)
+	| #GenServer.msg -> assert false
+
+  let terminate _state = ()
 end
 
+module C2SServer = GenServer.Make(C2S)
 
 
 let rec accept listen_socket =
   lwt (socket, _) = Lwt_unix.accept listen_socket in
-    ignore (spawn (C2S.start socket));
+    (*ignore (spawn (C2S.start socket));*)
+    ignore (C2SServer.start socket);
     accept listen_socket
 
 let listener_start () =
