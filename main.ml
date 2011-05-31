@@ -1,21 +1,3 @@
-let rec loop c =
-  lwt () = Lwt_io.printf "%c" c in
-  lwt () = Lwt_io.flush Lwt_io.stdout in
-    loop c
-
-let rec loop2 c n =
-  for_lwt i = 1 to n do
-    lwt () = Lwt_io.printf "%c %d\n" c i in
-      Lwt.return ()
-  done
-
-(*
-let main () =
-  lwt () = loop2 'A' 1000
-  and () = loop2 'B' 100 in
-    Lwt.return ()
-*)
-
 type -'a pid
 
 type 'a proc = {queue : 'a Queue.t;
@@ -192,6 +174,11 @@ struct
     Buffer.reset socket.buffer;
     socket.pid $! `Tcp_close socket
 
+  let close socket =
+    lwt () = Lwt_unix.close socket.fd in
+      Buffer.reset socket.buffer;
+      Lwt.return ()
+
   let buf_size = 4096
   let buf = String.make buf_size '\000'
 
@@ -292,6 +279,9 @@ struct
     with
       | Expat.Parse_error error ->
 	  st.pid $! `XmlStreamError error
+
+  let free st =
+    Expat.parser_free st.xml_parser
 end
 
 
@@ -310,7 +300,7 @@ struct
     type init_data
     val init : init_data -> msg pid -> state
     val handle : msg -> state -> state result
-    val terminate : state -> unit
+    val terminate : state -> unit Lwt.t
   end
 
   module type S =
@@ -341,33 +331,73 @@ struct
 		    | `Continue state ->
 			loop self state
 		    | `Stop state ->
-			T.terminate state;
-			Lwt.return ()
+			T.terminate state
       in
         spawn (fun self ->
 		 let state = T.init init_data self in
 		   loop self state)
   end
+end
 
-(*
-  type msg = [ `System ]
+module Jlib =
+struct
+  type jid = {user : string;
+	      server : string;
+	      resource : string;
+	      luser : string;
+	      lserver : string;
+	      lresource : string;
+	     }
 
-  let (start : init:(([> msg ] as 'a) pid -> 'b) ->
-	handle:(([> ] as 'm) -> 'b -> 'b) -> terminate:'c -> ['m | msg] pid
-      ) ~init ~handle ~terminate =
-    let rec loop self state =
-      lwt msg = receive self in
-        match msg with
-	  | #msg ->
-	      loop self state
-	  | m ->
-	      let state = handle m state in
-		loop self state
+  let nameprep = Stringprep.nameprep
+  let nodeprep = Stringprep.nodeprep
+  let resourceprep = Stringprep.resourceprep
+
+  exception Bad_jid
+
+  let make_jid user server resource =
+    let luser = nodeprep user
+    and lserver = nameprep server
+    and lresource = resourceprep resource in
+      {user; server; resource; luser; lserver; lresource}
+
+  let string_to_jid str =
+    let rec parse1 str i =
+      if i < String.length str then (
+	match str.[i] with
+	  | '@' ->
+	      if i = 0
+	      then raise Bad_jid
+	      else parse2 str (String.sub str 0 i) (i + 1) (i + 1)
+	  | '/' ->
+	      if i = 0
+	      then raise Bad_jid
+	      else parse3 str "" (String.sub str 0 i) (i + 1)
+	  | _ -> parse1 str (i + 1)
+      ) else (
+	if i = 0
+	then raise Bad_jid
+	else make_jid "" str ""
+      )
+    and parse2 str u p i =
+      if i < String.length str then (
+	match str.[i] with
+	  | '@' ->
+	      raise Bad_jid
+	  | '/' ->
+	      if i = p
+	      then raise Bad_jid
+	      else parse3 str u (String.sub str p (i - p)) (i + 1)
+	  | _ -> parse2 str u p (i + 1)
+      ) else (
+	if i = p
+	then raise Bad_jid
+	else make_jid u (String.sub str p (i - p)) ""
+      )
+    and parse3 str u s i =
+      make_jid u s (String.sub str i (String.length str - i))
     in
-      spawn (fun self ->
-	       let state = init self in
-		 loop self state)
-*)
+      parse1 str 0
 end
 
 
@@ -376,10 +406,9 @@ sig
   type msg = [ Tcp.msg | XMLReceiver.msg | GenServer.msg | `Zxc of string * int ]
   type init_data = Lwt_unix.file_descr
   type state
-  val start : Lwt_unix.file_descr -> msg pid -> unit Lwt.t
   val init : init_data -> msg pid -> state
   val handle : msg -> state -> state GenServer.result
-  val terminate : state -> unit
+  val terminate : state -> unit Lwt.t
 end =
 struct
   type msg = [ Tcp.msg | XMLReceiver.msg | GenServer.msg | `Zxc of string * int ]
@@ -387,57 +416,6 @@ struct
   type state = {pid : msg pid;
 		socket : Tcp.socket;
 		xml_receiver : XMLReceiver.t}
-
-  let rec loop state =
-    lwt msg = receive state.pid in
-      match msg with
-	| `Tcp_data (socket, data) when socket == state.socket ->
-	    lwt () = Lwt_io.printf "tcp data %d %S\n" (String.length data) data in
-              XMLReceiver.parse state.xml_receiver data;
-	      Tcp.activate state.socket state.pid;
-	      (*state.pid $! `Zxc (data, 1);*)
-	      loop state
-	| `Tcp_data (_socket, _data) -> assert false
-	| `Tcp_close socket when socket == state.socket ->
-	    lwt () = Lwt_io.printf "tcp close\n" in
-              (*Gc.print_stat stdout;
-              Gc.compact ();
-              Gc.print_stat stdout; flush stdout;*)
-	      Lwt.return ()
-	| `Tcp_close _socket -> assert false
-	| `XmlStreamStart (name, attrs) ->
-	    lwt () = Lwt_io.printf "stream start: %s %s\n"
-	      name (Xml.attrs_to_string attrs)
-            in
-	      loop state
-	| `XmlStreamElement el ->
-	    lwt () = Lwt_io.printf "stream el: %s\n"
-	      (Xml.element_to_string el)
-            in
-	      loop state
-	| `XmlStreamEnd name ->
-	    lwt () = Lwt_io.printf "stream end: %s\n" name in
-	      loop state
-	| `XmlStreamError error ->
-	    lwt () = Lwt_io.printf "stream error: %s\n" error in
-	      Lwt.return ()
-	| `Zxc (s, n) ->
-	    if n <= 1000000 then (
-	      Tcp.send_async state.socket (string_of_int n ^ s);
-	      state.pid $! `Zxc (s, n + 1)
-	    );
-	    Lwt_main.yield () >>
-	    loop state
-	| #GenServer.msg -> assert false
-
-  let start socket self =
-    let socket = Tcp.of_fd socket self in
-    let xml_receiver = XMLReceiver.create self in
-    let state = {pid = self;
-		 socket;
-		 xml_receiver} in
-      Tcp.activate socket self;
-      loop state
 
   type init_data = Lwt_unix.file_descr
 
@@ -491,7 +469,10 @@ struct
           Lwt.return (`Continue state)
 	| #GenServer.msg -> assert false
 
-  let terminate _state = ()
+  let terminate state =
+    XMLReceiver.free state.xml_receiver;
+    lwt () = Tcp.close state.socket in
+      Lwt.return ()
 end
 
 module C2SServer = GenServer.Make(C2S)
