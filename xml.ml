@@ -2,10 +2,11 @@ type t = Expat.xml_parser
 
 type name = string
 type attribute = name * name
+type attributes = attribute list
 
 type element =
-  | XMLelement of name * attribute list * element list
-  | XMLcdata of string
+  | Element of name * attributes * element list
+  | Cdata of string
 
 
 type parser_state = {stack : element Stack.t;
@@ -15,20 +16,32 @@ type parser_state = {stack : element Stack.t;
 		     end_callback : name -> unit;
 		    }
 
-let get_val = List.assoc 
+let get_attr_exn = List.assoc 
+
+let get_attr name attrs =
+  try
+    Some (get_attr_exn name attrs)
+  with
+    | Not_found -> None
+
+let get_attr_s name attrs =
+  try
+    List.assoc name attrs
+  with
+    | Not_found -> ""
 
 
 let add_subelement e stack =
   if Stack.length stack > 0 then
     let el = Stack.pop stack in
       match el with
-	| XMLelement (name, attrs, els) ->
-	    Stack.push (XMLelement (name, attrs, e::els)) stack
-	| XMLcdata _ -> ()
+	| Element (name, attrs, els) ->
+	    Stack.push (Element (name, attrs, e::els)) stack
+	| Cdata _ -> ()
 
 
 let elstart st name attrs =
-  Stack.push (XMLelement (name, attrs, [])) st.stack;
+  Stack.push (Element (name, attrs, [])) st.stack;
   if Stack.length st.stack <= st.depth then
     st.start_callback name attrs
 
@@ -36,8 +49,8 @@ let elstart st name attrs =
 let elend st _name =
   let el = Stack.pop st.stack in
       match el with
-	| XMLelement (name, attrs, els) ->
-	    let newel = XMLelement (name, attrs, List.rev els) in
+	| Element (name, attrs, els) ->
+	    let newel = Element (name, attrs, List.rev els) in
 	      if Stack.length st.stack > st.depth then
 		add_subelement newel st.stack
 	      else
@@ -45,10 +58,10 @@ let elend st _name =
 		  st.element_callback newel
 		else
 		  st.end_callback name
-	| XMLcdata _ -> ()
+	| Cdata _ -> ()
 
 let elcdata st cdata =
-  add_subelement (XMLcdata cdata) st.stack
+  add_subelement (Cdata cdata) st.stack
 
 let create_parser ?(encoding = "UTF-8") ~depth
     ~element_callback ~start_callback ~end_callback () =
@@ -88,14 +101,14 @@ let rec attrs_to_string attrs =
 
 let rec element_to_string el =
   match el with
-    | XMLelement (name, attrs, els) ->
+    | Element (name, attrs, els) ->
 	if List.length els > 0 then
 	  (Printf.sprintf "<%s" name) ^ (attrs_to_string attrs) ^ ">" ^
 	  (List.fold_left (^) "" (List.map element_to_string els)) ^
 	  (Printf.sprintf "</%s>" name)
 	else
 	  (Printf.sprintf "<%s" name) ^ (attrs_to_string attrs) ^ "/>"
-    | XMLcdata chunk -> crypt chunk
+    | Cdata chunk -> crypt chunk
 
 
 
@@ -105,18 +118,18 @@ let rec element_to_string el =
 
 let is_element el =
   match el with
-    | XMLelement _ -> true
-    | XMLcdata _ -> false
+    | Element _ -> true
+    | Cdata _ -> false
 
 
 let get_cdata el =
   match el with
-    | XMLelement (_name, _attrs, els) -> (
+    | Element (_name, _attrs, els) -> (
 	let append_chunk s el =
 	  match el with
-	    | XMLelement _ -> s
-	    | XMLcdata chunk -> s ^ chunk
+	    | Element _ -> s
+	    | Cdata chunk -> s ^ chunk
 	in
 	  List.fold_left append_chunk "" els
       )
-    | XMLcdata s -> s
+    | Cdata s -> s

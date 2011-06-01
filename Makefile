@@ -4,15 +4,22 @@ SOURCES = expatwrap.c expat.ml \
 	  stringprepwrap.c stringprep.mli \
 	  xml.ml main.ml
 RESULT = jamler
-PACKS = lwt lwt.unix lwt.syntax
-OCAMLFLAGS = -syntax camlp4o -w A
+PACKS = lwt lwt.unix camlp4.macro lwt.syntax
+OCAMLFLAGS = -syntax camlp4o -ppopt jlib_pp.cmo -w A
 ANNOTATE = yes
+
+PRE_TARGETS = jlib_pp.cmo
+
 
 CFLAGS = -Wall
 LDFLAGS = -lexpat
 
 all:	nc
 
+jlib_pp.cmo:	jlib_pp.ml
+	ocamlfind ocamlc -package camlp4.quotations.o -c -syntax camlp4o \
+		-w A jlib_pp.ml
+
 -include $(OCAMLMAKEFILE)
 
-OCAML_DEP_PACKAGES := -syntax camlp4o -package lwt.syntax
+OCAML_DEP_PACKAGES := -syntax camlp4o -ppopt jlib_pp.cmo -package lwt.syntax

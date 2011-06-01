@@ -17,7 +17,7 @@ let spawn f =
     with
       | exn ->
 	  lwt () =
-            Lwt_io.eprintf "Process raised exception: %s\n"
+            Lwt_io.eprintf "Process raised an exception: %s\n"
 	      (Printexc.to_string exn)
 	  in
             Lwt.fail exn
@@ -52,46 +52,6 @@ let receive pid =
     )
 
 let (exit_waiter, exit_wakener) = Lwt.wait ()
-
-let rec loop3 c self =
-  lwt msg = receive self in
-    match msg with
-      | `Bla (from, n) ->
-	  if n <= 100 then (
-	    lwt () = Lwt_io.printf "%c %d\n" c n in
-              from $! `Bla (self, n + 1);
-              loop3 c self
-          ) else (
-	    lwt () = Lwt_io.printf "exit %c %d\n" c n in
-	      Lwt.wakeup exit_wakener ();
-	      Lwt.return ()
-            (*loop3 c self*)
-	  )
-
-let rec loop4 proc from self =
-  proc $! `Bla (from, -100);
-  proc $! `Bla (from, -100);
-  lwt () = Lwt.pause () in
-    loop4 proc from self
-
-(*
-let main () =
-  let p1 = spawn (loop3 'A')
-  and p2 = spawn (loop3 'B') in
-  let _ = spawn (loop4 p1 p2) in
-  let _ = spawn (loop4 p1 p2) in
-  let _ = spawn (loop4 p1 p2) in
-  let _ = spawn (loop4 p1 p2) in
-  let _ = spawn (loop4 p1 p2) in
-  let _ = spawn (loop4 p1 p2) in
-  let _ = spawn (loop4 p1 p2) in
-  let _ = spawn (loop4 p1 p2) in
-    p1 $! `Bla (p2, 0);
-    (*Lwt.return ()*)
-    exit_waiter
-
-let () = Lwt_main.run (main ())
-*)
 
 module Tcp =
 struct
@@ -326,7 +286,17 @@ struct
 	    | #msg ->
 		loop self state
 	    | m ->
-		lwt result = T.handle m state in
+		lwt result =
+	          try_lwt
+		    T.handle m state
+		  with
+		    | exn ->
+			lwt () =
+                          Lwt_io.eprintf "GenServer raised an exception: %s\n"
+			    (Printexc.to_string exn)
+                        in
+                          Lwt.return (`Stop state)
+                in
 		  match result with
 		    | `Continue state ->
 			loop self state
@@ -398,8 +368,39 @@ struct
       make_jid u s (String.sub str i (String.length str - i))
     in
       parse1 str 0
-end
 
+
+  let stream_error condition cdata =
+    Xml.Element
+      ("stream:error",
+       [],
+       [Xml.Element (condition, [("xmlns", <:ns<STREAMS>>)],
+		     [Xml.Cdata cdata])])
+
+  let serr_bad_format = stream_error "bad-format" ""
+  let serr_bad_namespace_prefix = stream_error "bad-namespace-prefix" ""
+  let serr_conflict = stream_error "conflict" ""
+  let serr_connection_timeout = stream_error "connection-timeout" ""
+  let serr_host_gone = stream_error "host-gone" ""
+  let serr_host_unknown = stream_error "host-unknown" ""
+  let serr_improper_addressing = stream_error "improper-addressing" ""
+  let serr_internal_server_error = stream_error "internal-server-error" ""
+  let serr_invalid_from = stream_error "invalid-from" ""
+  let serr_invalid_id = stream_error "invalid-id" ""
+  let serr_invalid_namespace = stream_error "invalid-namespace" ""
+  let serr_invalid_xml = stream_error "invalid-xml" ""
+  let serr_not_authorized = stream_error "not-authorized" ""
+  let serr_policy_violation = stream_error "policy-violation" ""
+  let serr_remote_connection_failed = stream_error "remote-connection-failed" ""
+  let serr_resourse_constraint = stream_error "resource-constraint" ""
+  let serr_restricted_xml = stream_error "restricted-xml" ""
+  let serr_see_other_host host = stream_error "see-other-host" host
+  let serr_system_shutdown = stream_error "system-shutdown" ""
+  let serr_unsupported_encoding = stream_error "unsupported-encoding" ""
+  let serr_unsupported_stanza_type = stream_error "unsupported-stanza-type" ""
+  let serr_unsupported_version = stream_error "unsupported-version" ""
+  let serr_xml_not_well_formed = stream_error "xml-not-well-formed" ""
+end
 
 module C2S :
 sig
@@ -413,9 +414,51 @@ end =
 struct
   type msg = [ Tcp.msg | XMLReceiver.msg | GenServer.msg | `Zxc of string * int ]
 
-  type state = {pid : msg pid;
-		socket : Tcp.socket;
-		xml_receiver : XMLReceiver.t}
+  type c2s_state =
+    | Wait_for_stream
+    | Wait_for_auth
+    | Wait_for_feature_request
+    | Wait_for_bind
+    | Wait_for_session
+    | Wait_for_sasl_response
+    | Session_established
+
+  type state =
+      {pid : msg pid;
+       socket : Tcp.socket;
+       xml_receiver : XMLReceiver.t;
+       state : c2s_state;
+       streamid : string;
+       (*sasl_state : int;	(* TODO *)
+       access,
+       shaper,
+       zlib = false,
+       tls = false,
+       tls_required = false,
+       tls_enabled = false,
+       tls_options = [],*)
+       authenticated : bool;
+       user : string;
+       server : string;
+       resource : string;
+       jid : Jlib.jid;
+       (*sid : string;
+       pres_t = ?SETS:new(),
+       pres_f = ?SETS:new(),
+       pres_a = ?SETS:new(),
+       pres_i = ?SETS:new(),
+       pres_last, pres_pri,
+       pres_timestamp,
+       pres_invis = false,
+       privacy_list = #userlist{},
+       conn = unknown,
+       auth_module = unknown,*)
+       ip : Unix.inet_addr;
+       (*redirect = false,
+       aux_fields = [],
+       fsm_limit_opts,*)
+       lang : string;
+      }
 
   type init_data = Lwt_unix.file_descr
 
@@ -424,9 +467,291 @@ struct
     let xml_receiver = XMLReceiver.create self in
     let state = {pid = self;
 		 socket;
-		 xml_receiver} in
+		 xml_receiver;
+		 state = Wait_for_stream;
+		 streamid = "";
+		 authenticated = false;
+		 user = "";
+		 server = "";
+		 resource = "";
+		 jid = Jlib.make_jid "" "" "";
+		 ip = Unix.inet_addr_any;	(* TODO *)
+		 lang = "";
+		}
+    in
       Tcp.activate socket self;
       state
+
+  let myname = "localhost"		(* TODO *)
+  let is_my_host _server = true		(* TODO *)
+  let invalid_ns_err = Jlib.serr_invalid_namespace
+  let invalid_xml_err = Jlib.serr_xml_not_well_formed
+  let host_unknown_err = Jlib.serr_host_unknown
+
+  let send_text state text =
+    Printf.printf "Send XML on stream = %S\n" text; flush stdout;
+    Tcp.send_async state.socket text
+
+  let send_element state el =
+    send_text state (Xml.element_to_string el)
+
+  let send_header state server version lang =
+    let version_str =
+      match version with
+	| "" -> ""
+	| _ -> " version='" ^ version ^ "'"
+    in
+    let lang_str =
+      match lang with
+	| "" -> ""
+	| _ -> " xml:lang='" ^ lang ^ "'"
+    in
+    let stream_header_fmt =
+      "<?xml version='1.0'?>" ^^
+	"<stream:stream xmlns='jabber:client' " ^^
+	"xmlns:stream='http://etherx.jabber.org/streams' " ^^
+	"id='%s' from='%s'%s%s>"
+    in
+    let header =
+      Printf.sprintf stream_header_fmt
+	state.streamid
+	server
+	version_str
+	lang_str
+    in
+      send_text state header
+
+  let send_trailer state =
+    let stream_trailer = "</stream:stream>" in
+      send_text state stream_trailer
+
+
+  let wait_for_stream msg state =
+    match msg with
+      | `XmlStreamStart (_name, attrs) -> (
+	  let default_lang = "en" in	(* TODO *)
+	    match Xml.get_attr_s "xmlns:stream" attrs with
+	      | <:ns<STREAM>> -> (
+		  let server = Jlib.nameprep (Xml.get_attr_s "to" attrs) in
+		    if is_my_host server then (
+		      let lang =
+			let lang = Xml.get_attr_s "xml:lang" attrs in
+			  if String.length lang <= 35 then (
+			    (* As stated in BCP47, 4.4.1:
+			       Protocols or specifications that
+			       specify limited buffer sizes for
+			       language tags MUST allow for
+			       language tags of at least 35 characters. *)
+			    lang
+			  ) else (
+			    (* Do not store long language tag to
+			       avoid possible DoS/flood attacks *)
+			    ""
+			  )
+		      in
+			(*change_shaper(StateData, jlib:make_jid("", Server, "")),*)
+			match Xml.get_attr_s "version" attrs with
+			  | "1.0" -> (
+			      send_header state server "1.0" default_lang;
+			      if not state.authenticated then (
+				    (*SASLState =
+					cyrsasl:server_new(
+					  "jabber", Server, "", [],
+					  fun(U) ->
+						  ejabberd_auth:get_password_with_authmodule(
+						    U, Server)
+					  end,
+					  fun(U, P) ->
+						  ejabberd_auth:check_password_with_authmodule(
+						    U, Server, P)
+					  end,
+					  fun(U, P, D, DG) ->
+						  ejabberd_auth:check_password_with_authmodule(
+						    U, Server, P, D, DG)
+					  end),*)
+				let mechs = [] in
+				    (*Mechs = lists:map(
+					      fun(S) ->
+						      {xmlelement, "mechanism", [],
+						       [{xmlcdata, S}]}
+					      end, cyrsasl:listmech(Server)),*)
+				    (*SockMod =
+					(StateData#state.sockmod):get_sockmod(
+					  StateData#state.socket),
+				    Zlib = StateData#state.zlib,
+				    CompressFeature =
+					case Zlib andalso
+					    ((SockMod == gen_tcp) orelse
+					     (SockMod == tls)) of
+					    true ->
+						[{xmlelement, "compression",
+						  [{"xmlns", ?NS_FEATURE_COMPRESS}],
+						  [{xmlelement, "method",
+						    [], [{xmlcdata, "zlib"}]}]}];
+					    _ ->
+						[]
+					end,
+				    TLS = StateData#state.tls,
+				    TLSEnabled = StateData#state.tls_enabled,
+				    TLSRequired = StateData#state.tls_required,
+				    TLSFeature =
+					case (TLS == true) andalso
+					    (TLSEnabled == false) andalso
+					    (SockMod == gen_tcp) of
+					    true ->
+						case TLSRequired of
+						    true ->
+							[{xmlelement, "starttls",
+							  [{"xmlns", ?NS_TLS}],
+							  [{xmlelement, "required",
+							    [], []}]}];
+						    _ ->
+							[{xmlelement, "starttls",
+							  [{"xmlns", ?NS_TLS}], []}]
+						end;
+					    false ->
+						[]
+					end,
+				    *)
+				    send_element
+				      state
+				      (Xml.Element
+					 ("stream:features", [],
+					  (*TLSFeature ++
+					    CompressFeature ++*)
+					  [Xml.Element
+					     ("mechanisms",
+					      [("xmlns", <:ns<SASL>>)],
+					      mechs)]
+					    (*++
+					      ejabberd_hooks:run_fold(
+					      c2s_stream_features,
+					      Server,
+					      [], [Server])*))
+				      );
+				  Lwt.return (
+				    `Continue
+				      {state with
+					 state = Wait_for_feature_request;
+					 server = server;
+					 (*sasl_state = SASLState,*)
+					 lang = lang});
+			      ) else (
+				match state.resource with
+				  | "" ->
+				      (* RosterVersioningFeature =
+					 ejabberd_hooks:run_fold(
+					 roster_get_versioning_feature,
+					 Server, [], [Server]),*)
+				      let stream_features =
+					[Xml.Element
+					   ("bind",
+					    [("xmlns", <:ns<BIND>>)], []);
+					 Xml.Element
+					   ("session",
+					    [("xmlns", <:ns<SESSION>>)], [])]
+						(*++ RosterVersioningFeature
+						++ ejabberd_hooks:run_fold(
+						     c2s_stream_features,
+						     Server,
+						     [], [Server])*)
+				      in
+					send_element
+					  state
+					  (Xml.Element
+					     ("stream:features", [],
+					      stream_features));
+					Lwt.return (
+					  `Continue
+					    {state with
+					       state = Wait_for_bind;
+					       server = server;
+					       lang = lang})
+				  | _ ->
+				      send_element
+					state
+					(Xml.Element
+					   ("stream:features", [], []));
+				      Lwt.return (
+					`Continue
+					  {state with
+					     state = Wait_for_session;
+					     server = server;
+					     lang = lang})
+			      )
+			    )
+			  | _ ->
+			      send_header state server "" default_lang;
+			      (*if
+				(not StateData#state.tls_enabled) and
+				StateData#state.tls_required ->
+				    send_element(
+				      StateData,
+				      ?POLICY_VIOLATION_ERR(
+					 Lang,
+					 "Use of STARTTLS required")),
+				    send_trailer(StateData),
+				    {stop, normal, StateData};
+				true ->*)
+				    Lwt.return (
+				      `Continue
+					{state with
+					   state = Wait_for_auth;
+					   server = server;
+					   lang = lang})
+		    ) else (
+		      send_header state myname "" default_lang;
+		      send_element state host_unknown_err;
+		      send_trailer state;
+		      Lwt.return (`Stop state)
+		    )
+		)
+	      | _ ->
+		      send_header state myname "" default_lang;
+		      send_element state invalid_ns_err;
+		      send_trailer state;
+		      Lwt.return (`Stop state)
+	)
+(*
+wait_for_stream(timeout, StateData) ->
+    {stop, normal, StateData};
+*)
+
+      | `XmlStreamElement _ ->
+	  send_element state invalid_xml_err;
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+
+      | `XmlStreamEnd _ ->
+	  send_element state invalid_xml_err;
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+
+      | `XmlStreamError _ ->
+	  send_header state myname "1.0" "";
+	  send_element state invalid_xml_err;
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+
+  let handle_xml msg state =
+    match state.state, msg with
+      | Wait_for_stream, _ -> wait_for_stream msg state
+      | _, `XmlStreamStart (name, attrs) ->
+          lwt () = Lwt_io.printf "stream start: %s %s\n"
+            name (Xml.attrs_to_string attrs)
+          in
+            Lwt.return (`Continue state)
+      | _, `XmlStreamElement el ->
+          lwt () = Lwt_io.printf "stream el: %s\n"
+            (Xml.element_to_string el)
+          in
+            Lwt.return (`Continue state)
+      | _, `XmlStreamEnd name ->
+          lwt () = Lwt_io.printf "stream end: %s\n" name in
+            Lwt.return (`Continue state)
+      | _, `XmlStreamError error ->
+          lwt () = Lwt_io.printf "stream error: %s\n" error in
+            Lwt.return (`Stop state)
 
   let handle msg state =
     match msg with
@@ -444,22 +769,8 @@ struct
             Gc.print_stat stdout; flush stdout;*)
             Lwt.return (`Stop state)
       | `Tcp_close _socket -> assert false
-      | `XmlStreamStart (name, attrs) ->
-          lwt () = Lwt_io.printf "stream start: %s %s\n"
-            name (Xml.attrs_to_string attrs)
-          in
-            Lwt.return (`Continue state)
-      | `XmlStreamElement el ->
-          lwt () = Lwt_io.printf "stream el: %s\n"
-            (Xml.element_to_string el)
-          in
-            Lwt.return (`Continue state)
-      | `XmlStreamEnd name ->
-          lwt () = Lwt_io.printf "stream end: %s\n" name in
-            Lwt.return (`Continue state)
-      | `XmlStreamError error ->
-          lwt () = Lwt_io.printf "stream error: %s\n" error in
-            Lwt.return (`Stop state)
+      | #XMLReceiver.msg as m ->
+	  handle_xml m state
       | `Zxc (s, n) ->
           if n <= 1000000 then (
             Tcp.send_async state.socket (string_of_int n ^ s);
@@ -467,7 +778,7 @@ struct
           );
           Lwt_main.yield () >>
           Lwt.return (`Continue state)
-	| #GenServer.msg -> assert false
+      | #GenServer.msg -> assert false
 
   let terminate state =
     XMLReceiver.free state.xml_receiver;
