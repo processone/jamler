@@ -4,9 +4,12 @@ type name = string
 type attribute = name * name
 type attributes = attribute list
 
+type element_cdata =
+  [ `XmlElement of name * attributes * element_cdata list
+  | `XmlCdata of string ]
+
 type element =
-  | Element of name * attributes * element list
-  | Cdata of string
+  [ `XmlElement of name * attributes * element_cdata list ]
 
 
 type parser_state = {stack : element Stack.t;
@@ -30,38 +33,40 @@ let get_attr_s name attrs =
   with
     | Not_found -> ""
 
+let get_tag_attr_exn name (`XmlElement (_name, attrs, _els)) =
+  get_attr_exn name attrs
+let get_tag_attr name (`XmlElement (_name, attrs, _els)) =
+  get_attr name attrs
+let get_tag_attr_s name (`XmlElement (_name, attrs, _els)) =
+  get_attr_s name attrs
 
 let add_subelement e stack =
   if Stack.length stack > 0 then
     let el = Stack.pop stack in
       match el with
-	| Element (name, attrs, els) ->
-	    Stack.push (Element (name, attrs, e::els)) stack
-	| Cdata _ -> ()
+	| `XmlElement (name, attrs, els) ->
+	    Stack.push (`XmlElement (name, attrs, e::els)) stack
+	| `XmlCdata _ -> ()
 
 
 let elstart st name attrs =
-  Stack.push (Element (name, attrs, [])) st.stack;
+  Stack.push (`XmlElement (name, attrs, [])) st.stack;
   if Stack.length st.stack <= st.depth then
     st.start_callback name attrs
 
 
 let elend st _name =
   let el = Stack.pop st.stack in
-      match el with
-	| Element (name, attrs, els) ->
-	    let newel = Element (name, attrs, List.rev els) in
-	      if Stack.length st.stack > st.depth then
-		add_subelement newel st.stack
-	      else
-		if Stack.length st.stack == st.depth then
-		  st.element_callback newel
-		else
-		  st.end_callback name
-	| Cdata _ -> ()
+  let `XmlElement (name, attrs, els) = el in
+  let newel = `XmlElement (name, attrs, List.rev els) in
+    if Stack.length st.stack > st.depth
+    then add_subelement newel st.stack
+    else if Stack.length st.stack == st.depth
+    then st.element_callback newel
+    else st.end_callback name
 
 let elcdata st cdata =
-  add_subelement (Cdata cdata) st.stack
+  add_subelement (`XmlCdata cdata) st.stack
 
 let create_parser ?(encoding = "UTF-8") ~depth
     ~element_callback ~start_callback ~end_callback () =
@@ -99,18 +104,19 @@ let rec attrs_to_string attrs =
       | (name, value) -> " " ^ name ^ "='" ^ (crypt value) ^ "'"
   in List.fold_left (^) "" (List.map attr_to_string attrs)
 
-let rec element_to_string el =
+let rec element_cdata_to_string el =
   match el with
-    | Element (name, attrs, els) ->
+    | `XmlElement (name, attrs, els) ->
 	if List.length els > 0 then
 	  (Printf.sprintf "<%s" name) ^ (attrs_to_string attrs) ^ ">" ^
-	  (List.fold_left (^) "" (List.map element_to_string els)) ^
+	  (List.fold_left (^) "" (List.map element_cdata_to_string els)) ^
 	  (Printf.sprintf "</%s>" name)
 	else
 	  (Printf.sprintf "<%s" name) ^ (attrs_to_string attrs) ^ "/>"
-    | Cdata chunk -> crypt chunk
+    | `XmlCdata chunk -> crypt chunk
 
-
+let element_to_string el =
+  element_cdata_to_string (el :> element_cdata)
 
 
 
@@ -118,18 +124,40 @@ let rec element_to_string el =
 
 let is_element el =
   match el with
-    | Element _ -> true
-    | Cdata _ -> false
+    | `XmlElement _ -> true
+    | `XmlCdata _ -> false
 
-
+(*
 let get_cdata el =
   match el with
-    | Element (_name, _attrs, els) -> (
+    | `XmlElement (_name, _attrs, els) -> (
 	let append_chunk s el =
 	  match el with
-	    | Element _ -> s
-	    | Cdata chunk -> s ^ chunk
+	    | `XmlElement _ -> s
+	    | `XmlCdata chunk -> s ^ chunk
 	in
 	  List.fold_left append_chunk "" els
       )
-    | Cdata s -> s
+    | `XmlCdata s -> s
+*)
+
+let rec get_cdata' =
+  function
+    | `XmlElement _ :: els -> get_cdata' els
+    | `XmlCdata s :: els -> s :: get_cdata' els
+    | [] -> []
+
+let get_cdata els = String.concat "" (get_cdata' els)
+
+let rec remove_cdata =
+  function
+    | `XmlElement _ as el :: els -> el :: remove_cdata els
+    | `XmlCdata _ :: els -> remove_cdata els
+    | [] -> []
+
+
+let replace_tag_attr attr value (`XmlElement (name, attrs, els)) =
+  let attrs = List.remove_assoc attr attrs in
+  let attrs = (attr, value) :: attrs in
+    `XmlElement (name, attrs, els)
+

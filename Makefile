@@ -4,7 +4,7 @@ SOURCES = expatwrap.c expat.ml \
 	  stringprepwrap.c stringprep.mli \
 	  xml.ml main.ml
 RESULT = jamler
-PACKS = lwt lwt.unix camlp4.macro lwt.syntax
+PACKS = lwt lwt.unix camlp4.macro lwt.syntax cryptokit
 OCAMLFLAGS = -syntax camlp4o -ppopt jlib_pp.cmo -w A
 ANNOTATE = yes
 
