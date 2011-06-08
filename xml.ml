@@ -149,6 +149,9 @@ let rec get_cdata' =
 
 let get_cdata els = String.concat "" (get_cdata' els)
 
+let get_tag_cdata (`XmlElement (_name, _attrs, els)) =
+    get_cdata els
+
 let rec remove_cdata =
   function
     | `XmlElement _ as el :: els -> el :: remove_cdata els
@@ -160,4 +163,37 @@ let replace_tag_attr attr value (`XmlElement (name, attrs, els)) =
   let attrs = List.remove_assoc attr attrs in
   let attrs = (attr, value) :: attrs in
     `XmlElement (name, attrs, els)
+
+let get_subtag (`XmlElement (_, _, els)) name =
+  let rec get_subtag' els name =
+    match els with
+      | el :: els -> (
+	  match el with
+	    | `XmlElement (name', _, _) as el when name = name' ->
+		Some el
+	    | _ ->
+		get_subtag' els name
+	)
+      | [] ->
+	  None
+  in
+    get_subtag' els name
+
+
+
+(* TODO: redesign *)
+let rec get_path_s el =
+  function
+    | [] -> assert false
+    | `Elem name :: path -> (
+	match get_subtag el name with
+	  | None -> ""
+	  | Some sub_el ->
+	      get_path_s sub_el path
+      )
+    | [`Attr name] ->
+	get_tag_attr_s name el
+    | [`Cdata] ->
+	get_tag_cdata el
+    | _ -> assert false
 

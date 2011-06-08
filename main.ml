@@ -360,9 +360,14 @@ sig
 
   val make_jid_exn : string -> string -> string -> jid
   val make_jid : string -> string -> string -> jid option
+  val make_jid' : nodepreped -> namepreped -> resourcepreped -> jid
+  val ljid_to_jid : nodepreped * namepreped * resourcepreped -> jid
   val string_to_jid_exn : string -> jid
   val string_to_jid : string -> jid option
   val jid_to_string : jid -> string
+  val jid_tolower : jid -> nodepreped * namepreped * resourcepreped
+  val jid_remove_resource : jid -> jid
+  val jid_replace_resource' : jid -> resourcepreped -> jid
 
   val err_bad_request : Xml.element
   val err_conflict : Xml.element
@@ -409,7 +414,7 @@ sig
   val errt_subscription_required : string -> string -> Xml.element
   val errt_unexpected_request : string -> string -> Xml.element
 
-    (* Auth stanza errors *)
+  (* Auth stanza errors *)
   val err_auth_no_resource_provided : string -> Xml.element
   val err_auth_bad_resource_format : string -> Xml.element
   val err_auth_resource_conflict : string -> Xml.element
@@ -474,8 +479,13 @@ sig
 
   val iq_to_xml : iq_query_response iq -> Xml.element
 
+  val sha1 : string -> string
+  val md5 : string -> string
+
   val decode_base64 : string -> string
   val encode_base64 : string -> string
+
+  val get_random_string : unit -> string
 end
   =
 struct
@@ -526,6 +536,13 @@ struct
       Some (make_jid_exn user server resource)
     with
       | Invalid_argument "stringprep" -> None
+
+  let make_jid' luser lserver lresource =
+    {user = luser; server = lserver; resource = lresource;
+     luser; lserver; lresource}
+
+  let ljid_to_jid (luser, lserver, lresource) =
+    make_jid' luser lserver lresource
 
   let string_to_jid_exn str =
     let rec parse1 str i =
@@ -585,6 +602,15 @@ struct
 	| _ -> s2 ^ "/" ^ resource
     in
       s3
+
+  let jid_tolower {luser = u; lserver = s; lresource = r; _} =
+    (u, s, r)
+
+  let jid_remove_resource jid =
+    {jid with resource = ""; lresource = ""}
+
+  let jid_replace_resource' jid lresource =
+    {jid with resource = (lresource :> string); lresource}
 
 
   let stanza_error code type' condition =
@@ -691,7 +717,7 @@ struct
   let errt_unexpected_request lang text =
 	stanza_errort "400" "wait"   "unexpected-request" lang text
 
-    (* Auth stanza errors *)
+  (* Auth stanza errors *)
   let err_auth_no_resource_provided lang =
     errt_not_acceptable lang "No resource provided"
   let err_auth_bad_resource_format lang =
@@ -932,6 +958,10 @@ is_iq_request_type(_) -> false.
     let h = Cryptokit.Hash.sha1 () in
       Cryptokit.hash_string h s
 
+  let md5 s =
+    let h = Cryptokit.Hash.md5 () in
+      Cryptokit.hash_string h s
+
   let decode_base64 s =
     let t = Cryptokit.Base64.decode () in
       Cryptokit.transform_string t s
@@ -940,7 +970,25 @@ is_iq_request_type(_) -> false.
     let t = Cryptokit.Base64.encode_compact () in
       Cryptokit.transform_string t s
 
+  let get_random_string () =		(* TODO *)
+    string_of_int (Random.int 1000000000)
+
 end
+
+module LJID =
+struct
+  type t = Jlib.nodepreped * Jlib.namepreped * Jlib.resourcepreped
+  let compare = compare
+end
+module LJIDSet =
+struct
+  include Set.Make(LJID)
+
+  let from_list xs =
+    List.fold_left
+      (fun s x -> add x s) empty xs
+end
+
 
 module Auth :
 sig
@@ -948,9 +996,11 @@ sig
     Jlib.nodepreped -> Jlib.namepreped -> string -> string option
   val check_password_digest_with_authmodule :
     Jlib.nodepreped -> Jlib.namepreped ->
-    string -> string -> string -> string option
+    string -> string -> (string -> string) -> string option
   val get_password_with_authmodule :
     Jlib.nodepreped -> Jlib.namepreped -> (string * string) option
+
+  val does_user_exist : Jlib.nodepreped -> Jlib.namepreped -> bool
 end
   =
 struct
@@ -963,6 +1013,9 @@ struct
 
   let get_password_with_authmodule _user _server =
     Some ("test", "none")
+
+  let does_user_exist _user _server =
+    true
 end
 
 
@@ -971,15 +1024,16 @@ struct
   type get_password = Jlib.nodepreped -> (string * string) option
   type check_password = Jlib.nodepreped -> string -> string option
   type check_password_digest =
-      Jlib.nodepreped -> string -> string -> string -> string option
+      Jlib.nodepreped -> string -> string -> (string -> string) -> string option
 
   type props = ([ `Username | `Auth_module | `Authzid ] * string) list
 
   type step_result =
     | Done of props
-    | Continue of string * (string -> step_result)
+    | Continue of string * t
     | ErrorUser of string * string
     | Error of string
+  and t = string -> step_result
 
   module type SASLMechanism =
   sig
@@ -1029,6 +1083,9 @@ struct
       | Not_found ->
 	  Error "no-mechanism"
 
+  let server_step f client_in =
+    process_mech_result (f client_in)
+
 end
 
 module SASLPlain =
@@ -1073,7 +1130,7 @@ struct
       | _ ->
 	  None
 
-  
+
   let mech_new _host _get_password check_password _check_password_digest
       client_in =
     match prepare client_in with
@@ -1100,6 +1157,1037 @@ let _ =
   SASL.register_mechanism "PLAIN" (module SASLPlain : SASL.SASLMechanism)
 
 
+module SASLDigest =
+struct
+  let tokenize ?(remove_empty = false) c str =
+    let rec aux str from res =
+      if from >= String.length str
+      then List.rev res
+      else 
+	try
+	  let idx = String.index_from str from c in
+	  let token = String.sub str from (idx - from) in
+	    match token with
+	      | "" when remove_empty -> aux str (idx + 1) res
+	      | _ -> aux str (idx + 1) (token :: res)
+	with
+	  | Not_found ->
+	      let str = String.sub str from (String.length str - from) in
+		aux "" 0 (str :: res)
+    in
+      aux str 0 []
+
+  type step = One | Three | Five
+
+  type state =
+      {step : step;
+       nonce : string;
+       username : string;
+       authzid : string;
+       get_password : SASL.get_password;
+       check_password_digest : SASL.check_password_digest;
+       auth_module : string;
+       host : Jlib.namepreped;
+      }
+
+  let get_assoc_s = Xml.get_attr_s
+
+  let parse s =
+    let rec parse1 s i k ts =
+      if i < String.length s then (
+	match s.[i] with
+	  | '=' ->
+	      parse2 s (i + 1) (String.sub s k (i - k)) ts
+	  | ' '
+	  | ',' when i = k ->
+	      parse1 s (i + 1) (i + 1) ts
+	  | _c ->
+	      parse1 s (i + 1) k ts
+      ) else (
+	if i = k
+	then Some (List.rev ts)
+	else None
+      )
+    and parse2 s i key ts =
+      if i < String.length s then (
+	match s.[i] with
+	  | '"' ->
+	      parse3 s (i + 1) key (Buffer.create 10) ts
+	  | c ->
+	      let v = Buffer.create 10 in
+		Buffer.add_char v c;
+		parse4 s (i + 1) key v ts
+      ) else None
+    and parse3 s i key v ts =
+      if i < String.length s then (
+	match s.[i] with
+	  | '"' ->
+	      parse4 s (i + 1) key v ts
+	  | '\\' when i < String.length s - 1 ->
+	      Buffer.add_char v s.[i + 1];
+	      parse3 s (i + 2) key v ts
+	  | c ->
+	      Buffer.add_char v c;
+	      parse3 s (i + 1) key v ts
+      ) else None
+    and parse4 s i key v ts =
+      if i < String.length s then (
+	match s.[i] with
+	  | ',' ->
+	      parse1 s (i + 1) (i + 1) ((key, Buffer.contents v) :: ts)
+	  | ' ' ->
+	      parse4 s (i + 1) key v ts
+	  | c ->
+	      Buffer.add_char v c;
+	      parse4 s (i + 1) key v ts
+      ) else parse1 s i i ((key, Buffer.contents v) :: ts)
+    in
+      parse1 s 0 0 []
+
+
+  (*
+    @doc Check if the digest-uri is valid.
+    RFC-2831 allows to provide the IP address in Host,
+    however ejabberd doesn't allow that.
+    If the service (for example jabber.example.org)
+    is provided by several hosts (being one of them server3.example.org),
+    then digest-uri can be like xmpp/server3.example.org/jabber.example.org
+    In that case, ejabberd only checks the service name, not the host.
+  *)
+  let is_digesturi_valid digest_uri_case jabber_host =
+    let digest_uri = Stringprep.tolower digest_uri_case in
+      match tokenize '/' digest_uri with
+	| ["xmpp"; host] when host = jabber_host ->
+	    true
+	| ["xmpp"; _host; servname] when servname = jabber_host ->
+	    true
+	| _ ->
+	    false
+
+
+  let hex s =
+    let t = Cryptokit.Hexa.encode () in
+      Cryptokit.transform_string t s
+
+  let response key_vals user passwd nonce authzid a2prefix =
+    let realm = get_assoc_s "realm" key_vals in
+    let cnonce = get_assoc_s "cnonce" key_vals in
+    let digest_uri = get_assoc_s "digest-uri" key_vals in
+    let nc = get_assoc_s "nc" key_vals in
+    let qop = get_assoc_s "qop" key_vals in
+    let a1 =
+      match authzid with
+	| "" ->
+	    Jlib.md5 (user ^ ":" ^ realm ^ ":" ^ passwd) ^
+	      ":" ^ nonce ^ ":" ^ cnonce
+	| _ ->
+	    Jlib.md5 (user ^ ":" ^ realm ^ ":" ^ passwd) ^
+	      ":" ^ nonce ^ ":" ^ cnonce ^ ":" ^ authzid
+    in
+    let a2 =
+      match qop with
+	| "auth" ->
+	    a2prefix ^ ":" ^ digest_uri;
+	| _ ->
+	    a2prefix ^ ":" ^ digest_uri ^
+	      ":00000000000000000000000000000000"
+    in
+    let t =
+      hex (Jlib.md5 a1) ^ ":" ^ nonce ^ ":" ^
+	nc ^ ":" ^ cnonce ^ ":" ^ qop ^ ":" ^
+	hex (Jlib.md5 a2)
+    in
+      hex (Jlib.md5 t)
+
+
+  let rec mech_step state client_in =
+    match state, client_in with
+      | {step = One; nonce = nonce; _}, _ ->
+	  SASL.Continue
+	    ("nonce=\"" ^ nonce ^
+	       "\",qop=\"auth\",charset=utf-8,algorithm=md5-sess",
+	     mech_step {state with step = Three})
+      | {step = Three; nonce = nonce; _}, client_in -> (
+	  match parse client_in with
+	    | None ->
+		SASL.Error "bad-protocol"
+	    | Some key_vals -> (
+		let digest_uri = get_assoc_s "digest-uri" key_vals in
+		let username = get_assoc_s "username" key_vals in
+		  match
+		    is_digesturi_valid digest_uri (state.host :> string),
+		    Jlib.nodeprep username
+		  with
+		    | true, Some lusername -> (
+			let authzid = get_assoc_s "authzid" key_vals in
+			  match state.get_password lusername with
+			    | None ->
+				SASL.ErrorUser ("not-authorized", username)
+			    | Some (passwd, auth_module) -> (
+				match (state.check_password_digest
+					 lusername ""
+					 (get_assoc_s "response" key_vals)
+					 (fun pw ->
+					    response key_vals username pw
+					      nonce authzid "AUTHENTICATE"))
+				with
+				  | Some _ ->
+				      let rsp_auth =
+					response key_vals
+					  username passwd
+					  nonce authzid ""
+				      in
+					SASL.Continue
+					  ("rspauth=" ^ rsp_auth,
+					   mech_step
+					     {state with
+						step = Five;
+						auth_module;
+						username;
+						authzid});
+				  | None ->
+				      SASL.ErrorUser
+					("not-authorized", username)
+			      )
+		      )
+		    | _, _ ->
+			SASL.ErrorUser ("not-authorized", username)
+	      )
+	)
+      | {step = Five; auth_module; username; authzid; _}, "" ->
+	  SASL.Done [(`Username, username);
+		     (`Authzid, authzid);
+		     (`Auth_module, auth_module)];
+      | {step = Five; _}, _ ->
+	  SASL.Error "bad-protocol"
+
+
+  let mech_new host get_password _check_password check_password_digest
+      client_in =
+    let state =
+      {step = One;
+       nonce = Jlib.get_random_string ();
+       username = "";
+       authzid = "";
+       auth_module = "";
+       host;
+       get_password;
+       check_password_digest}
+    in
+      mech_step state client_in
+
+
+
+end
+
+let _ =
+  SASL.register_mechanism "DIGEST-MD5" (module SASLDigest : SASL.SASLMechanism)
+
+
+module Router :
+sig
+  type t = Jlib.jid -> Jlib.jid -> Xml.element -> unit
+
+  type msg = [ `Route of Jlib.jid * Jlib.jid * Xml.element ]
+
+  val route : t
+
+  val register_route :
+    ?local_hint : t option -> Jlib.namepreped -> msg pid -> unit
+  val unregister_route : Jlib.namepreped -> msg pid -> unit
+end
+  =
+struct
+  type t = Jlib.jid -> Jlib.jid -> Xml.element -> unit
+
+  type msg = [ `Route of Jlib.jid * Jlib.jid * Xml.element ]
+
+  type route =
+      {pid : msg pid;
+       local_hint : t option;
+      }
+
+  let route_table = Hashtbl.create 10
+
+  let register_route ?(local_hint = None) domain pid =
+	    (*case get_component_number(LDomain) of
+		undefined ->*)
+    Hashtbl.replace route_table domain {pid; local_hint}
+		(*N ->
+		    F = fun() ->
+				case mnesia:wread({route, LDomain}) of
+				    [] ->
+					mnesia:write(
+					  #route{domain = LDomain,
+						 pid = Pid,
+						 local_hint = 1}),
+					lists:foreach(
+					  fun(I) ->
+						  mnesia:write(
+						    #route{domain = LDomain,
+							   pid = undefined,
+							   local_hint = I})
+					  end, lists:seq(2, N));
+				    Rs ->
+					lists:any(
+					  fun(#route{pid = undefined,
+						     local_hint = I} = R) ->
+						  mnesia:write(
+						    #route{domain = LDomain,
+							   pid = Pid,
+							   local_hint = I}),
+						  mnesia:delete_object(R),
+						  true;
+					     (_) ->
+						  false
+					  end, Rs)
+				end
+			end,
+		    mnesia:transaction(F)
+	    end*)
+
+  let unregister_route domain _pid =
+	    (*case get_component_number(LDomain) of
+		undefined ->*)
+    Hashtbl.remove route_table domain
+		(*_ ->
+		    F = fun() ->
+				case mnesia:match_object(#route{domain=LDomain,
+								pid = Pid,
+								_ = '_'}) of
+				    [R] ->
+					I = R#route.local_hint,
+					mnesia:write(
+					  #route{domain = LDomain,
+						 pid = undefined,
+						 local_hint = I}),
+					mnesia:delete_object(R);
+				    _ ->
+					ok
+				end
+			end,
+		    mnesia:transaction(F)
+	    end*)
+
+
+  let s2s_route =
+    ref (fun from to' packet ->
+	   (* TODO *)
+           Printf.eprintf "S2S route stub\nfrom: %s\n to: %s\npacket: %s\n"
+	     (Jlib.jid_to_string from)
+	     (Jlib.jid_to_string to')
+	     (Xml.element_to_string packet); flush stderr;
+	   ())
+
+  let do_route orig_from orig_to orig_packet =
+           Printf.eprintf "Route\nfrom: %s\n to: %s\npacket: %s\n"
+	     (Jlib.jid_to_string orig_from)
+	     (Jlib.jid_to_string orig_to)
+	     (Xml.element_to_string orig_packet); flush stderr;
+    (*?DEBUG("route~n\tfrom ~p~n\tto ~p~n\tpacket ~p~n",
+	   [OrigFrom, OrigTo, OrigPacket]),*)
+    match (*ejabberd_hooks:run_fold(filter_packet,
+				 {OrigFrom, OrigTo, OrigPacket}, [])*)
+      (* TODO *)
+      Some (orig_from, orig_to, orig_packet) with
+	| Some (from, to', packet) -> (
+	    let ldstdomain = to'.Jlib.lserver in
+	    let r =
+	      try
+		Some (Hashtbl.find route_table ldstdomain)
+	      with
+		| Not_found -> None
+	    in
+	      match r with
+		| None ->
+		    !s2s_route from to' packet
+		| Some r ->
+		    let pid = r.pid in
+		    (*if
+			node(Pid) == node() ->*)
+		      match r.local_hint with
+			| Some f ->
+				f from to' packet
+			| None ->
+			    pid $! `Route (from, to', packet)
+			(*is_pid(Pid) ->
+			    Pid ! {route, From, To, Packet};
+			true ->
+			    drop
+		    end;*)
+		(*Rs ->
+		    Value = case ejabberd_config:get_local_option(
+				   {domain_balancing, LDstDomain}) of
+				undefined -> now();
+				random -> now();
+				source -> jlib:jid_tolower(From);
+				destination -> jlib:jid_tolower(To);
+				bare_source ->
+				    jlib:jid_remove_resource(
+				      jlib:jid_tolower(From));
+				bare_destination ->
+				    jlib:jid_remove_resource(
+				      jlib:jid_tolower(To))
+			    end,
+		    case get_component_number(LDstDomain) of
+			undefined ->
+			    case [R || R <- Rs, node(R#route.pid) == node()] of
+				[] ->
+				    R = lists:nth(erlang:phash(Value, length(Rs)), Rs),
+				    Pid = R#route.pid,
+				    if
+					is_pid(Pid) ->
+					    Pid ! {route, From, To, Packet};
+					true ->
+					    drop
+				    end;
+				LRs ->
+				    R = lists:nth(erlang:phash(Value, length(LRs)), LRs),
+				    Pid = R#route.pid,
+				    case R#route.local_hint of
+					{apply, Module, Function} ->
+					    Module:Function(From, To, Packet);
+					_ ->
+					    Pid ! {route, From, To, Packet}
+				    end
+			    end;
+			_ ->
+			    SRs = lists:ukeysort(#route.local_hint, Rs),
+			    R = lists:nth(erlang:phash(Value, length(SRs)), SRs),
+			    Pid = R#route.pid,
+			    if
+				is_pid(Pid) ->
+				    Pid ! {route, From, To, Packet};
+				true ->
+				    drop
+			    end
+		    end
+		*)
+	  )
+	| None ->
+	    (*?DEBUG("packet dropped~n", []),*)
+	    ()
+
+
+
+
+  let route from to' packet =
+    try
+      do_route from to' packet
+    with
+      | exn ->
+	  (* TODO *)
+          Printf.eprintf "Exception %s when processing\nfrom: %s\n to: %s\npacket: %s\n"
+	    (Printexc.to_string exn)
+	    (Jlib.jid_to_string from)
+	    (Jlib.jid_to_string to')
+	    (Xml.element_to_string packet); flush stderr;
+	  ()
+	  (*?ERROR_MSG("~p~nwhen processing: ~p",
+		       [Reason, {From, To, Packet}]);*)
+
+end
+
+module SM :
+sig
+  type msg = Router.msg
+  type info = [ `TODO ]
+
+  val route : Router.t
+end
+  =
+struct
+(*
+  module OrderedNode =
+  struct
+    type t = Jlib.nodepreped
+    let compare = compare
+  end
+  module NodeSet = Set.Make(OrderedNode)
+
+  module OrderedName =
+  struct
+    type t = Jlib.namepreped
+    let compare = compare
+  end
+  module NameSet = Set.Make(OrderedName)
+
+  module OrderedResource =
+  struct
+    type t = Jlib.resourcepreped
+    let compare = compare
+  end
+  module ResourceSet = Set.Make(OrderedResource)
+*)
+
+  type msg = Router.msg
+  type info = [ `TODO ]
+
+  module Session :
+  sig
+    type sid = float * msg pid
+
+    type session =
+	{usr : LJID.t;
+	 priority : int;
+	 info : info}
+
+    val add : sid -> session -> unit
+    val remove : sid -> unit
+    val find_exn : sid -> session
+    val find : sid -> session option
+    val find_sids_by_usr :
+      Jlib.nodepreped -> Jlib.namepreped -> Jlib.resourcepreped -> sid list
+    val find_sids_by_us : Jlib.nodepreped -> Jlib.namepreped -> sid list
+  end
+    =
+  struct
+    type sid = float * msg pid
+
+    type session =
+	{usr : LJID.t;
+	 priority : int;
+	 info : [ `TODO ]}
+
+    let sessions = Hashtbl.create 100
+    let usr_idx = Hashtbl.create 10
+
+    let add_r_idx r_idx r sid =
+      let sids =
+	try
+	  Hashtbl.find r_idx r
+	with
+	  | Not_found -> []
+      in
+	Hashtbl.replace r_idx r (sid :: sids)
+
+    let add_ur_idx ur_idx u r sid =
+      let r_idx =
+	try
+	  Hashtbl.find ur_idx u
+	with
+	  | Not_found ->
+	      let r_idx = Hashtbl.create 1 in
+		Hashtbl.add ur_idx u r_idx;
+		r_idx
+      in
+	add_r_idx r_idx r sid
+
+    let add_usr_idx (u, s, r) sid =
+      let ur_idx =
+	try
+	  Hashtbl.find usr_idx s
+	with
+	  | Not_found ->
+	      let ur_idx = Hashtbl.create 10 in
+		Hashtbl.add usr_idx s ur_idx;
+		ur_idx
+      in
+	add_ur_idx ur_idx u r sid
+
+    let add sid session =
+      Hashtbl.add sessions sid session;
+      add_usr_idx session.usr sid
+
+
+    let remove_r_idx r_idx r sid =
+      let sids =
+	try
+	  Hashtbl.find r_idx r
+	with
+	  | Not_found -> []
+      in
+      let sids = List.filter ((<>) sid) sids in
+	match sids with
+	  | [] ->
+	      Hashtbl.remove r_idx r
+	  | _ ->
+	      Hashtbl.replace r_idx r sids
+
+    let remove_ur_idx ur_idx u r sid =
+      let r_idx =
+	try
+	  Hashtbl.find ur_idx u
+	with
+	  | Not_found -> assert false
+      in
+	remove_r_idx r_idx r sid
+
+    let remove_usr_idx (u, s, r) sid =
+      let ur_idx =
+	try
+	  Hashtbl.find usr_idx s
+	with
+	  | Not_found -> assert false
+      in
+	remove_ur_idx ur_idx u r sid
+
+    let remove sid =
+      try
+	let session = Hashtbl.find sessions sid in
+	  remove_usr_idx session.usr sid
+      with
+	| Not_found -> ()
+
+    let find_exn sid =
+      Hashtbl.find sessions sid
+
+    let find sid =
+      try
+	Some (find_exn sid)
+      with
+	| Not_found -> None
+
+    let find_sids_by_usr u s r =
+      try
+	let ur_idx = Hashtbl.find usr_idx s in
+	let r_idx = Hashtbl.find ur_idx u in
+	let sids = Hashtbl.find r_idx r in
+	  sids
+      with
+	| Not_found -> []
+
+    let find_sids_by_us u s =
+      try
+	let ur_idx = Hashtbl.find usr_idx s in
+	let r_idx = Hashtbl.find ur_idx u in
+	let sids = Hashtbl.fold (fun _r sids acc -> sids @ acc) r_idx [] in
+	  sids
+      with
+	| Not_found -> []
+
+
+  end
+  open Session
+
+
+  let set_session sid user server resource priority info =
+    let usr = (user, server, resource) in
+      add sid {usr; priority; info}
+
+  let check_existing_resources user server resource =
+    (* A connection exist with the same resource. We replace it: *)
+    let sids = find_sids_by_usr user server resource in
+      match sids with
+	| [] -> ()
+	| s :: sids' ->
+	    let max_sid = List.fold_left max s sids' in
+	      List.iter
+		(fun ((_, pid) as s) ->
+		   if s <> max_sid then (
+		     (* TODO *)
+		     ()
+		     (* Pid ! replaced; *)
+		   )
+		) sids
+
+(* Get the user_max_session setting
+   This option defines the max number of time a given users are allowed to
+   log in
+   Defaults to infinity *)
+  let get_max_user_sessions user host =
+    (* TODO *)
+    max_int
+    (*case acl:match_rule(
+	   Host, max_user_sessions, jlib:make_jid(LUser, Host, "")) of
+	Max when is_integer(Max) -> Max;
+	infinity -> infinity;
+	_ -> ?MAX_USER_SESSIONS
+    end.*)
+
+
+  let check_max_sessions user server =
+    (* If the max number of sessions for a given is reached, we replace the
+       first one *)
+    let sids = find_sids_by_us user server in
+    let max_sessions = get_max_user_sessions user server in
+      match sids with
+	| s :: sids' when List.length sids > max_sessions ->
+	    let min_sid = List.fold_left min s sids' in
+	    let (_, pid) = min_sid in
+	      (* TODO *)
+	      ()
+	      (*Pid ! replaced*)
+	| _ -> ()
+
+
+  (* On new session, check if some existing connections need to be replace *)
+  let check_for_sessions_to_replace user server resource =
+    (* TODO: Depending on how this is executed, there could be an unneeded
+       replacement for max_sessions. We need to check this at some point. *)
+    check_existing_resources user server resource;
+    check_max_sessions user server
+
+  let open_session sid user server resource priority info =
+    set_session sid user server resource priority info;
+    check_for_sessions_to_replace user server resource
+    (*JID = jlib:make_jid(User, Server, Resource),
+    ejabberd_hooks:run(sm_register_connection_hook, JID#jid.lserver,
+		       [SID, JID, Info]).*)
+
+  let do_close_session sid =
+    remove sid
+    (*
+    Info = case mnesia:dirty_read({session, SID}) of
+	       [] -> [];
+	       [#session{info=I}] -> I
+	   end,
+    drop_session(SID),
+    Info.*)
+
+  let close_session sid _user _server _resource =
+    do_close_session sid
+    (*Info = do_close_session(SID),
+    US = {jlib:nodeprep(User), jlib:nameprep(Server)},
+    case ejabberd_cluster:get_node_new(US) of
+	Node when Node /= node() ->
+	    rpc:cast(Node, ?MODULE, drop_session, [SID]);
+	_ ->
+	    ok
+    end,
+    JID = jlib:make_jid(User, Server, Resource),
+    ejabberd_hooks:run(sm_remove_connection_hook, JID#jid.lserver,
+		       [SID, JID, Info]).
+    *)
+
+  let clean_session_list sessions =
+    let rec clean_session_list ss res =
+      match ss with
+	| [] -> res
+	| [s] -> s :: res
+	| ((sid1, ses1) as s1) :: ((((sid2, ses2) as s2) :: rest) as rest') ->
+	    if ses1.usr = ses2.usr then (
+	      if sid1 > sid2
+	      then clean_session_list (s1 :: rest) res
+	      else clean_session_list (s2 :: rest) res
+	    ) else clean_session_list rest' (s1 :: res)
+    in
+      clean_session_list
+	(List.sort (fun (_, x) (_, y) -> compare x.usr y.usr) sessions) []
+
+  let get_user_resources luser lserver =
+    let sids = find_sids_by_us luser lserver in
+    let sessions = List.map (fun s -> (s, find_exn s)) sids in
+    let sessions = clean_session_list sessions in
+      List.map
+	(fun (_sid, {usr = (_, _, r); _}) -> r)
+	sessions
+
+  let get_user_present_resources luser lserver =
+    let sids = find_sids_by_us luser lserver in
+    let sessions = List.map (fun s -> (s, find_exn s)) sids in
+    let sessions = clean_session_list sessions in
+      List.map
+	(fun (sid, {priority; usr = (_, _, r); _}) -> (priority, r, sid))
+	sessions
+
+  let bounce_offline_message from to' packet =
+    let err = Jlib.make_error_reply packet Jlib.err_service_unavailable in
+      Router.route to' from err
+	(*stop.*)
+
+
+  let route_message from to' packet =
+    let luser = to'.Jlib.luser in
+    let lserver = to'.Jlib.lserver in
+    let prio_res = get_user_present_resources luser lserver in
+    let priority =
+      match prio_res with
+	| [] -> None
+	| p :: prio_res' ->
+	    let (max_p, _, _) = List.fold_left max p prio_res' in
+	      if max_p >= 0
+	      then Some max_p
+	      else None
+    in
+      match priority with
+	| Some priority ->
+	    (* Route messages to all priority that equals the max, if
+	       positive *)
+	    List.iter
+	      (fun (p, _r, sid) ->
+		 if p = priority then (
+		   let (_, pid) = sid in
+		     (*?DEBUG("sending to process ~p~n", [Pid]),*)
+		     pid $! `Route (from, to', packet)
+		 )
+	      ) prio_res
+	| _ -> (
+	    match Xml.get_tag_attr_s "type" packet with
+	      | "error" ->
+		  ()
+	      | "groupchat"
+	      | "headline" ->
+		  bounce_offline_message from to' packet
+	      | _ -> (
+		  match Auth.does_user_exist luser lserver with
+		    | true -> (
+			(* TODO *) ()
+			    (*case is_privacy_allow(From, To, Packet) of
+				true ->
+				    ejabberd_hooks:run(offline_message_hook,
+						       LServer,
+						       [From, To, Packet]);
+				false ->
+				    ok
+			    end;*)
+		      )
+		    | _ ->
+			let err =
+			  Jlib.make_error_reply
+			    packet Jlib.err_service_unavailable
+			in
+			  Router.route to' from err
+		)
+	  )
+
+  let process_iq from to' packet =
+    match Jlib.iq_query_info packet with
+      | `IQ ({Jlib.iq_xmlns = xmlns; _} as iq) -> (
+	  let host = to'.Jlib.lserver in
+	    (* TODO *)
+	    (*case ets:lookup(sm_iqtable, {XMLNS, Host}) of
+		[{_, Module, Function}] ->
+		    ResIQ = Module:Function(From, To, IQ),
+		    if
+			ResIQ /= ignore ->
+			    ejabberd_router:route(To, From,
+						  jlib:iq_to_xml(ResIQ));
+			true ->
+			    ok
+		    end;
+		[{_, Module, Function, Opts}] ->
+		    gen_iq_handler:handle(Host, Module, Function, Opts,
+					  From, To, IQ);
+		[] ->*)
+	  let err =
+	    Jlib.make_error_reply packet Jlib.err_service_unavailable
+	  in
+	    Router.route to' from err
+	)
+      | `Reply -> ()
+      | _ ->
+	  let err =
+	    Jlib.make_error_reply packet Jlib.err_bad_request
+	  in
+	    Router.route to' from err
+
+
+  let rec do_route from to' packet =
+    let {Jlib.luser = luser;
+	 Jlib.lserver = lserver;
+	 Jlib.lresource = lresource; _} = to' in
+    let `XmlElement (name, attrs, _els) = packet in
+      match (lresource :> string) with
+	| "" -> (
+	    match name with
+	      | "presence" -> (
+		  let pass = true in	(* TODO *)
+		    (*
+		    {Pass, _Subsc} =
+			case xml:get_attr_s("type", Attrs) of
+			    "subscribe" ->
+				Reason = xml:get_path_s(
+					   Packet,
+					   [{elem, "status"}, cdata]),
+				{is_privacy_allow(From, To, Packet) andalso
+				 ejabberd_hooks:run_fold(
+				   roster_in_subscription,
+				   LServer,
+				   false,
+				   [User, Server, From, subscribe, Reason]),
+				 true};
+			    "subscribed" ->
+				{is_privacy_allow(From, To, Packet) andalso
+				 ejabberd_hooks:run_fold(
+				   roster_in_subscription,
+				   LServer,
+				   false,
+				   [User, Server, From, subscribed, ""]),
+				 true};
+			    "unsubscribe" ->
+				{is_privacy_allow(From, To, Packet) andalso
+				 ejabberd_hooks:run_fold(
+				   roster_in_subscription,
+				   LServer,
+				   false,
+				   [User, Server, From, unsubscribe, ""]),
+				 true};
+			    "unsubscribed" ->
+				{is_privacy_allow(From, To, Packet) andalso
+				 ejabberd_hooks:run_fold(
+				   roster_in_subscription,
+				   LServer,
+				   false,
+				   [User, Server, From, unsubscribed, ""]),
+				 true};
+			    _ ->
+				{true, false}
+			end,
+		    *)
+		    if pass then (
+		      let presources =
+			get_user_present_resources luser lserver
+		      in
+			List.iter
+			  (fun (_, r, _sid) ->
+			     do_route
+			       from (Jlib.jid_replace_resource' to' r) packet
+			  ) presources
+		    )
+		)
+	      | "message" ->
+		  route_message from to' packet
+	      | "iq" ->
+		  process_iq from to' packet
+	      | "broadcast" ->
+		  List.iter
+		    (fun r ->
+		       do_route from (Jlib.jid_replace_resource' to' r) packet
+		    ) (get_user_resources luser lserver)
+	      | _ ->
+		  ()
+	  )
+	| _ -> (
+	    match find_sids_by_usr luser lserver lresource with
+	      | [] -> (
+		  match name with
+		    | "message" ->
+			route_message from to' packet
+		    | "iq" -> (
+			match Xml.get_attr_s "type" attrs with
+			  | "error"
+			  | "result" -> ()
+			  | _ ->
+			      let err =
+				Jlib.make_error_reply
+				  packet Jlib.err_service_unavailable
+			      in
+				Router.route to' from err
+		      )
+		    | _ ->
+			(*?DEBUG("packet droped~n", [])*)
+			()
+		)
+	      | s :: sids ->
+		  let sid = List.fold_left max s sids in
+		  let (_, pid) = sid in
+		    (*?DEBUG("sending to process ~p~n", [Pid]),*)
+		    pid $! `Route (from, to', packet)
+	  )
+
+  let route from to' packet =
+    try
+      do_route from to' packet
+    with
+      | exn ->
+	  (* TODO *)
+          Printf.eprintf "Exception %s when processing\nfrom: %s\n to: %s\npacket: %s\n"
+	    (Printexc.to_string exn)
+	    (Jlib.jid_to_string from)
+	    (Jlib.jid_to_string to')
+	    (Xml.element_to_string packet); flush stderr;
+	  ()
+	  (*?ERROR_MSG("~p~nwhen processing: ~p",
+		       [Reason, {From, To, Packet}]);*)
+
+end
+
+module Local =
+struct
+
+  let process_iq from to' packet =
+    (* TODO *) ()
+    (*IQ = jlib:iq_query_info(Packet),
+    case IQ of
+	#iq{xmlns = XMLNS} ->
+	    Host = To#jid.lserver,
+	    case ets:lookup(?IQTABLE, {XMLNS, Host}) of
+		[{_, Module, Function}] ->
+		    ResIQ = Module:Function(From, To, IQ),
+		    if
+			ResIQ /= ignore ->
+			    ejabberd_router:route(
+			      To, From, jlib:iq_to_xml(ResIQ));
+			true ->
+			    ok
+		    end;
+		[{_, Module, Function, Opts}] ->
+		    gen_iq_handler:handle(Host, Module, Function, Opts,
+					  From, To, IQ);
+		[] ->
+		    Err = jlib:make_error_reply(
+			    Packet, ?ERR_FEATURE_NOT_IMPLEMENTED),
+		    ejabberd_router:route(To, From, Err)
+	    end;
+	reply ->
+	    IQReply = jlib:iq_query_or_response_info(Packet),
+	    process_iq_reply(From, To, IQReply);
+	_ ->
+	    Err = jlib:make_error_reply(Packet, ?ERR_BAD_REQUEST),
+	    ejabberd_router:route(To, From, Err),
+	    ok
+    end.*)
+
+
+  let do_route from to' packet =
+    (*?DEBUG("local route~n\tfrom ~p~n\tto ~p~n\tpacket ~P~n",
+	   [From, To, Packet, 8]),*)
+    if (to'.Jlib.luser :> string) <> ""
+    then SM.route from to' packet
+    else if (to'.Jlib.lresource :> string) = "" then (
+      let `XmlElement (name, _attrs, _els) = packet in
+	match name with
+	  | "iq" ->
+	      process_iq from to' packet
+	  | "message"
+	  | "presence"
+	  | _ ->
+	      ()
+    ) else (
+      let `XmlElement (_name, attrs, _els) = packet in
+	match Xml.get_attr_s "type" attrs with
+	  | "error"
+	  | "result" -> ()
+	  | _ ->
+	      (* TODO *) ()
+		    (*ejabberd_hooks:run(local_send_to_resource_hook,
+				       To#jid.lserver,
+				       [From, To, Packet])*)
+    )
+
+
+  let route from to' packet =
+    try
+      do_route from to' packet
+    with
+      | exn ->
+	  (* TODO *)
+          Printf.eprintf "Exception %s when processing\nfrom: %s\n to: %s\npacket: %s\n"
+	    (Printexc.to_string exn)
+	    (Jlib.jid_to_string from)
+	    (Jlib.jid_to_string to')
+	    (Xml.element_to_string packet); flush stderr;
+	  ()
+	  (*?ERROR_MSG("~p~nwhen processing: ~p",
+		       [Reason, {From, To, Packet}]);*)
+
+  let myhosts () =
+    List.map Jlib.nameprep_exn ["localhost"; "e.localhost"] (* TODO *)
+
+  let () =
+    let pid = spawn (fun s -> Lwt.return ()) in
+      List.iter
+	(fun host ->
+	   Router.register_route ~local_hint:(Some route) host pid
+	     (*ejabberd_hooks:add(local_send_to_resource_hook, Host,
+	       ?MODULE, bounce_resource_packet, 100)*)
+	) (myhosts ())
+
+
+end
+
+
 module C2S :
 sig
   type msg = [ Tcp.msg | XMLReceiver.msg | GenServer.msg | `Zxc of string * int ]
@@ -1118,7 +2206,7 @@ struct
     | Wait_for_feature_request
     | Wait_for_bind
     | Wait_for_session
-    | Wait_for_sasl_response of (string -> SASL.step_result)
+    | Wait_for_sasl_response of SASL.t
     | Session_established
 
   type state =
@@ -1140,15 +2228,16 @@ struct
        server : Jlib.namepreped;
        resource : Jlib.resourcepreped;
        jid : Jlib.jid;
-       (*sid : string;
-       pres_t = ?SETS:new(),
-       pres_f = ?SETS:new(),
-       pres_a = ?SETS:new(),
-       pres_i = ?SETS:new(),
-       pres_last, pres_pri,
-       pres_timestamp,
-       pres_invis = false,
-       privacy_list = #userlist{},
+       (*sid : string;*)
+       pres_t : LJIDSet.t;
+       pres_f : LJIDSet.t;
+       pres_a : LJIDSet.t;
+       pres_i : LJIDSet.t;
+       pres_last : Xml.element option;
+       (*pres_pri,*)
+       pres_timestamp : float;
+       pres_invis : bool;
+       (*privacy_list = #userlist{},
        conn = unknown,
        auth_module = unknown,*)
        ip : Unix.inet_addr;
@@ -1173,6 +2262,13 @@ struct
 		 server = Jlib.nameprep_exn "";
 		 resource = Jlib.resourceprep_exn "";
 		 jid = Jlib.make_jid_exn "" "" "";
+		 pres_t = LJIDSet.empty;
+		 pres_f = LJIDSet.empty;
+		 pres_a = LJIDSet.empty;
+		 pres_i = LJIDSet.empty;
+		 pres_timestamp = 0.0;
+		 pres_invis = false;
+		 pres_last = None;
 		 ip = Unix.inet_addr_any;	(* TODO *)
 		 lang = "";
 		}
@@ -1185,6 +2281,7 @@ struct
   let invalid_ns_err = Jlib.serr_invalid_namespace
   let invalid_xml_err = Jlib.serr_xml_not_well_formed
   let host_unknown_err = Jlib.serr_host_unknown
+  let invalid_from = Jlib.serr_invalid_from
 
   let send_text state text =
     Printf.printf "Send XML on stream = %S\n" text; flush stdout;
@@ -1253,8 +2350,8 @@ struct
       | _ ->
 	  None
 
-  let new_id () =			(* TODO *)
-    string_of_int (Random.int 1000000000)
+  let new_id () =
+    Jlib.get_random_string ()
 
   let process_unauthenticated_stanza state el =
     let el =
@@ -1298,6 +2395,345 @@ struct
 	| _ ->
 	    (* Drop any stanza, which isn't IQ stanza *)
 	    ()
+
+  let privacy_check_packet state from to' packet dir =
+    (* TODO *)
+    true
+    (*ejabberd_hooks:run_fold(
+      privacy_check_packet, StateData#state.server,
+      allow,
+      [StateData#state.user,
+       StateData#state.server,
+       StateData#state.privacy_list,
+       {From, To, Packet},
+       Dir]).
+    *)
+
+
+  let presence_broadcast state from jidset packet =
+    LJIDSet.iter
+      (fun ljid ->
+	 let fjid = Jlib.ljid_to_jid ljid in
+	   match privacy_check_packet state from fjid packet `Out with
+	     | false -> ()
+	     | true ->
+		 Router.route from fjid packet
+      ) jidset
+
+  let presence_broadcast_to_trusted state from t a packet =
+    LJIDSet.iter
+      (fun ljid ->
+	 if LJIDSet.mem ljid t then (
+	   let fjid = Jlib.ljid_to_jid ljid in
+	     match privacy_check_packet state from fjid packet `Out with
+	       | false -> ()
+	       | true ->
+		   Router.route from fjid packet
+	 )
+      ) a
+
+
+  let presence_broadcast_first from state packet =
+    LJIDSet.iter
+      (fun ljid ->
+	 let fjid = Jlib.ljid_to_jid ljid in
+	 (* TODO *)
+	   ()
+		      (* ejabberd_router:route(
+			 From,
+			 jlib:make_jid(JID),
+			 {xmlelement, "presence",
+			  [{"type", "probe"}],
+			  []}),
+		      *)
+      ) state.pres_t;
+    if state.pres_invis
+    then state
+    else (
+      let pres_a =
+	LJIDSet.fold
+	  (fun ljid a ->
+	     let fjid = Jlib.ljid_to_jid ljid in
+	       (match privacy_check_packet state from fjid packet `Out with
+		  | false -> ()
+		  | true ->
+		      Router.route from fjid packet
+	       );
+	       LJIDSet.add ljid a
+	  ) state.pres_f state.pres_a
+      in
+	{state with pres_a}
+    )
+
+
+  let update_priority priority packet state =
+    (* TODO *)
+    ()
+    (*Info = [{ip, StateData#state.ip}, {conn, StateData#state.conn},
+	     {auth_module, StateData#state.auth_module}],
+    ejabberd_sm:set_presence(StateData#state.sid,
+			     StateData#state.user,
+			     StateData#state.server,
+			     StateData#state.resource,
+			     Priority,
+			     Packet,
+			     Info).
+    *)
+
+
+  let get_priority_from_presence presence_packet =
+    match Xml.get_subtag presence_packet "priority" with
+      | None -> 0
+      | Some sub_el -> (
+	  try
+	    int_of_string (Xml.get_tag_cdata sub_el)
+	  with
+	    | Failure "int_of_string" -> 0
+	)
+
+
+  let resend_offline_messages state =
+    (* TODO *)
+    ()
+    (*case ejabberd_hooks:run_fold(
+	   resend_offline_messages_hook, StateData#state.server,
+	   [],
+	   [StateData#state.user, StateData#state.server]) of
+	Rs when is_list(Rs) ->
+	    lists:foreach(
+	      fun({route,
+		   From, To, {xmlelement, _Name, _Attrs, _Els} = Packet}) ->
+		      Pass = case privacy_check_packet(StateData, From, To, Packet, in) of
+				 allow ->
+				     true;
+				 deny ->
+				     false
+			     end,
+		      if
+			  Pass ->
+			      %% Attrs2 = jlib:replace_from_to_attrs(
+			      %%		 jlib:jid_to_string(From),
+			      %%		 jlib:jid_to_string(To),
+			      %%		 Attrs),
+			      %% FixedPacket = {xmlelement, Name, Attrs2, Els},
+                              %% Use route instead of send_element to go through standard workflow
+                              ejabberd_router:route(From, To, Packet);
+			      %% send_element(StateData, FixedPacket),
+			      %% ejabberd_hooks:run(user_receive_packet,
+			      %%			 StateData#state.server,
+			      %%			 [StateData#state.jid,
+			      %%			  From, To, FixedPacket]);
+			  true ->
+			      ok
+		      end
+	      end, Rs)
+    end.
+    *)
+
+  let resend_subscription_requests ({user = user;
+				     server = server; _} as state) =
+    (* TODO *)
+    ()
+    (*PendingSubscriptions = ejabberd_hooks:run_fold(
+			     resend_subscription_requests_hook,
+			     Server,
+			     [],
+			     [User, Server]),
+    lists:foreach(fun(XMLPacket) ->
+			  send_element(StateData,
+				       XMLPacket)
+		  end,
+		  PendingSubscriptions).
+    *)
+
+
+  let check_privacy_route from state from_route to' packet =
+    match privacy_check_packet state from to' packet `Out with
+      | false ->
+	  let lang = state.lang in
+	  let err_text = "Your active privacy list has denied the routing of this stanza." in
+	  let err =
+	    Jlib.make_error_reply packet
+	      (Jlib.errt_not_acceptable lang err_text)
+	  in
+	    Router.route to' from err
+      | true ->
+	  Router.route from to' packet
+
+
+(* User updates his presence (non-directed presence packet) *)
+  let presence_update from packet state =
+    let `XmlElement (_name, attrs, _els) = packet in
+      match Xml.get_attr_s "type" attrs with
+	| "unavailable" ->
+	    let status =
+	      match Xml.get_subtag packet "status" with
+		| None -> ""
+		| Some status_tag ->
+		    Xml.get_tag_cdata status_tag
+	    in
+	    (*Info = [{ip, StateData#state.ip}, {conn, StateData#state.conn},
+		    {auth_module, StateData#state.auth_module}],
+	    ejabberd_sm:unset_presence(StateData#state.sid,
+				       StateData#state.user,
+				       StateData#state.server,
+				       StateData#state.resource,
+				       Status,
+				       Info),
+	    *)
+	      presence_broadcast state from state.pres_a packet;
+	      presence_broadcast state from state.pres_i packet;
+	      {state with
+		 pres_last = None;
+		 pres_timestamp = 0.0;
+		 pres_a = LJIDSet.empty;
+		 pres_i = LJIDSet.empty;
+		 pres_invis = false}
+	| "invisible" ->
+	    let new_priority = get_priority_from_presence packet in
+	      update_priority new_priority packet state;
+	      let state =
+		if not state.pres_invis then (
+		  presence_broadcast state from state.pres_a packet;
+		  presence_broadcast state from state.pres_i packet;
+		  let state =
+		    {state with
+		       pres_last = None;
+		       pres_timestamp = 0.0;
+		       pres_a = LJIDSet.empty;
+		       pres_i = LJIDSet.empty;
+		       pres_invis = true}
+		  in
+		    presence_broadcast_first from state packet
+		) else state
+	      in
+		state
+	| "error"
+	| "probe"
+	| "subscribe"
+	| "subscribed"
+	| "unsubscribe"
+	| "unsubscribed" ->
+	    state
+	| _ ->
+	    let old_priority =
+	      match state.pres_last with
+		| None -> 0
+		| Some old_presence ->
+		    get_priority_from_presence old_presence
+	    in
+	    let new_priority = get_priority_from_presence packet in
+	    let timestamp = Unix.gettimeofday () in
+	      update_priority new_priority packet state;
+	      let from_unavail = state.pres_last = None || state.pres_invis in
+		(*?DEBUG("from unavail = ~p~n", [FromUnavail]),*)
+	      let state =
+                let state = {state with
+			       pres_last = Some packet;
+                               pres_invis = false;
+                               pres_timestamp = timestamp}
+		in
+		  if from_unavail then (
+		    (*ejabberd_hooks:run(user_available_hook,
+				       NewStateData#state.server,
+				       [NewStateData#state.jid]),*)
+		    if new_priority >= 0 then (
+		      resend_offline_messages state;
+		      resend_subscription_requests state
+		    );
+		    presence_broadcast_first from state packet
+		  ) else (
+		    presence_broadcast_to_trusted
+		      state from state.pres_f state.pres_a packet;
+		    if old_priority < 0 && new_priority >= 0
+		    then resend_offline_messages state;
+		    state
+		  )
+	      in
+		state
+
+
+  (* User sends a directed presence packet *)
+  let presence_track from to' packet state =
+    let `XmlElement (_name, attrs, _els) = packet in
+    let lto = Jlib.jid_tolower to' in
+    let user = state.user in
+    let server = state.server in
+      match Xml.get_attr_s "type" attrs with
+	| "unavailable" ->
+	    check_privacy_route from state from to' packet;
+	    let pres_i = LJIDSet.remove lto state.pres_i in
+	    let pres_a = LJIDSet.remove lto state.pres_a in
+	      {state with pres_i; pres_a}
+	| "invisible" ->
+	    check_privacy_route from state from to' packet;
+	    let pres_i = LJIDSet.add lto state.pres_i in
+	    let pres_a = LJIDSet.remove lto state.pres_a in
+	      {state with pres_i; pres_a}
+	| "subscribe" ->
+	    (*ejabberd_hooks:run(roster_out_subscription,
+	      Server,
+	      [User, Server, To, subscribe]),*)
+	    check_privacy_route from state (Jlib.jid_remove_resource from)
+	      to' packet;
+	    state
+	| "subscribed" ->
+	    (*ejabberd_hooks:run(roster_out_subscription,
+			       Server,
+			       [User, Server, To, subscribed]),*)
+	    check_privacy_route from state (Jlib.jid_remove_resource from)
+	      to' packet;
+	    state
+	| "unsubscribe" ->
+	    (*ejabberd_hooks:run(roster_out_subscription,
+			       Server,
+			       [User, Server, To, unsubscribe]),*)
+	    check_privacy_route from state (Jlib.jid_remove_resource from)
+	      to' packet;
+	    state
+	| "unsubscribed" ->
+	    (*ejabberd_hooks:run(roster_out_subscription,
+			       Server,
+			       [User, Server, To, unsubscribed]),*)
+	    check_privacy_route from state (Jlib.jid_remove_resource from)
+	      to' packet;
+	    state
+	| "error"
+	| "probe" ->
+	    check_privacy_route from state from to' packet;
+	    state
+	| _ ->
+	    check_privacy_route from state from to' packet;
+	    let pres_i = LJIDSet.remove lto state.pres_i in
+	    let pres_a = LJIDSet.add lto state.pres_a in
+	      {state with pres_i; pres_a}
+
+
+  (* Check from attributes
+     returns invalid-from|NewElement *)
+  let check_from el from_jid =
+    match Xml.get_tag_attr "from" el with
+      | None -> true
+      | Some sjid -> (
+	  let jid' = Jlib.string_to_jid sjid in
+	    match jid' with
+	      | None -> false
+	      | Some jid ->
+		    if jid.Jlib.luser = from_jid.Jlib.luser &&
+		      jid.Jlib.lserver = from_jid.Jlib.lserver &&
+		      jid.Jlib.lresource = from_jid.Jlib.lresource
+		    then true
+		    else if jid.Jlib.luser = from_jid.Jlib.luser &&
+		      jid.Jlib.lserver = from_jid.Jlib.lserver &&
+		      (jid.Jlib.lresource :> string) = ""
+		    then true
+		    else false
+	)
+
+
+  let fsm_next_state state =
+    (* TODO *)
+    Lwt.return (`Continue state)
 
 
   let wait_for_stream msg state =
@@ -1701,7 +3137,6 @@ wait_for_auth(timeout, StateData) ->
 	  Lwt.return (`Stop state)
 
   let wait_for_feature_request msg state =
-    Printf.printf "aaaaaaaaaaaassssssssssssdddddddddd0\n"; flush stdout;
     match msg with
       | `XmlStreamElement el -> (
 	  let `XmlElement (name, attrs, els) = el in
@@ -1713,7 +3148,6 @@ wait_for_auth(timeout, StateData) ->
 	    match (Xml.get_attr_s "xmlns" attrs), name with
 	      | <:ns<SASL>>, "auth" (*when not ((SockMod == gen_tcp) and
 				      TLSRequired)*) (* TODO *) -> (
-		  Printf.printf "aaaaaaaaaaaassssssssssssdddddddddd\n"; flush stdout;
 		  let mech = Xml.get_attr_s "mechanism" attrs in
 		  let client_in = Jlib.decode_base64 (Xml.get_cdata els) in
 		  let sasl_result =
@@ -1887,12 +3321,403 @@ wait_for_feature_request(timeout, StateData) ->
 	  Lwt.return (`Stop state)
 
 
+  let wait_for_sasl_response msg sasl_state state =
+    match msg with
+      | `XmlStreamElement el -> (
+	  let `XmlElement (name, attrs, els) = el in
+	    match Xml.get_attr_s "xmlns" attrs, name with
+	      | <:ns<SASL>>, "response" -> (
+		  let client_in = Jlib.decode_base64 (Xml.get_cdata els) in
+		    match SASL.server_step sasl_state client_in with
+		      | SASL.Done props -> (
+			  (*catch (StateData#state.sockmod):reset_stream(
+                            StateData#state.socket),*)
+			  XMLReceiver.reset_stream state.xml_receiver;
+			  let u = Jlib.nodeprep_exn (List.assoc `Username props) in	(* TODO *)
+			    (*AuthModule = xml:get_attr_s(auth_module, Props),
+			      ?INFO_MSG("(~w) Accepted authentication for ~s by ~p",
+			      [StateData#state.socket, U, AuthModule]),*)
+			  lwt () = Lwt_io.printf "Accepted authentication for %s\n" (u :> string) in
+                            send_element state
+                              (`XmlElement ("success",
+                                            [("xmlns", <:ns<SASL>>)], []));
+                            Lwt.return
+			      (`Continue
+				 {state with
+				    state = Wait_for_stream;
+                                    streamid = new_id ();
+                                    authenticated = true;
+                                    (*auth_module = AuthModule,*)
+                                    user = u})
+			)
+		      | SASL.Continue (server_out, sasl_mech) ->
+			  send_element state
+			    (`XmlElement
+			       ("challenge",
+				[("xmlns", <:ns<SASL>>)],
+				[`XmlCdata (Jlib.encode_base64 server_out)]));
+			  Lwt.return
+			    (`Continue
+			       {state with
+				  state = Wait_for_sasl_response sasl_mech})
+		      | SASL.ErrorUser (error, username) ->
+			  (*?INFO_MSG(
+			    "(~w) Failed authentication for ~s@~s",
+			    [StateData#state.socket,
+			    Username, StateData#state.server]),*)
+			  lwt () = Lwt_io.printf "Failed authentication for %s@%s\n" username (state.server :> string) in
+			    send_element state
+			      (`XmlElement
+				 ("failure",
+				  [("xmlns", <:ns<SASL>>)],
+				  [`XmlElement (error, [], [])]));
+			    Lwt.return (
+			      `Continue
+				{state with
+				   state = Wait_for_feature_request})
+		      | SASL.Error error ->
+			  send_element state
+			    (`XmlElement
+			       ("failure",
+				[("xmlns", <:ns<SASL>>)],
+				[`XmlElement (error, [], [])]));
+			  Lwt.return (
+			    `Continue
+			      {state with
+				 state = Wait_for_feature_request})
+		)
+	      | _ ->
+		process_unauthenticated_stanza state el;
+		Lwt.return
+		  (`Continue
+		     {state with state = Wait_for_feature_request})
+	)
+
+(*
+wait_for_sasl_response(timeout, StateData) ->
+    {stop, normal, StateData};
+*)
+
+      | `XmlStreamStart _ -> assert false
+
+      | `XmlStreamEnd _ ->
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+
+      | `XmlStreamError _ ->
+	  send_element state invalid_xml_err;
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+
+
+  let wait_for_bind msg state =
+    match msg with
+      | `XmlStreamElement el -> (
+	  match Jlib.iq_query_info el with
+	    | `IQ ({Jlib.iq_type = `Set sub_el;
+		    Jlib.iq_xmlns = <:ns<BIND>>; _} as iq) -> (
+		let u = state.user in
+		let r = Xml.get_path_s sub_el [`Elem "resource"; `Cdata] in
+		let r =
+		  match Jlib.resourceprep r with
+		    | None -> None;
+		    | Some resource when (resource :> string) = "" ->
+			Some (Jlib.resourceprep_exn
+				(Jlib.get_random_string () ^
+				   string_of_int (int_of_float (Unix.time ())))
+			     )
+		    | Some resource -> Some resource
+		in
+		  match r with
+		    | None ->
+			let err =
+			  Jlib.make_error_reply el Jlib.err_bad_request
+			in
+			  send_element state err;
+			  Lwt.return
+			    (`Continue
+			       {state with state = Wait_for_bind})
+		    | Some r ->
+			let jid = Jlib.make_jid' u state.server r in
+			let res =
+			  {iq with
+			     Jlib.iq_type =
+			      `Result
+				(Some (`XmlElement
+					 ("bind",
+					  [("xmlns", <:ns<BIND>>)],
+					  [`XmlElement
+					     ("jid", [],
+					      [`XmlCdata
+						 (Jlib.jid_to_string jid)])])
+				      ))}
+			in
+			  send_element state (Jlib.iq_to_xml res);
+			  Lwt.return
+			    (`Continue {state with
+					  state = Wait_for_session;
+					  resource = r;
+					  jid = jid})
+	      )
+	    | _ ->
+		Lwt.return (`Continue {state with state = Wait_for_bind})
+	)
+
+(*
+wait_for_bind(timeout, StateData) ->
+    {stop, normal, StateData};
+*)
+
+      | `XmlStreamStart _ -> assert false
+
+      | `XmlStreamEnd _ ->
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+
+      | `XmlStreamError _ ->
+	  send_element state invalid_xml_err;
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+
+  let wait_for_session msg state =
+    match msg with
+      | `XmlStreamElement el -> (
+	  match Jlib.iq_query_info el with
+	    | `IQ ({Jlib.iq_type = `Set sub_el;
+		    Jlib.iq_xmlns = <:ns<SESSION>>; _} as iq) -> (
+		let u = state.user in
+		let jid = state.jid in
+		  match (*acl:match_rule(StateData#state.server,
+				       StateData#state.access, JID)*)true (* TODO *) with
+		    | true ->
+			(*?INFO_MSG("(~w) Opened session for ~s",
+			      [StateData#state.socket,
+			       jlib:jid_to_string(JID)]),*)
+		      lwt () = Lwt_io.printf "Opened session for %s\n" (Jlib.jid_to_string jid) in
+		      let res = Jlib.make_result_iq_reply el in
+			send_element state res;
+		    (*change_shaper(StateData, JID),*)
+			let (fs, ts) = (*ejabberd_hooks:run_fold(
+				 roster_get_subscription_lists,
+				 StateData#state.server,
+				 {[], []},
+				 [U, StateData#state.server]),*) (* TODO *)
+			  ([], [])
+			in
+			let ljid =
+			  Jlib.jid_tolower (Jlib.jid_remove_resource jid)
+			in
+			let fs = ljid :: fs in
+			let ts = ljid :: ts in
+		    (*PrivList =
+			ejabberd_hooks:run_fold(
+			  privacy_get_user_list, StateData#state.server,
+			  #userlist{},
+			  [U, StateData#state.server]),
+		    SID = {now(), self()},
+		    Conn = get_conn_type(StateData),
+		    %% Info = [{ip, StateData#state.ip}, {conn, Conn},
+		    %% 	    {auth_module, StateData#state.auth_module}],
+		    %% ejabberd_sm:open_session(
+		    %%   SID, U, StateData#state.server, R, Info),
+		    *)
+			let state =
+                          {state with
+			     (*sid = SID;
+			       conn = Conn;*)
+			     pres_f = LJIDSet.from_list fs;
+			     pres_t = LJIDSet.from_list ts;
+			       (*privacy_list = PrivList*)}
+			in
+		    (*DebugFlag = ejabberd_hooks:run_fold(c2s_debug_start_hook,
+							NewStateData#state.server,
+							false,
+							[self(), NewStateData]),
+		    maybe_migrate(session_established, NewStateData#state{debug=DebugFlag});
+		    *)
+			  Lwt.return
+			    (`Continue
+			       {state with state = Session_established})
+		    | _ ->
+		    (*ejabberd_hooks:run(forbidden_session_hook,
+				       StateData#state.server, [JID]),
+		    ?INFO_MSG("(~w) Forbidden session for ~s",
+			      [StateData#state.socket,
+			       jlib:jid_to_string(JID)]),*)
+			lwt () = Lwt_io.printf "Forbidden session for %s\n" (Jlib.jid_to_string jid) in
+			let err = Jlib.make_error_reply el Jlib.err_not_allowed
+			in
+			  send_element state err;
+			  Lwt.return
+			    (`Continue
+			       {state with state = Wait_for_session})
+	      )
+	    | _ ->
+		Lwt.return
+		  (`Continue
+		     {state with state = Wait_for_session})
+	)
+(*
+wait_for_session(timeout, StateData) ->
+    {stop, normal, StateData};
+*)
+
+      | `XmlStreamStart _ -> assert false
+
+      | `XmlStreamEnd _ ->
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+
+      | `XmlStreamError _ ->
+	  send_element state invalid_xml_err;
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+
+
+(* Process packets sent by user (coming from user on c2s XMPP
+   connection)
+*)
+  let session_established2 el state =
+    let `XmlElement (name, attrs, _els) = el in
+    let user = state.user in
+    let server = state.server in
+    let from_jid = state.jid in
+    let to' = Xml.get_attr_s "to" attrs in
+    let to_jid =
+      match to' with
+	| "" ->
+	    Some (Jlib.jid_remove_resource state.jid)
+	| _ ->
+	    Jlib.string_to_jid to'
+    in
+    let el = Jlib.remove_attr "xmlns" el in
+    let el =
+      match Xml.get_attr_s "xml:lang" attrs with
+	| "" -> (
+	    match state.lang with
+	      | "" -> el
+	      | lang -> Xml.replace_tag_attr "xml:lang" lang el
+	  )
+	| _ -> el
+    in
+    let state =
+      match to_jid with
+	| None -> (
+	    match Xml.get_attr_s "type" attrs with
+	      | "error"
+	      | "result" -> state
+	      | _ ->
+		  let err = Jlib.make_error_reply el Jlib.err_jid_malformed in
+	  	    send_element state err;
+		    state
+	  )
+	| Some to_jid -> (
+	    match name with
+	      | "presence" -> (
+			(*PresenceEl = ejabberd_hooks:run_fold(
+				       c2s_update_presence,
+				       Server,
+				       NewEl,
+				       [User, Server]),
+			ejabberd_hooks:run(
+			  user_send_packet,
+			  Server,
+			  [StateData#state.debug, FromJID, ToJID, PresenceEl]),*)
+		  if to_jid.Jlib.luser = user &&
+		    to_jid.Jlib.lserver = server &&
+		    (to_jid.Jlib.lresource :> string) = ""
+		  then (
+		    (*?DEBUG("presence_update(~p,~n\t~p,~n\t~p)",
+		      [FromJID, PresenceEl, StateData]),*)
+		    presence_update from_jid el state
+		  ) else (
+		    presence_track from_jid to_jid el state
+		  )
+		)
+	      | "iq" -> (
+		  match Jlib.iq_query_info el with
+		    (*| #iq{xmlns = ?NS_PRIVACY} = IQ ->
+				ejabberd_hooks:run(
+				  user_send_packet,
+				  Server,
+				  [StateData#state.debug, FromJID, ToJID, NewEl]),
+				process_privacy_iq(
+				  FromJID, ToJID, IQ, StateData);*)
+		    | _ ->
+				(*ejabberd_hooks:run(
+				  user_send_packet,
+				  Server,
+                                  [StateData#state.debug, FromJID, ToJID, NewEl]),*)
+			check_privacy_route from_jid state from_jid to_jid el;
+			state
+		)
+	      | "message" ->
+			(*ejabberd_hooks:run(user_send_packet,
+					   Server,
+					   [StateData#state.debug, FromJID, ToJID, NewEl]),
+			*)
+		  check_privacy_route from_jid state from_jid to_jid el;
+		  state
+	      | _ ->
+		  state
+	  )
+    in
+      (*ejabberd_hooks:run(c2s_loop_debug, [{xmlstreamelement, El}]),*)
+      fsm_next_state state
+
+
+  let session_established msg state =
+    match msg with
+      | `XmlStreamElement el -> (
+	  let from_jid = state.jid in
+	    (* Check 'from' attribute in stanza RFC 3920 Section 9.1.2 *)
+	    match check_from el from_jid with
+	      | false ->
+		  send_element state invalid_from;
+		  send_trailer state;
+		  Lwt.return (`Stop state)
+	      | true ->
+		  session_established2 el state
+	)
+
+(*
+%% We hibernate the process to reduce memory consumption after a
+%% configurable activity timeout
+session_established(timeout, StateData) ->
+    %% TODO: Options must be stored in state:
+    Options = [],
+    proc_lib:hibernate(?GEN_FSM, enter_loop,
+		       [?MODULE, Options, session_established, StateData]),
+    fsm_next_state(session_established, StateData);
+*)
+
+      | `XmlStreamStart _ -> assert false
+
+      | `XmlStreamEnd _ ->
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+
+      | `XmlStreamError "XML stanza is too big" -> (* TODO *)
+	  send_element state invalid_xml_err;
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+      | `XmlStreamError _ ->
+	  send_element state invalid_xml_err;
+	  send_trailer state;
+	  Lwt.return (`Stop state)
+
+
   let handle_xml msg state =
     match state.state, msg with
       | Wait_for_stream, _ -> wait_for_stream msg state
       | Wait_for_auth, _ -> wait_for_auth msg state
       | Wait_for_feature_request, _ -> wait_for_feature_request msg state
-      | _, `XmlStreamStart (name, attrs) ->
+      | Wait_for_bind, _ -> wait_for_bind msg state
+      | Wait_for_session, _ -> wait_for_session msg state
+      | Wait_for_sasl_response sasl_state, _ ->
+	  wait_for_sasl_response msg sasl_state state
+      | Session_established, _ -> session_established msg state
+(*      | _, `XmlStreamStart (name, attrs) ->
           lwt () = Lwt_io.printf "stream start: %s %s\n"
             name (Xml.attrs_to_string attrs)
           in
@@ -1908,6 +3733,7 @@ wait_for_feature_request(timeout, StateData) ->
       | _, `XmlStreamError error ->
           lwt () = Lwt_io.printf "stream error: %s\n" error in
             Lwt.return (`Stop state)
+*)
 
   let handle msg state =
     match msg with
