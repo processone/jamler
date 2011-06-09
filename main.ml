@@ -1,13 +1,17 @@
 type -'a pid
 
-type 'a proc = {queue : 'a Queue.t;
+type 'a proc = {id : int;
+		queue : 'a Queue.t;
 		mutable wakener : 'a Lwt.u option}
 
 external pid_to_proc : 'a pid -> 'a proc = "%identity"
 external proc_to_pid : 'a proc -> 'a pid = "%identity"
 
+let id_seq = ref 0
+
 let spawn f =
-  let proc = {queue = Queue.create ();
+  let proc = {id = (incr id_seq; !id_seq);
+	      queue = Queue.create ();
 	      wakener = None}
   in
   let pid = proc_to_pid proc in
@@ -1577,7 +1581,7 @@ struct
     with
       | exn ->
 	  (* TODO *)
-          Printf.eprintf "Exception %s when processing\nfrom: %s\n to: %s\npacket: %s\n"
+          Printf.eprintf "Exception %s in Router when processing\nfrom: %s\n to: %s\npacket: %s\n"
 	    (Printexc.to_string exn)
 	    (Jlib.jid_to_string from)
 	    (Jlib.jid_to_string to')
@@ -1591,9 +1595,24 @@ end
 module SM :
 sig
   type msg = Router.msg
-  type info = [ `TODO ]
+  type info = [ `TODO ] list
+  type sid = float * msg pid
 
   val route : Router.t
+  val open_session :
+    sid -> Jlib.nodepreped -> Jlib.namepreped -> Jlib.resourcepreped ->
+    int -> info -> unit
+  val close_session :
+    sid -> Jlib.nodepreped -> Jlib.namepreped -> Jlib.resourcepreped -> unit
+  val close_session_unset_presence :
+    sid -> Jlib.nodepreped -> Jlib.namepreped -> Jlib.resourcepreped ->
+    string -> unit
+  val set_presence :
+    sid -> Jlib.nodepreped -> Jlib.namepreped -> Jlib.resourcepreped ->
+    int -> Xml.element -> info -> unit
+  val unset_presence :
+    sid -> Jlib.nodepreped -> Jlib.namepreped -> Jlib.resourcepreped ->
+    string -> info -> unit
 end
   =
 struct
@@ -1621,7 +1640,7 @@ struct
 *)
 
   type msg = Router.msg
-  type info = [ `TODO ]
+  type info = [ `TODO ] list
 
   module Session :
   sig
@@ -1639,17 +1658,32 @@ struct
     val find_sids_by_usr :
       Jlib.nodepreped -> Jlib.namepreped -> Jlib.resourcepreped -> sid list
     val find_sids_by_us : Jlib.nodepreped -> Jlib.namepreped -> sid list
+
+    val dump_tables : unit -> unit
   end
     =
   struct
     type sid = float * msg pid
 
+    module HashedSID =
+    struct
+      type t = sid
+      let equal (t1, p1) (t2, p2) =
+	let p1 = pid_to_proc p1
+	and p2 = pid_to_proc p2 in
+	  t1 = t2 && p1.id = p2.id
+      let hash (t, p) =
+	let p = pid_to_proc p in
+	  Hashtbl.hash t lxor Hashtbl.hash p.id
+    end
+    module HashtblSID = Hashtbl.Make(HashedSID)
+
     type session =
 	{usr : LJID.t;
 	 priority : int;
-	 info : [ `TODO ]}
+	 info : info}
 
-    let sessions = Hashtbl.create 100
+    let sessions = HashtblSID.create 100
     let usr_idx = Hashtbl.create 10
 
     let add_r_idx r_idx r sid =
@@ -1659,6 +1693,7 @@ struct
 	with
 	  | Not_found -> []
       in
+      let sids = List.filter ((<>) sid) sids in
 	Hashtbl.replace r_idx r (sid :: sids)
 
     let add_ur_idx ur_idx u r sid =
@@ -1686,7 +1721,7 @@ struct
 	add_ur_idx ur_idx u r sid
 
     let add sid session =
-      Hashtbl.add sessions sid session;
+      HashtblSID.replace sessions sid session;
       add_usr_idx session.usr sid
 
 
@@ -1724,13 +1759,14 @@ struct
 
     let remove sid =
       try
-	let session = Hashtbl.find sessions sid in
+	let session = HashtblSID.find sessions sid in
+	  HashtblSID.remove sessions sid;
 	  remove_usr_idx session.usr sid
       with
 	| Not_found -> ()
 
     let find_exn sid =
-      Hashtbl.find sessions sid
+      HashtblSID.find sessions sid
 
     let find sid =
       try
@@ -1756,9 +1792,34 @@ struct
       with
 	| Not_found -> []
 
+    let dump_tables () =
+      let string_of_sid (f, p) = Printf.sprintf "(%f, %d)" f (Obj.magic p) in
+	HashtblSID.iter
+	  (fun sid session ->
+	     let (u, s, r) = session.usr in
+	       Printf.eprintf "sid:%s %s@%s/%s prio:%d\n" (string_of_sid sid)
+		 (u :> string) (s :> string) (r :> string) session.priority
+	  ) sessions;
+	Hashtbl.iter
+	  (fun (s : Jlib.namepreped) ur_idx ->
+	     Printf.eprintf "%s:\n" (s :> string);
+	     Hashtbl.iter
+	       (fun (u : Jlib.nodepreped) r_idx ->
+		  Printf.eprintf "  %s:\n" (u :> string);
+		  Hashtbl.iter
+		    (fun (r : Jlib.resourcepreped) sids ->
+		       Printf.eprintf "    %s:\n" (r :> string);
+		       List.iter
+			 (fun sid ->
+			    Printf.eprintf "      sid:%s\n" (string_of_sid sid)
+			 ) sids
+		    ) r_idx;
+	       ) ur_idx;
+	  ) usr_idx;
+	flush stderr;
 
   end
-  open Session
+  include Session
 
 
   let set_session sid user server resource priority info =
@@ -1849,6 +1910,21 @@ struct
     ejabberd_hooks:run(sm_remove_connection_hook, JID#jid.lserver,
 		       [SID, JID, Info]).
     *)
+
+  let close_session_unset_presence sid user server resource _status =
+    close_session sid user server resource
+    (*ejabberd_hooks:run(unset_presence_hook, jlib:nameprep(Server),
+		       [User, Server, Resource, Status]).*)
+
+  let set_presence sid user server resource priority _presence info =
+    set_session sid user server resource priority info
+    (*ejabberd_hooks:run(set_presence_hook, jlib:nameprep(Server),
+		       [User, Server, Resource, Presence]).*)
+
+  let unset_presence sid user server resource status info =
+    set_session sid user server resource (-1) info
+    (*ejabberd_hooks:run(unset_presence_hook, jlib:nameprep(Server),
+		       [User, Server, Resource, Status]).*)
 
   let clean_session_list sessions =
     let rec clean_session_list ss res =
@@ -2082,7 +2158,7 @@ struct
     with
       | exn ->
 	  (* TODO *)
-          Printf.eprintf "Exception %s when processing\nfrom: %s\n to: %s\npacket: %s\n"
+          Printf.eprintf "Exception %s in SM when processing\nfrom: %s\n to: %s\npacket: %s\n"
 	    (Printexc.to_string exn)
 	    (Jlib.jid_to_string from)
 	    (Jlib.jid_to_string to')
@@ -2163,7 +2239,7 @@ struct
     with
       | exn ->
 	  (* TODO *)
-          Printf.eprintf "Exception %s when processing\nfrom: %s\n to: %s\npacket: %s\n"
+          Printf.eprintf "Exception %s in Local when processing\nfrom: %s\n to: %s\npacket: %s\n"
 	    (Printexc.to_string exn)
 	    (Jlib.jid_to_string from)
 	    (Jlib.jid_to_string to')
@@ -2190,7 +2266,9 @@ end
 
 module C2S :
 sig
-  type msg = [ Tcp.msg | XMLReceiver.msg | GenServer.msg | `Zxc of string * int ]
+  type msg =
+      [ Tcp.msg | XMLReceiver.msg | GenServer.msg
+      | SM.msg | `Zxc of string * int ]
   type init_data = Lwt_unix.file_descr
   type state
   val init : init_data -> msg pid -> state
@@ -2198,7 +2276,9 @@ sig
   val terminate : state -> unit Lwt.t
 end =
 struct
-  type msg = [ Tcp.msg | XMLReceiver.msg | GenServer.msg | `Zxc of string * int ]
+  type msg =
+      [ Tcp.msg | XMLReceiver.msg | GenServer.msg
+      | SM.msg | `Zxc of string * int ]
 
   type c2s_state =
     | Wait_for_stream
@@ -2228,7 +2308,7 @@ struct
        server : Jlib.namepreped;
        resource : Jlib.resourcepreped;
        jid : Jlib.jid;
-       (*sid : string;*)
+       sid : SM.sid;
        pres_t : LJIDSet.t;
        pres_f : LJIDSet.t;
        pres_a : LJIDSet.t;
@@ -2262,6 +2342,7 @@ struct
 		 server = Jlib.nameprep_exn "";
 		 resource = Jlib.resourceprep_exn "";
 		 jid = Jlib.make_jid_exn "" "" "";
+		 sid = (0.0, (self :> SM.msg pid));
 		 pres_t = LJIDSet.empty;
 		 pres_f = LJIDSet.empty;
 		 pres_a = LJIDSet.empty;
@@ -2467,18 +2548,12 @@ struct
 
 
   let update_priority priority packet state =
-    (* TODO *)
-    ()
     (*Info = [{ip, StateData#state.ip}, {conn, StateData#state.conn},
-	     {auth_module, StateData#state.auth_module}],
-    ejabberd_sm:set_presence(StateData#state.sid,
-			     StateData#state.user,
-			     StateData#state.server,
-			     StateData#state.resource,
-			     Priority,
-			     Packet,
-			     Info).
-    *)
+	     {auth_module, StateData#state.auth_module}],*)
+    let info = [] in
+      SM.set_presence
+	state.sid state.user state.server state.resource
+	priority packet info
 
 
   let get_priority_from_presence presence_packet =
@@ -2561,7 +2636,55 @@ struct
 	  Router.route from to' packet
 
 
-(* User updates his presence (non-directed presence packet) *)
+  let process_presence_probe from to' state =
+    let lfrom = Jlib.jid_tolower from in
+    let lbfrom =
+      Jlib.jid_tolower (Jlib.jid_remove_resource from)
+    in
+      match state.pres_last with
+	| None ->
+	    ()
+	| Some pres_last ->
+	    let cond1 =
+	      (not state.pres_invis) &&
+		(LJIDSet.mem lfrom state.pres_f ||
+		   (lfrom <> lbfrom && LJIDSet.mem lbfrom state.pres_f)) &&
+		(not
+		   (LJIDSet.mem lfrom state.pres_i ||
+		      (lfrom <> lbfrom && LJIDSet.mem lbfrom state.pres_i)))
+	    in
+	    let cond2 =
+	      state.pres_invis &&
+		LJIDSet.mem lfrom state.pres_f &&
+		LJIDSet.mem lfrom state.pres_a
+	    in
+	    if cond1 then (
+	      let packet = pres_last in
+	      let timestamp = state.pres_timestamp in
+		    (*Packet1 = maybe_add_delay(Packet, utc, To, "", Timestamp),
+		    case ejabberd_hooks:run_fold(
+			   privacy_check_packet, StateData#state.server,
+			   allow,
+			   [StateData#state.user,
+			    StateData#state.server,
+			    StateData#state.privacy_list,
+			    {To, From, Packet1},
+			    out]) of
+			deny ->
+			    ok;
+			allow ->
+			    Pid=element(2, StateData#state.sid),
+			    ejabberd_hooks:run(presence_probe_hook, StateData#state.server, [From, To, Pid]),*)
+			    (* Don't route a presence probe to oneself *)
+		if lfrom <> Jlib.jid_tolower to' then (
+		  Router.route to' from packet
+		)
+	    ) else if cond2 then (
+		    Router.route to' from
+		      (`XmlElement ("presence", [], []));
+	    ) else ()
+
+  (* User updates his presence (non-directed presence packet) *)
   let presence_update from packet state =
     let `XmlElement (_name, attrs, _els) = packet in
       match Xml.get_attr_s "type" attrs with
@@ -2573,14 +2696,11 @@ struct
 		    Xml.get_tag_cdata status_tag
 	    in
 	    (*Info = [{ip, StateData#state.ip}, {conn, StateData#state.conn},
-		    {auth_module, StateData#state.auth_module}],
-	    ejabberd_sm:unset_presence(StateData#state.sid,
-				       StateData#state.user,
-				       StateData#state.server,
-				       StateData#state.resource,
-				       Status,
-				       Info),
-	    *)
+		    {auth_module, StateData#state.auth_module}],*)
+	    let info = [] in
+	      SM.unset_presence
+		state.sid state.user state.server state.resource
+		status info;
 	      presence_broadcast state from state.pres_a packet;
 	      presence_broadcast state from state.pres_i packet;
 	      {state with
@@ -2734,6 +2854,27 @@ struct
   let fsm_next_state state =
     (* TODO *)
     Lwt.return (`Continue state)
+
+  let maybe_migrate state =
+    (*PackedStateData = pack(StateData),*)
+    let {user = u; server = s; resource = r; sid = sid; _} = state in
+    (*case ejabberd_cluster:get_node({jlib:nodeprep(U), jlib:nameprep(S)}) of
+	Node when Node == node() ->*)
+	    (*Conn = get_conn_type(StateData),
+	    Info = [{ip, StateData#state.ip}, {conn, Conn},
+		    {auth_module, StateData#state.auth_module}],*)
+    let info = [] in
+    let presence = state.pres_last in
+    let priority =
+      match presence with
+        | None -> -1
+        | Some presence -> get_priority_from_presence presence
+    in
+      SM.open_session sid u s r priority info;
+      fsm_next_state state
+	(*Node ->
+	    fsm_migrate(StateName, PackedStateData, Node, 0)
+    end.*)
 
 
   let wait_for_stream msg state =
@@ -3030,8 +3171,11 @@ wait_for_stream(timeout, StateData) ->
 					  (`Stop state);
 	                            )
 	                          | None ->
-                                      (*SID = {now(), self()},
-					Conn = get_conn_type(StateData),*)
+                                      let sid =
+					(Unix.gettimeofday (),
+					 (state.pid :> SM.msg pid))
+				      in
+				      (*Conn = get_conn_type(StateData),*)
                                       let res = Jlib.make_result_iq_reply el in
 					(*Res = setelement(4, Res1, []),*)
 					send_element state res;
@@ -3056,8 +3200,8 @@ wait_for_stream(timeout, StateData) ->
                                              user = jid.Jlib.luser;
                                              resource = jid.Jlib.lresource;
                                              jid = jid;
-                                             (*sid = SID,
-                                               conn = Conn,
+                                             sid = sid;
+                                               (*conn = Conn,
                                                auth_module = AuthModule,
                                                pres_f = ?SETS:from_list(Fs1),
                                                pres_t = ?SETS:from_list(Ts1),
@@ -3068,12 +3212,9 @@ wait_for_stream(timeout, StateData) ->
                                             NewStateData#state.server,
                                             false,
                                             [self(), NewStateData]),*)
-					  (*maybe_migrate(session_established,
-                                                  NewStateData#state{debug=DebugFlag})*)
-					  Lwt.return
-					    (`Continue
-					       {state with
-						  state = Session_established})
+					  maybe_migrate
+					    {state with
+					       state = Session_established}
                             )
 			  | _ ->
 			    (*?INFO_MSG(
@@ -3513,9 +3654,11 @@ wait_for_bind(timeout, StateData) ->
 			ejabberd_hooks:run_fold(
 			  privacy_get_user_list, StateData#state.server,
 			  #userlist{},
-			  [U, StateData#state.server]),
-		    SID = {now(), self()},
-		    Conn = get_conn_type(StateData),
+			  [U, StateData#state.server]),*)
+                        let sid =
+			  (Unix.gettimeofday (), (state.pid :> SM.msg pid))
+			in
+		    (*Conn = get_conn_type(StateData),
 		    %% Info = [{ip, StateData#state.ip}, {conn, Conn},
 		    %% 	    {auth_module, StateData#state.auth_module}],
 		    %% ejabberd_sm:open_session(
@@ -3523,8 +3666,8 @@ wait_for_bind(timeout, StateData) ->
 		    *)
 			let state =
                           {state with
-			     (*sid = SID;
-			       conn = Conn;*)
+			     sid = sid;
+			       (*conn = Conn;*)
 			     pres_f = LJIDSet.from_list fs;
 			     pres_t = LJIDSet.from_list ts;
 			       (*privacy_list = PrivList*)}
@@ -3532,12 +3675,9 @@ wait_for_bind(timeout, StateData) ->
 		    (*DebugFlag = ejabberd_hooks:run_fold(c2s_debug_start_hook,
 							NewStateData#state.server,
 							false,
-							[self(), NewStateData]),
-		    maybe_migrate(session_established, NewStateData#state{debug=DebugFlag});
-		    *)
-			  Lwt.return
-			    (`Continue
-			       {state with state = Session_established})
+							[self(), NewStateData]),*)
+			  maybe_migrate
+			    {state with state = Session_established}
 		    | _ ->
 		    (*ejabberd_hooks:run(forbidden_session_hook,
 				       StateData#state.server, [JID]),
@@ -3735,6 +3875,206 @@ session_established(timeout, StateData) ->
             Lwt.return (`Stop state)
 *)
 
+  let handle_route (`Route (from, to', packet)) state =
+    let `XmlElement (name, attrs, els) = packet in
+    let (pass, attrs, state) =
+      match name with
+	| "presence" -> (
+		(*State = ejabberd_hooks:run_fold(
+			  c2s_presence_in, StateData#state.server,
+			  StateData,
+			  [{From, To, Packet}]),*)
+	    match Xml.get_attr_s "type" attrs with
+	      | "probe" ->
+		  let lfrom = Jlib.jid_tolower from in
+		  let lbfrom =
+		    Jlib.jid_tolower (Jlib.jid_remove_resource from)
+		  in
+		  let state =
+		    if LJIDSet.mem lfrom state.pres_a ||
+		      LJIDSet.mem lbfrom state.pres_a then (
+			state
+		      ) else (
+			if LJIDSet.mem lfrom state.pres_f then (
+			  let a = LJIDSet.add lfrom state.pres_a in
+			    {state with pres_a = a}
+			) else (
+			  if LJIDSet.mem lbfrom state.pres_f then (
+			    let a = LJIDSet.add lbfrom state.pres_a in
+			      {state with pres_a = a}
+			  ) else state
+			)
+		      )
+		  in
+		    process_presence_probe from to' state;
+		    (false, attrs, state)
+	      | "error" ->
+		  let a = LJIDSet.remove (Jlib.jid_tolower from) state.pres_a
+		  in
+		    (true, attrs, {state with pres_a = a})
+	      | "invisible" ->
+		  let attrs = List.remove_assoc "type" attrs in
+		    (true, ("type", "unavailable") :: attrs, state)
+	      | "subscribe"
+	      | "subscribed"
+	      | "unsubscribe"
+	      | "unsubscribed" ->
+		  let sres = privacy_check_packet state from to' packet `In in
+		    (sres, attrs, state)
+	      | _ -> (
+		  match privacy_check_packet state from to' packet `In with
+		    | true -> (
+			let lfrom = Jlib.jid_tolower from in
+			let lbfrom =
+			  Jlib.jid_tolower (Jlib.jid_remove_resource from)
+			in
+		    if LJIDSet.mem lfrom state.pres_a ||
+		      LJIDSet.mem lbfrom state.pres_a then (
+			(true, attrs, state)
+		      ) else (
+			if LJIDSet.mem lfrom state.pres_f then (
+			  let a = LJIDSet.add lfrom state.pres_a in
+			    (true, attrs, {state with pres_a = a})
+			) else (
+			  if LJIDSet.mem lbfrom state.pres_f then (
+			    let a = LJIDSet.add lbfrom state.pres_a in
+			      (true, attrs, {state with pres_a = a})
+			  ) else (true, attrs, state)
+			)
+		      )
+		      )
+		    | false ->
+			(false, attrs, state)
+		)
+	  )
+	| "broadcast" -> (
+		(*?DEBUG("broadcast~n~p~n", [Els]),
+		case Els of
+		    [{item, IJID, ISubscription}] ->
+			{false, Attrs,
+			 roster_change(IJID, ISubscription,
+				       StateData)};
+		    [{exit, Reason}] ->
+			{exit, Attrs, Reason};
+		    [{privacy_list, PrivList, PrivListName}] ->
+			case ejabberd_hooks:run_fold(
+			       privacy_updated_list, StateData#state.server,
+			       false,
+			       [StateData#state.privacy_list,
+				PrivList]) of
+			    false ->
+				{false, Attrs, StateData};
+			    NewPL ->
+				PrivPushIQ =
+				    #iq{type = set, xmlns = ?NS_PRIVACY,
+					id = "push" ++ randoms:get_string(),
+					sub_el = [{xmlelement, "query",
+						   [{"xmlns", ?NS_PRIVACY}],
+						   [{xmlelement, "list",
+						     [{"name", PrivListName}],
+						     []}]}]},
+				PrivPushEl =
+				    jlib:replace_from_to(
+				      jlib:jid_remove_resource(
+					StateData#state.jid),
+				      StateData#state.jid,
+				      jlib:iq_to_xml(PrivPushIQ)),
+				send_element(StateData, PrivPushEl),
+				{false, Attrs, StateData#state{privacy_list = NewPL}}
+			end;
+		    _ ->*)
+	    (false, attrs, state)
+	  )
+	| "iq" -> (
+	    match Jlib.iq_query_info packet with
+	      (*| `IQ {Jlib.iq_xmlns = <:ns<LAST>>} ->
+			LFrom = jlib:jid_tolower(From),
+			LBFrom = jlib:jid_remove_resource(LFrom),
+			HasFromSub = (?SETS:is_element(LFrom, StateData#state.pres_f) orelse ?SETS:is_element(LBFrom, StateData#state.pres_f))
+			    andalso is_privacy_allow(StateData, To, From, {xmlelement, "presence", [], []}, out),
+			case HasFromSub of
+			    true ->
+				case privacy_check_packet(StateData, From, To, Packet, in) of
+				    allow ->
+					{true, Attrs, StateData};
+				    deny ->
+					{false, Attrs, StateData}
+				end;
+			    _ ->
+				Err = jlib:make_error_reply(Packet, ?ERR_FORBIDDEN),
+				ejabberd_router:route(To, From, Err),
+				{false, Attrs, StateData}
+			end;
+	      *)
+	      | (`IQ _ | `Reply) as iq -> (
+		  match privacy_check_packet state from to' packet `In, iq with
+		    | true, _ ->
+			(true, attrs, state)
+		    | false, `IQ _ ->
+			let err =
+			  Jlib.make_error_reply
+			    packet Jlib.err_service_unavailable
+			in
+			  Router.route to' from err;
+			  (false, attrs, state)
+		    | false, `Reply ->
+			(false, attrs, state)
+		)
+	      | `Invalid
+	      | `Not_iq ->
+		  (false, attrs, state)
+	  )
+	| "message" -> (
+	    match privacy_check_packet state from to' packet `In with
+	      | true -> (
+		  (*case ejabberd_hooks:run_fold(
+				       feature_check_packet, StateData#state.server,
+				       allow,
+				       [StateData#state.jid,
+					StateData#state.server,
+					StateData#state.pres_last,
+					{From, To, Packet},
+					in]) of
+				    allow ->*)
+		  (true, attrs, state)
+				    (*deny ->
+					{false, Attrs, StateData}
+				end;*)
+		)
+	      | false ->
+		  (false, attrs, state)
+	  )
+	| _ ->
+	    (true, attrs, state)
+    in
+      (*if
+	Pass == exit ->
+	    catch send_trailer(StateData),
+	    case NewState of
+		rebind ->
+		    {stop, normal, StateData#state{authenticated = rebinded}};
+		_ ->
+		    {stop, normal, StateData}
+	    end;*)
+      if pass then (
+	let attrs =
+	  Jlib.replace_from_to_attrs
+	    (Jlib.jid_to_string from)
+	    (Jlib.jid_to_string to')
+	    attrs
+	in
+	let fixed_packet = `XmlElement (name, attrs, els) in
+	  send_element state fixed_packet;
+	(*ejabberd_hooks:run(user_receive_packet,
+			       StateData#state.server,
+			       [StateData#state.debug, StateData#state.jid, From, To, FixedPacket]),
+	  ejabberd_hooks:run(c2s_loop_debug, [{route, From, To, Packet}]),*)
+	  fsm_next_state state
+      ) else (
+	(*ejabberd_hooks:run(c2s_loop_debug, [{route, From, To, Packet}]),*)
+	fsm_next_state state
+      )
+
   let handle msg state =
     match msg with
       | `Tcp_data (socket, data) when socket == state.socket ->
@@ -3753,6 +4093,8 @@ session_established(timeout, StateData) ->
       | `Tcp_close _socket -> assert false
       | #XMLReceiver.msg as m ->
 	  handle_xml m state
+      | #SM.msg as m ->
+	  handle_route m state
       | `Zxc (s, n) ->
           if n <= 1000000 then (
             Tcp.send_async state.socket (string_of_int n ^ s);
@@ -3769,6 +4111,57 @@ session_established(timeout, StateData) ->
       then Tcp.close state.socket
       else Lwt.return ()
     in
+      (match state.state with
+	 | Session_established -> (
+	    (*case StateData#state.authenticated of
+		replaced ->
+		    ?INFO_MSG("(~w) Replaced session for ~s",
+			      [StateData#state.socket,
+			       jlib:jid_to_string(StateData#state.jid)]),
+		    From = StateData#state.jid,
+		    Packet = {xmlelement, "presence",
+			      [{"type", "unavailable"}],
+			      [{xmlelement, "status", [],
+				[{xmlcdata, "Replaced by new connection"}]}]},
+		    ejabberd_sm:close_session_unset_presence(
+		      StateData#state.sid,
+		      StateData#state.user,
+		      StateData#state.server,
+		      StateData#state.resource,
+		      "Replaced by new connection"),
+		    presence_broadcast(
+		      StateData, From, StateData#state.pres_a, Packet),
+		    presence_broadcast(
+		      StateData, From, StateData#state.pres_i, Packet);
+		_ ->*)
+		    (*?INFO_MSG("(~w) Close session for ~s",
+			      [StateData#state.socket,
+			       jlib:jid_to_string(StateData#state.jid)]),*)
+	     lwt () = Lwt_io.printf "Close session for %s\n" (Jlib.jid_to_string state.jid) in
+	       (match state with
+		  | {pres_last = None;
+		     pres_a;
+		     pres_i;
+		     pres_invis = false; _} when (LJIDSet.is_empty pres_a &&
+						    LJIDSet.is_empty pres_i) ->
+		      SM.close_session
+			state.sid state.user state.server state.resource;
+		  | _ ->
+		      let from = state.jid in
+		      let packet =
+			`XmlElement ("presence",
+				     [("type", "unavailable")], [])
+		      in
+			SM.close_session_unset_presence
+			  state.sid state.user state.server state.resource "";
+			presence_broadcast state from state.pres_a packet;
+			presence_broadcast state from state.pres_i packet
+	       );
+	       Lwt.return ()
+	   )
+	 | _ ->
+	     Lwt.return ()
+      );
       Lwt.return ()
 end
 
