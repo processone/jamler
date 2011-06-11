@@ -84,9 +84,8 @@ let create_parser ?(encoding = "UTF-8") ~depth
 
 let parse = Expat.parse
 
-let crypt s =
+let crypt' b s =
   let l = String.length s in
-  let b = Buffer.create l in
     for i = 0 to l - 1 do
       match s.[i] with
 	| '&' -> Buffer.add_string b "&amp;"
@@ -95,25 +94,54 @@ let crypt s =
 	| '\"' -> Buffer.add_string b "&quot;"
 	| '\'' -> Buffer.add_string b "&apos;"
 	| c -> Buffer.add_char b c
-    done;
-    Buffer.contents b
+    done
 
-let rec attrs_to_string attrs =
-  let attr_to_string attr =
-    match attr with
-      | (name, value) -> " " ^ name ^ "='" ^ (crypt value) ^ "'"
-  in List.fold_left (^) "" (List.map attr_to_string attrs)
+let rec attrs_to_string' b attrs =
+  let attr_to_string (name, value) =
+    Buffer.add_char b ' ';
+    Buffer.add_string b name;
+    Buffer.add_string b "='";
+    crypt' b value;
+    Buffer.add_char b '\'';
+  in
+    List.iter attr_to_string attrs
 
-let rec element_cdata_to_string el =
+let rec element_cdata_to_string' b el =
   match el with
     | `XmlElement (name, attrs, els) ->
-	if List.length els > 0 then
-	  (Printf.sprintf "<%s" name) ^ (attrs_to_string attrs) ^ ">" ^
-	  (List.fold_left (^) "" (List.map element_cdata_to_string els)) ^
-	  (Printf.sprintf "</%s>" name)
-	else
-	  (Printf.sprintf "<%s" name) ^ (attrs_to_string attrs) ^ "/>"
-    | `XmlCdata chunk -> crypt chunk
+	if List.length els > 0 then (
+	  Buffer.add_char b '<';
+	  Buffer.add_string b name;
+	  attrs_to_string' b attrs;
+	  Buffer.add_char b '>';
+	  List.iter (element_cdata_to_string' b) els;
+	  Buffer.add_string b "</";
+	  Buffer.add_string b name;
+	  Buffer.add_char b '>';
+	) else (
+	  Buffer.add_char b '<';
+	  Buffer.add_string b name;
+	  attrs_to_string' b attrs;
+	  Buffer.add_string b "/>";
+	)
+    | `XmlCdata chunk ->
+	crypt' b chunk
+
+let crypt s =
+  let l = String.length s in
+  let b = Buffer.create l in
+    crypt' b s;
+    Buffer.contents b
+
+let attrs_to_string attrs =
+  let b = Buffer.create 10 in
+    attrs_to_string' b attrs;
+    Buffer.contents b
+
+let element_cdata_to_string el =
+  let b = Buffer.create 64 in
+    element_cdata_to_string' b el;
+    Buffer.contents b
 
 let element_to_string el =
   element_cdata_to_string (el :> element_cdata)
