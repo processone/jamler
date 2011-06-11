@@ -369,6 +369,7 @@ sig
   val string_to_jid_exn : string -> jid
   val string_to_jid : string -> jid option
   val jid_to_string : jid -> string
+  val jid_to_string' : string -> string -> string -> string
   val jid_tolower : jid -> nodepreped * namepreped * resourcepreped
   val jid_remove_resource : jid -> jid
   val jid_replace_resource' : jid -> resourcepreped -> jid
@@ -455,7 +456,7 @@ sig
       | `Error of Xml.element * Xml.element option ]
   type iq_query_response = [ iq_query | iq_response ]
 
-  type 'a iq =
+  type +'a iq =
       {iq_id : string;
        iq_type : [< iq_query_response ] as 'a;
        iq_xmlns : string;
@@ -593,7 +594,7 @@ struct
       | Invalid_argument "stringprep"
       | Bad_jid -> None
 
-  let jid_to_string {user; server; resource; _} =
+  let jid_to_string' user server resource =
     let s1 =
       match user with
 	| "" -> ""
@@ -606,6 +607,9 @@ struct
 	| _ -> s2 ^ "/" ^ resource
     in
       s3
+
+  let jid_to_string {user; server; resource; _} =
+    jid_to_string' user server resource
 
   let jid_tolower {luser = u; lserver = s; lresource = r; _} =
     (u, s, r)
@@ -993,6 +997,110 @@ struct
       (fun s x -> add x s) empty xs
 end
 
+
+let myhosts () =
+  List.map Jlib.nameprep_exn ["localhost"; "e.localhost"] (* TODO *)
+
+
+module Hooks :
+sig
+  type result =
+    | Stop
+    | OK
+  type 'a hook
+
+  val create : unit -> 'a hook
+  val add : 'a hook -> Jlib.namepreped -> ('a -> result) -> int -> unit
+  val run : 'a hook -> Jlib.namepreped -> 'a -> unit
+
+  type ('a, 'b) fold_hook
+
+  val create_fold : unit -> ('a, 'b) fold_hook
+  val add_fold :
+    ('a, 'b) fold_hook -> Jlib.namepreped -> ('b -> 'a -> result * 'b) ->
+    int -> unit
+  val run_fold : ('a, 'b) fold_hook -> Jlib.namepreped -> 'b -> 'a -> 'b
+end
+  =
+struct
+  type result =
+    | Stop
+    | OK
+  type 'a hook = (Jlib.namepreped, (int * ('a -> result)) list) Hashtbl.t
+
+  let create () = Hashtbl.create 1
+
+  let add hook host f seq =
+    let h =
+      try
+	Hashtbl.find hook host
+      with
+	| Not_found -> []
+    in
+    let h = List.sort compare ((seq, f) :: h) in
+      Hashtbl.replace hook host h
+
+  let run hook host x =
+    let rec aux x =
+      function
+	| (_, f) :: h ->
+	    (try
+	       match f x with
+		 | OK -> aux x h
+		 | Stop -> ()
+	     with
+	       | exn ->
+		   Printf.printf "Exception %s\nrunning hook"
+		     (Printexc.to_string exn);
+		   aux x h
+	    )
+	| [] -> ()
+    in
+      try
+	let h = Hashtbl.find hook host in
+	  aux x h
+      with
+	| Not_found -> ()
+
+
+  type ('a, 'b) fold_hook =
+      (Jlib.namepreped, (int * ('b -> 'a -> result * 'b)) list) Hashtbl.t
+
+  let create_fold () = Hashtbl.create 1
+
+  let add_fold hook host f seq =
+    let h =
+      try
+	Hashtbl.find hook host
+      with
+	| Not_found -> []
+    in
+    let h = List.sort compare ((seq, f) :: h) in
+      Hashtbl.replace hook host h
+
+  let run_fold hook host v x =
+    let rec aux v x =
+      function
+	| (_, f) :: h ->
+	    (try
+	       match f v x with
+		 | (OK, v) -> aux v x h
+		 | (Stop, v) -> v
+	     with
+	       | exn ->
+		   Printf.printf "Exception %s\nrunning hook"
+		     (Printexc.to_string exn);
+		   aux v x h
+	    )
+	| [] -> v
+    in
+      try
+	let h = Hashtbl.find hook host in
+	  aux v x h
+      with
+	| Not_found -> v
+
+end
 
 module Auth :
 sig
@@ -1592,6 +1700,118 @@ struct
 
 end
 
+module GenIQHandler :
+sig
+  type component = [ `SM ]
+  type response = [ `IQ of Jlib.iq_response Jlib.iq | `Ignore ]
+  val add_iq_handler :
+    component -> Jlib.namepreped -> string ->
+    (Jlib.jid -> Jlib.jid -> Jlib.iq_query Jlib.iq -> response) -> unit -> unit
+  val remove_iq_handler : component -> Jlib.namepreped -> string -> unit
+  val handle :
+    component -> Jlib.namepreped -> string ->
+    Jlib.jid -> Jlib.jid -> Jlib.iq_query Jlib.iq -> bool
+end
+  =
+struct
+  type component = [ `SM ]
+  type response = [ `IQ of Jlib.iq_response Jlib.iq | `Ignore ]
+
+  let handlers =
+    (Hashtbl.create 10
+       : (component * Jlib.namepreped * string,
+	  Jlib.jid -> Jlib.jid -> Jlib.iq_query Jlib.iq -> response) Hashtbl.t)
+
+  let add_iq_handler component host ns f _type' =
+    (*case Type of
+	no_queue ->*)
+    Hashtbl.replace handlers (component, host, ns) f
+	(*one_queue ->
+	    {ok, Pid} = supervisor:start_child(ejabberd_iq_sup,
+					       [Host, Module, Function]),
+	    Component:register_iq_handler(Host, NS, Module, Function,
+					  {one_queue, Pid});
+	{queues, N} ->
+	    Pids =
+		lists:map(
+		  fun(_) ->
+			  {ok, Pid} = supervisor:start_child(
+					ejabberd_iq_sup,
+					[Host, Module, Function]),
+			  Pid
+		  end, lists:seq(1, N)),
+	    Component:register_iq_handler(Host, NS, Module, Function,
+					  {queues, Pids});
+	parallel ->
+	    Component:register_iq_handler(Host, NS, Module, Function, parallel)
+    end.*)
+
+  let remove_iq_handler component host ns =
+    (* TODO *)
+    Hashtbl.remove handlers (component, host, ns)
+
+(*
+stop_iq_handler(_Module, _Function, Opts) ->
+    case Opts of
+	{one_queue, Pid} ->
+	    gen_server:call(Pid, stop);
+	{queues, Pids} ->
+	    lists:foreach(fun(Pid) ->
+				  catch gen_server:call(Pid, stop)
+			  end, Pids);
+	_ ->
+	    ok
+    end.
+*)
+
+  let process_iq _host f from to' iq =
+    try
+      let res_iq = f from to' iq in
+	match res_iq with
+	  | `IQ (iq : Jlib.iq_response Jlib.iq) ->
+	      Router.route to' from
+		(Jlib.iq_to_xml (iq :> Jlib.iq_query_response Jlib.iq))
+	  | `Ignore ->
+	      ()
+    with
+      | exn ->
+	  Printf.eprintf "Exception %s in GenIQHandler when processing\nfrom: %s\n to: %s\npacket: %s\n"
+	    (Printexc.to_string exn)
+	    (Jlib.jid_to_string from)
+	    (Jlib.jid_to_string to')
+	    (Xml.element_to_string (Jlib.iq_to_xml (iq :> Jlib.iq_query_response Jlib.iq))); flush stderr;
+	  ()
+
+  let handle component host ns from to' iq =
+    let f =
+      try
+	Some (Hashtbl.find handlers (component, host, ns))
+      with
+	| Not_found -> None
+    in
+      match f with
+	| None -> false
+	| Some f -> (
+    (*case Opts of
+	no_queue ->*)
+	    process_iq host f from to' iq;
+	    true
+	(*{one_queue, Pid} ->
+	    Pid ! {process_iq, From, To, IQ};
+	{queues, Pids} ->
+	    Pid = lists:nth(erlang:phash(now(), length(Pids)), Pids),
+	    Pid ! {process_iq, From, To, IQ};
+	parallel ->
+	    spawn(?MODULE, process_iq, [Host, Module, Function, From, To, IQ]);
+	_ ->
+	    todo
+    end.*)
+	  )
+
+
+end
+
+
 module SM :
 sig
   type msg = Router.msg
@@ -1613,6 +1833,16 @@ sig
   val unset_presence :
     sid -> Jlib.nodepreped -> Jlib.namepreped -> Jlib.resourcepreped ->
     string -> info -> unit
+
+  val get_user_resources :
+    Jlib.nodepreped -> Jlib.namepreped -> Jlib.resourcepreped list
+
+  val roster_in_subscription :
+    (Jlib.nodepreped * Jlib.namepreped * Jlib.jid *
+       [ `Subscribe | `Subscribed | `Unsubscribe | `Unsubscribed ] *
+       string, bool)
+    Hooks.fold_hook
+
 end
   =
 struct
@@ -1746,7 +1976,9 @@ struct
 	with
 	  | Not_found -> assert false
       in
-	remove_r_idx r_idx r sid
+	remove_r_idx r_idx r sid;
+	if Hashtbl.length r_idx = 0
+	then Hashtbl.remove ur_idx u
 
     let remove_usr_idx (u, s, r) sid =
       let ur_idx =
@@ -1755,7 +1987,9 @@ struct
 	with
 	  | Not_found -> assert false
       in
-	remove_ur_idx ur_idx u r sid
+	remove_ur_idx ur_idx u r sid;
+	if Hashtbl.length ur_idx = 0
+	then Hashtbl.remove usr_idx s
 
     let remove sid =
       try
@@ -2021,25 +2255,12 @@ struct
     match Jlib.iq_query_info packet with
       | `IQ ({Jlib.iq_xmlns = xmlns; _} as iq) -> (
 	  let host = to'.Jlib.lserver in
-	    (* TODO *)
-	    (*case ets:lookup(sm_iqtable, {XMLNS, Host}) of
-		[{_, Module, Function}] ->
-		    ResIQ = Module:Function(From, To, IQ),
-		    if
-			ResIQ /= ignore ->
-			    ejabberd_router:route(To, From,
-						  jlib:iq_to_xml(ResIQ));
-			true ->
-			    ok
-		    end;
-		[{_, Module, Function, Opts}] ->
-		    gen_iq_handler:handle(Host, Module, Function, Opts,
-					  From, To, IQ);
-		[] ->*)
-	  let err =
-	    Jlib.make_error_reply packet Jlib.err_service_unavailable
-	  in
-	    Router.route to' from err
+	    if not (GenIQHandler.handle `SM host xmlns from to' iq) then (
+	      let err =
+		Jlib.make_error_reply packet Jlib.err_service_unavailable
+	      in
+		Router.route to' from err
+	    )
 	)
       | `Reply -> ()
       | _ ->
@@ -2048,6 +2269,37 @@ struct
 	  in
 	    Router.route to' from err
 
+
+(* The default list applies to the user as a whole,
+   and is processed if there is no active list set
+   for the target session/resource to which a stanza is addressed,
+   or if there are no current sessions for the user.
+*)
+  let is_privacy_allow from to' packet =
+    true				(* TODO *)
+(*
+    User = To#jid.user,
+    Server = To#jid.server,
+    PrivacyList = ejabberd_hooks:run_fold(privacy_get_user_list, Server,
+					  #userlist{}, [User, Server]),
+    is_privacy_allow(From, To, Packet, PrivacyList).
+
+%% Check if privacy rules allow this delivery
+%% Function copied from ejabberd_c2s.erl
+is_privacy_allow(From, To, Packet, PrivacyList) ->
+    User = To#jid.user,
+    Server = To#jid.server,
+    allow == ejabberd_hooks:run_fold(
+	       privacy_check_packet, Server,
+	       allow,
+	       [User,
+		Server,
+		PrivacyList,
+		{From, To, Packet},
+		in]).
+*)
+
+  let roster_in_subscription = Hooks.create_fold ()
 
   let rec do_route from to' packet =
     let {Jlib.luser = luser;
@@ -2058,49 +2310,41 @@ struct
 	| "" -> (
 	    match name with
 	      | "presence" -> (
-		  let pass = true in	(* TODO *)
-		    (*
-		    {Pass, _Subsc} =
-			case xml:get_attr_s("type", Attrs) of
-			    "subscribe" ->
-				Reason = xml:get_path_s(
-					   Packet,
-					   [{elem, "status"}, cdata]),
-				{is_privacy_allow(From, To, Packet) andalso
-				 ejabberd_hooks:run_fold(
-				   roster_in_subscription,
-				   LServer,
-				   false,
-				   [User, Server, From, subscribe, Reason]),
-				 true};
-			    "subscribed" ->
-				{is_privacy_allow(From, To, Packet) andalso
-				 ejabberd_hooks:run_fold(
-				   roster_in_subscription,
-				   LServer,
-				   false,
-				   [User, Server, From, subscribed, ""]),
-				 true};
-			    "unsubscribe" ->
-				{is_privacy_allow(From, To, Packet) andalso
-				 ejabberd_hooks:run_fold(
-				   roster_in_subscription,
-				   LServer,
-				   false,
-				   [User, Server, From, unsubscribe, ""]),
-				 true};
-			    "unsubscribed" ->
-				{is_privacy_allow(From, To, Packet) andalso
-				 ejabberd_hooks:run_fold(
-				   roster_in_subscription,
-				   LServer,
-				   false,
-				   [User, Server, From, unsubscribed, ""]),
-				 true};
-			    _ ->
-				{true, false}
-			end,
-		    *)
+		  let pass =
+		    match Xml.get_attr_s "type" attrs with
+		      | "subscribe" ->
+			  let reason =
+			    Xml.get_path_s packet [`Elem "status"; `Cdata]
+			  in
+			    is_privacy_allow from to' packet &&
+			      (Hooks.run_fold
+				 roster_in_subscription
+				 lserver
+				 false
+				 (luser, lserver, from, `Subscribe, reason))
+		      | "subscribed" ->
+			    is_privacy_allow from to' packet &&
+			      (Hooks.run_fold
+				 roster_in_subscription
+				 lserver
+				 false
+				 (luser, lserver, from, `Subscribed, ""))
+		      | "unsubscribe" ->
+			    is_privacy_allow from to' packet &&
+			      (Hooks.run_fold
+				 roster_in_subscription
+				 lserver
+				 false
+				 (luser, lserver, from, `Unsubscribe, ""))
+		      | "unsubscribed" ->
+			    is_privacy_allow from to' packet &&
+			      (Hooks.run_fold
+				 roster_in_subscription
+				 lserver
+				 false
+				 (luser, lserver, from, `Unsubscribed, ""))
+		      | _ -> true
+		  in
 		    if pass then (
 		      let presources =
 			get_user_present_resources luser lserver
@@ -2248,9 +2492,6 @@ struct
 	  (*?ERROR_MSG("~p~nwhen processing: ~p",
 		       [Reason, {From, To, Packet}]);*)
 
-  let myhosts () =
-    List.map Jlib.nameprep_exn ["localhost"; "e.localhost"] (* TODO *)
-
   let () =
     let pid = spawn (fun s -> Lwt.return ()) in
       List.iter
@@ -2274,6 +2515,14 @@ sig
   val init : init_data -> msg pid -> state
   val handle : msg -> state -> state GenServer.result
   val terminate : state -> unit Lwt.t
+
+  val roster_get_subscription_lists :
+    (Jlib.nodepreped * Jlib.namepreped, LJID.t list * LJID.t list)
+    Hooks.fold_hook
+  val roster_out_subscription :
+    (Jlib.nodepreped * Jlib.namepreped * Jlib.jid *
+       [ `Subscribe | `Subscribed | `Unsubscribe | `Unsubscribed ])
+    Hooks.hook
 end =
 struct
   type msg =
@@ -2773,6 +3022,8 @@ struct
 		state
 
 
+  let roster_out_subscription = Hooks.create ()
+
   (* User sends a directed presence packet *)
   let presence_track from to' packet state =
     let `XmlElement (_name, attrs, _els) = packet in
@@ -2791,30 +3042,26 @@ struct
 	    let pres_a = LJIDSet.remove lto state.pres_a in
 	      {state with pres_i; pres_a}
 	| "subscribe" ->
-	    (*ejabberd_hooks:run(roster_out_subscription,
-	      Server,
-	      [User, Server, To, subscribe]),*)
+	    Hooks.run roster_out_subscription server
+	      (user, server, to', `Subscribe);
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
 	    state
 	| "subscribed" ->
-	    (*ejabberd_hooks:run(roster_out_subscription,
-			       Server,
-			       [User, Server, To, subscribed]),*)
+	    Hooks.run roster_out_subscription server
+	      (user, server, to', `Subscribed);
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
 	    state
 	| "unsubscribe" ->
-	    (*ejabberd_hooks:run(roster_out_subscription,
-			       Server,
-			       [User, Server, To, unsubscribe]),*)
+	    Hooks.run roster_out_subscription server
+	      (user, server, to', `Unsubscribe);
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
 	    state
 	| "unsubscribed" ->
-	    (*ejabberd_hooks:run(roster_out_subscription,
-			       Server,
-			       [User, Server, To, unsubscribed]),*)
+	    Hooks.run roster_out_subscription server
+	      (user, server, to', `Unsubscribed);
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
 	    state
@@ -2828,6 +3075,7 @@ struct
 	    let pres_a = LJIDSet.add lto state.pres_a in
 	      {state with pres_i; pres_a}
 
+  let roster_get_subscription_lists = Hooks.create_fold ()
 
   (* Check from attributes
      returns invalid-from|NewElement *)
@@ -3179,17 +3427,20 @@ wait_for_stream(timeout, StateData) ->
                                       let res = Jlib.make_result_iq_reply el in
 					(*Res = setelement(4, Res1, []),*)
 					send_element state res;
-					(*change_shaper(StateData, JID),
-					  {Fs, Ts} = ejabberd_hooks:run_fold(
-                                          roster_get_subscription_lists,
-                                          StateData#state.server,
-                                          {[], []},
-                                          [U, StateData#state.server]),
-					  LJID = jlib:jid_tolower(
-                                          jlib:jid_remove_resource(JID)),
-					  Fs1 = [LJID | Fs],
-					  Ts1 = [LJID | Ts],
-					  PrivList =
+					(*change_shaper(StateData, JID),*)
+					let (fs, ts) =
+					  Hooks.run_fold
+					    roster_get_subscription_lists
+					    state.server
+					    ([], [])
+					    (jid.Jlib.luser, state.server)
+					in
+					let ljid =
+					  Jlib.jid_tolower (Jlib.jid_remove_resource jid)
+					in
+					let fs = ljid :: fs in
+					let ts = ljid :: ts in
+					  (*PrivList =
                                           ejabberd_hooks:run_fold(
                                           privacy_get_user_list,
                                           StateData#state.server,
@@ -3638,12 +3889,12 @@ wait_for_bind(timeout, StateData) ->
 		      let res = Jlib.make_result_iq_reply el in
 			send_element state res;
 		    (*change_shaper(StateData, JID),*)
-			let (fs, ts) = (*ejabberd_hooks:run_fold(
-				 roster_get_subscription_lists,
-				 StateData#state.server,
-				 {[], []},
-				 [U, StateData#state.server]),*) (* TODO *)
-			  ([], [])
+			let (fs, ts) =
+			  Hooks.run_fold
+			    roster_get_subscription_lists
+			    state.server
+			    ([], [])
+			    (u, state.server)
 			in
 			let ljid =
 			  Jlib.jid_tolower (Jlib.jid_remove_resource jid)
@@ -4166,6 +4417,1138 @@ session_established(timeout, StateData) ->
 end
 
 module C2SServer = GenServer.Make(C2S)
+
+module ModRoster :
+sig
+end
+  =
+struct
+
+  type subscription =
+    [ `None of [ `None | `Out | `In | `Both ]
+    | `To of [ `None | `In ]
+    | `From of [ `None | `Out ]
+    | `Both ]
+
+  type subscription_request =
+    | Subscribe
+    | Subscribed
+    | Unsubscribe
+    | Unsubscribed
+
+  type +'a roster_item =
+      {jid : string * string * string;
+       name : string;
+       subscription : [> subscription ] as 'a;
+       groups : string list;
+       askmessage : string;
+      }
+
+  let rosters = (Hashtbl.create 100
+		   : (Jlib.nodepreped * Jlib.namepreped,
+		      (LJID.t, subscription roster_item) Hashtbl.t) Hashtbl.t)
+
+  let read_roster' u s =
+    try
+      Some (Hashtbl.find rosters (u, s))
+    with
+      | Not_found -> None
+
+  let read_roster u s =
+    try
+      let roster = Hashtbl.find rosters (u, s) in
+	Hashtbl.fold
+	  (fun jid item acc -> (jid, item) :: acc) roster []
+    with
+      | Not_found -> []
+
+  let delete_roster u s =
+    Hashtbl.remove rosters (u, s)
+
+  let read_roster_item u s jid =
+    try
+      let roster = Hashtbl.find rosters (u, s) in
+	Some (Hashtbl.find roster jid)
+    with
+      | Not_found -> None
+
+  let write_roster_item u s jid item =
+    let us = (u, s) in
+    let roster =
+      try
+	Hashtbl.find rosters us
+      with
+	| Not_found ->
+	    let roster = Hashtbl.create 1 in
+	      Hashtbl.add rosters us roster;
+	      roster
+    in
+      Hashtbl.replace roster jid item
+
+  let delete_roster_item u s jid =
+    let us = (u, s) in
+      try
+	let roster = Hashtbl.find rosters us in
+	  Hashtbl.remove roster jid;
+	  if Hashtbl.length roster = 0
+	  then Hashtbl.remove rosters us
+      with
+	| Not_found -> ()
+
+
+
+
+  let roster_hash items =
+    string_of_int
+      (Hashtbl.hash
+	 (List.sort compare
+	    (List.map
+	       (fun (jid, item) ->
+		  (jid, {item with groups = List.sort compare item.groups})
+	       ) items)))
+		
+  let roster_versioning_enabled host =
+    (* TODO *)
+    false
+    (*gen_mod:get_module_opt(Host, ?MODULE, versioning, false).*)
+
+  let roster_version_on_db host =
+    (* TODO *)
+    false
+    (*gen_mod:get_module_opt(Host, ?MODULE, store_current_id, false).*)
+
+  (* Returns a list that may contain an xmlelement with the XEP-237 feature if it's enabled. *)
+  let get_versioning_feature acc host =
+    if roster_versioning_enabled host then (
+      let feature = `XmlElement ("ver", [("xmlns", <:ns<ROSTER_VER>>)], []) in
+	feature :: acc
+    ) else []
+
+  let roster_version lserver luser =
+    (* TODO *)
+    ""
+(*
+	US = {LUser, LServer},
+	case roster_version_on_db(LServer) of
+		true ->
+			case mnesia:dirty_read(roster_version, US) of
+				[#roster_version{version = V}] -> V;
+				[] -> not_found
+			end;
+		false ->
+			roster_hash(ejabberd_hooks:run_fold(roster_get, LServer, [], [US]))
+	end.
+*)
+
+  let item_to_xml item =
+    let (u, s, r) = item.jid in
+    let attrs = [("jid", Jlib.jid_to_string' u s r)] in
+    let attrs =
+      match item.name with
+	| "" -> attrs
+	| name -> ("name", name) :: attrs
+    in
+    let attrs =
+      match item.subscription with
+	| `None _ -> ("subscription", "none")   :: attrs
+	| `From _ -> ("subscription", "from")   :: attrs
+	| `To _ ->   ("subscription", "to")     :: attrs
+	| `Both ->   ("subscription", "both")   :: attrs
+	| `Remove -> ("subscription", "remove") :: attrs
+    in
+    let attrs =
+      let pending =
+	match item.subscription with
+	  | `None pending -> (pending :> [ `Both | `In | `None | `Out ])
+	  | `From pending -> (pending :> [ `Both | `In | `None | `Out ])
+	  | `To pending -> (pending :> [ `Both | `In | `None | `Out ])
+	  | `Both
+	  | `Remove -> `None
+      in
+	match pending with
+	  | `Out -> ("ask", "subscribe") :: attrs
+	  | `Both -> ("ask", "subscribe") :: attrs
+	  | _ -> attrs
+    in
+    let subels =
+      List.map
+	(fun g -> `XmlElement ("group", [], [(`XmlCdata g)]))
+	item.groups
+    in
+      (`XmlElement ("item", attrs, subels) : Xml.element)
+
+  let item_to_xml' (_jid, item) = item_to_xml item
+
+  let roster_get = Hooks.create_fold ()
+
+(*
+ Load roster from DB only if neccesary. 
+ It is neccesary if
+     - roster versioning is disabled in server OR
+     - roster versioning is not used by the client OR
+     - roster versioning is used by server and client, BUT the server isn't storing versions on db OR
+     - the roster version from client don't match current version.
+*)
+  let process_iq_get from to' iq =
+    let `Get subel = iq.Jlib.iq_type in
+    let luser = from.Jlib.luser in
+    let lserver = from.Jlib.lserver in
+    let us = (luser, lserver) in
+      try
+	let to_send =
+	  match Xml.get_tag_attr "ver" subel, 
+	    roster_versioning_enabled lserver,
+	    roster_version_on_db lserver with
+	      | Some requested_version, true, true ->
+		  (* Retrieve version from DB. Only load entire roster
+		     when neccesary. *)
+			(*case mnesia:dirty_read(roster_version, US) of
+				[#roster_version{version = RequestedVersion}] ->
+					{false, false};
+				[#roster_version{version = NewVersion}] ->
+					{lists:map(fun item_to_xml/1, 
+						ejabberd_hooks:run_fold(roster_get, To#jid.lserver, [], [US])), NewVersion};
+				[] ->*)
+		  let roster_version =
+		    string_of_int (Hashtbl.hash (Unix.gettimeofday ()))
+		  in
+		    (*mnesia:dirty_write(#roster_version{us = US, version = RosterVersion}),
+					{lists:map(fun item_to_xml/1,
+						ejabberd_hooks:run_fold(roster_get, To#jid.lserver, [], [US])), RosterVersion}*) (* TODO *)
+		    Some ([], Some roster_version)
+
+	      | Some requested_version, true, false ->
+		  let roster_items =
+		    Hooks.run_fold roster_get to'.Jlib.lserver [] us
+		  in
+		  let hash = roster_hash roster_items in
+		    if hash = requested_version
+		    then None
+		    else Some (List.map item_to_xml' roster_items, Some hash)
+			
+	      | _ ->
+		  let roster_items =
+		    Hooks.run_fold roster_get to'.Jlib.lserver [] us
+		  in
+		    Some (List.map item_to_xml' roster_items, None)
+	in
+	let subel =
+	  match to_send with
+	    | None -> None
+	    | Some (items, None) ->
+		Some (`XmlElement ("query", [("xmlns", <:ns<ROSTER>>)],
+				   (items :> Xml.element_cdata list)))
+	    | Some (items, Some version) ->
+		Some (`XmlElement ("query", [("xmlns", <:ns<ROSTER>>);
+					     ("ver", version)],
+				   (items :> Xml.element_cdata list)))
+	in
+	let subel = (subel) in
+	  {iq with Jlib.iq_type = `Result subel}
+      with
+    	| _ ->
+	    {iq with Jlib.iq_type = `Error (Jlib.err_internal_server_error,
+					    Some subel)}
+
+  let get_user_roster acc (u, s) =
+    let items = read_roster u s in
+    let items =
+      List.filter
+	(function
+	   | (jid, {subscription = `None `In; _}) -> false
+	   | _ -> true) items @ acc
+    in
+      (Hooks.OK, items)
+
+  let rec process_item_attrs item =
+    function
+      | (attr, value) :: attrs -> (
+	  match attr with
+	    | "jid" -> (
+		match Jlib.string_to_jid value with
+		  | None ->
+		      process_item_attrs item attrs
+		  | Some jid1 ->
+		      let jid =
+			(jid1.Jlib.user, jid1.Jlib.server, jid1.Jlib.resource)
+		      in
+			process_item_attrs {item with jid} attrs
+	      )
+	    | "name" ->
+		process_item_attrs {item with name = value} attrs
+	    | "subscription" -> (
+		match value with
+		  | "remove" ->
+		      process_item_attrs
+			{item with subscription = `Remove} attrs
+		  | _ ->
+		      process_item_attrs item attrs
+	      )
+	    | "ask" ->
+		process_item_attrs item attrs
+	    | _ ->
+		process_item_attrs item attrs
+	)
+      | [] ->
+	  item
+
+
+  let rec process_item_els item =
+    function
+      | `XmlElement (name, _attrs, sels) :: els -> (
+	  match name with
+	    | "group" ->
+		let groups = Xml.get_cdata sels :: item.groups in
+		  process_item_els {item with groups} els
+	    | _ ->
+		process_item_els item els
+	)
+      | `XmlCdata _ :: els ->
+	  process_item_els item els
+      | [] ->
+	  item
+
+  let push_item'' user server resource from item roster_version =
+    let extra_attrs =
+      match roster_version with
+	| None -> []
+	| Some roster_version -> [("ver", roster_version)]
+    in
+    let resiq =
+      {Jlib.iq_type =
+	  `Set (`XmlElement ("query",
+			     ("xmlns", <:ns<ROSTER>>) :: extra_attrs,
+			     [(item_to_xml item :> Xml.element_cdata)]));
+       Jlib.iq_xmlns = <:ns<ROSTER>>;
+       Jlib.iq_id = "push" ^ Jlib.get_random_string ();
+       Jlib.iq_lang = "";
+      }
+    in
+      Router.route
+	from
+	(Jlib.make_jid' user server resource)
+	(Jlib.iq_to_xml resiq)
+
+  (* TODO: don't push to those who didn't load roster *)
+  let push_item' user server resource from item =
+    push_item'' user server resource from item None
+
+
+  let push_item user server from item =
+(* TODO *)
+    (*SM.route
+      (Jlib.make_jid "" "" "")
+      (jlib:make_jid' user server (Jlib.resourceprep_exn ""))
+      (`XmlElement
+	 ("broadcast", [],
+	  [{item,
+	    Item#roster.jid,
+	    Item#roster.subscription}])),*)
+(* TODO *)
+  (*
+    case roster_versioning_enabled(Server) of
+	true ->
+		push_item_version(Server, User, From, Item, roster_version(Server, User));
+	false ->*)
+    List.iter
+      (fun resource ->
+	 push_item' user server resource from item)
+      (SM.get_user_resources user server)
+
+(*
+%% @doc Roster push, calculate and include the version attribute.
+%% TODO: don't push to those who didn't load roster
+push_item_version(Server, User, From, Item, RosterVersion)  ->
+    lists:foreach(fun(Resource) ->
+			  push_item(User, Server, Resource, From, Item, RosterVersion)
+		end, ejabberd_sm:get_user_resources(User, Server)).
+*)
+
+
+  let send_presence_type from to' type' =
+    Router.route from to'
+      (`XmlElement ("presence", [("type", type')], []))
+
+  let send_unsubscribing_presence from jid item =
+    let is_to =
+      match item.subscription with
+	| `Both -> true
+	| `To _ -> true
+	| _ -> false
+    in
+    let is_from =
+      match item.subscription with
+	| `Both -> true
+	| `From _ -> true
+	| _ -> false
+    in
+      if is_to then (
+	send_presence_type
+	  (Jlib.jid_remove_resource from)
+	  (Jlib.ljid_to_jid jid)
+	  "unsubscribe"
+      );
+      if is_from then (
+	send_presence_type
+	  (Jlib.jid_remove_resource from)
+	  (Jlib.ljid_to_jid jid)
+	  "unsubscribed"
+      )
+
+
+  let process_item_set from to' =
+    function
+      | `XmlElement (_name, attrs, els) -> (
+	  let jid = Jlib.string_to_jid (Xml.get_attr_s "jid" attrs) in
+	  let {Jlib.luser = luser; Jlib.lserver = lserver; _} = from in
+	    match jid with
+	      | None ->
+		  ()
+	      | Some jid1 ->
+		  let jid =
+		    (jid1.Jlib.user, jid1.Jlib.server, jid1.Jlib.resource)
+		  in
+		  let ljid = Jlib.jid_tolower jid1 in
+		  let f =
+		    fun () ->
+		      let res = read_roster_item luser lserver ljid in
+		      let item' =
+			match res with
+			  | None ->
+			      {jid = jid;
+			       name = "";
+			       subscription = `None `None;
+			       groups = [];
+			       askmessage = "";
+			      }
+			  | Some item ->
+			      {item with
+				 jid = jid;
+				 name = "";
+				 groups = []}
+		      in
+		      let item =
+			(item' :> [ subscription | `Remove] roster_item)
+		      in
+		      let item = process_item_attrs item attrs in
+		      let item = process_item_els item els in
+			(match item with
+			   | {subscription = `Remove; _} ->
+			       delete_roster_item luser lserver ljid
+			   | {subscription = #subscription; _} as item ->
+			       write_roster_item luser lserver ljid item
+			);
+			(*
+			  %% If the item exist in shared roster, take the
+			  %% subscription information from there:
+			  Item3 = ejabberd_hooks:run_fold(roster_process_item,
+			  LServer, Item2, [LServer]),
+			  case roster_version_on_db(LServer) of
+			  true -> mnesia:write(#roster_version{us = {LUser, LServer}, version = sha:sha(term_to_binary(now()))});
+			  false -> ok
+			  end,
+			*)
+			(item', item, ljid)
+		  in
+		    match f () with
+		      | (old_item, item, ljid) -> (
+			  push_item luser lserver to' item;
+			  match item.subscription with
+			    | `Remove ->
+				send_unsubscribing_presence from ljid old_item
+			    | _ ->
+				()
+			)
+			  (*E ->
+			    ?DEBUG("ROSTER: roster item set error: ~p~n", [E]),
+			    ok*)
+	)
+      | `XmlCdata _ -> ()
+
+
+  let process_iq_set from to' iq =
+    let `Set subel = iq.Jlib.iq_type in
+    let `XmlElement (_name, _attrs, els) = subel in
+      List.iter (fun el -> process_item_set from to' el) els;
+      {iq with Jlib.iq_type = `Result None}
+
+
+  let process_local_iq from to' iq =
+    match iq with
+      | {Jlib.iq_type = `Set _; _} as iq ->
+	  process_iq_set from to' iq
+      | {Jlib.iq_type = `Get _; _} as iq ->
+	  process_iq_get from to' iq
+
+  let process_iq from to' iq =
+    let (`Set sub_el | `Get sub_el) = iq.Jlib.iq_type in
+    let lserver = from.Jlib.lserver in
+      if List.mem lserver (myhosts ())
+      then `IQ (process_local_iq from to' iq)
+      else `IQ {iq with
+		  Jlib.iq_type = `Error (Jlib.err_item_not_found, Some sub_el)}
+
+
+  let rec fill_subscription_lists items f t =
+    match items with
+      | (j, i) :: is -> (
+	  match i.subscription with
+	    | `Both ->
+		fill_subscription_lists is (j :: f) (j :: t)
+	    | `From _ ->
+		fill_subscription_lists is (j :: f) t
+	    | `To _ ->
+		fill_subscription_lists is f (j :: t)
+	    | `None _ ->
+		fill_subscription_lists is f t
+	)
+      | [] ->
+	  (f, t)
+
+  let get_subscription_lists _ (user, server) =
+    let items = read_roster user server in
+      (Hooks.OK, fill_subscription_lists items [] [])
+
+
+  let in_state_change subscription t =
+    match subscription, t with
+      | `None `None, `Subscribe    -> Some (`None `In)
+      | `None `None, `Subscribed   -> None
+      | `None `None, `Unsubscribe  -> None
+      | `None `None, `Unsubscribed -> None
+      | `None `Out,  `Subscribe    -> Some (`None `Both)
+      | `None `Out,  `Subscribed   -> Some (`To `None)
+      | `None `Out,  `Unsubscribe  -> None
+      | `None `Out,  `Unsubscribed -> Some (`None `None)
+      | `None `In,   `Subscribe    -> None
+      | `None `In,   `Subscribed   -> None
+      | `None `In,   `Unsubscribe  -> Some (`None `None)
+      | `None `In,   `Unsubscribed -> None
+      | `None `Both, `Subscribe    -> None
+      | `None `Both, `Subscribed   -> Some (`To `In)
+      | `None `Both, `Unsubscribe  -> Some (`None `Out)
+      | `None `Both, `Unsubscribed -> Some (`None `In)
+      | `To   `None, `Subscribe    -> Some (`To `In)
+      | `To   `None, `Subscribed   -> None
+      | `To   `None, `Unsubscribe  -> None
+      | `To   `None, `Unsubscribed -> Some (`None `None)
+      | `To   `In,   `Subscribe    -> None
+      | `To   `In,   `Subscribed   -> None
+      | `To   `In,   `Unsubscribe  -> Some (`To `None)
+      | `To   `In,   `Unsubscribed -> Some (`None `In)
+      | `From `None, `Subscribe    -> None
+      | `From `None, `Subscribed   -> Some `Both
+      | `From `None, `Unsubscribe  -> Some (`None `None)
+      | `From `None, `Unsubscribed -> None
+      | `From `Out,  `Subscribe    -> None
+      | `From `Out,  `Subscribed   -> Some `Both
+      | `From `Out,  `Unsubscribe  -> Some (`None `Out)
+      | `From `Out,  `Unsubscribed -> Some (`From `None)
+      | `Both,       `Subscribe    -> None
+      | `Both,       `Subscribed   -> None
+      | `Both,       `Unsubscribe  -> Some (`To `None)
+      | `Both,       `Unsubscribed -> Some (`From `None)
+
+  let out_state_change subscription t =
+    match subscription, t with
+      | `None `None, `Subscribe    -> Some (`None `Out)
+      | `None `None, `Subscribed   -> None
+      | `None `None, `Unsubscribe  -> None
+      | `None `None, `Unsubscribed -> None
+      | `None `Out,  `Subscribe    -> Some (`None `Out)
+      | `None `Out,  `Subscribed   -> None
+      | `None `Out,  `Unsubscribe  -> Some (`None `None)
+      | `None `Out,  `Unsubscribed -> None
+      | `None `In,   `Subscribe    -> Some (`None `Both)
+      | `None `In,   `Subscribed   -> Some (`From `None)
+      | `None `In,   `Unsubscribe  -> None
+      | `None `In,   `Unsubscribed -> Some (`None `None)
+      | `None `Both, `Subscribe    -> None
+      | `None `Both, `Subscribed   -> Some (`From `Out)
+      | `None `Both, `Unsubscribe  -> Some (`None `In)
+      | `None `Both, `Unsubscribed -> Some (`None `Out)
+      | `To   `None, `Subscribe    -> None
+      | `To   `None, `Subscribed   -> Some `Both
+      | `To   `None, `Unsubscribe  -> Some (`None `None)
+      | `To   `None, `Unsubscribed -> None
+      | `To   `In,   `Subscribe    -> None
+      | `To   `In,   `Subscribed   -> Some `Both
+      | `To   `In,   `Unsubscribe  -> Some (`None `In)
+      | `To   `In,   `Unsubscribed -> Some (`To `None)
+      | `From `None, `Subscribe    -> Some (`From `Out)
+      | `From `None, `Subscribed   -> None
+      | `From `None, `Unsubscribe  -> None
+      | `From `None, `Unsubscribed -> Some (`None `None)
+      | `From `Out,  `Subscribe    -> None
+      | `From `Out,  `Subscribed   -> None
+      | `From `Out,  `Unsubscribe  -> Some (`From `None)
+      | `From `Out,  `Unsubscribed -> Some (`None `Out)
+      | `Both,       `Subscribe    -> None
+      | `Both,       `Subscribed   -> None
+      | `Both,       `Unsubscribe  -> Some (`From `None)
+      | `Both,       `Unsubscribed -> Some (`To `None)
+
+  let in_auto_reply subscription t =
+    match subscription, t with
+      | `From `None, `Subscribe   -> Some `Subscribed
+      | `From `Out,  `Subscribe   -> Some `Subscribed
+      | `Both,       `Subscribe   -> Some `Subscribed
+      | `None `In,   `Unsubscribe -> Some `Unsubscribed
+      | `None `Both, `Unsubscribe -> Some `Unsubscribed
+      | `To   `In,   `Unsubscribe -> Some `Unsubscribed
+      | `From `None, `Unsubscribe -> Some `Unsubscribed
+      | `From `Out,  `Unsubscribe -> Some `Unsubscribed
+      | `Both,       `Unsubscribe -> Some `Unsubscribed
+      | _,           _            -> None
+
+
+  let process_subscription direction luser lserver jid1 type' reason =
+    let us = (luser, lserver) in
+    let ljid = Jlib.jid_tolower jid1 in
+    let f =
+      fun() ->
+	let item =
+	  match read_roster_item luser lserver ljid with
+	    | None ->
+		let jid =
+		  (jid1.Jlib.user, jid1.Jlib.server, jid1.Jlib.resource)
+		in
+		  {jid;
+		   name = "";
+		   subscription = `None `None;
+		   groups = [];
+		   askmessage = "";
+		  }
+	    | Some i -> i
+	in
+	let new_state =
+	  match direction with
+	    | `Out -> out_state_change item.subscription type'
+	    | `In -> in_state_change item.subscription type'
+	in
+	let autoreply =
+	  match direction with
+	    | `Out -> None
+	    | `In -> in_auto_reply item.subscription type'
+	in
+	let ask_message =
+	  match new_state with
+	    | Some (`None `Both)
+	    | Some (`None `In)
+	    | Some (`To `In) -> reason
+	    | _ -> ""
+	in
+	  match new_state with
+	    | None ->
+		(None, autoreply)
+	    | Some (`None `None) when item.subscription = `None `In ->
+		delete_roster_item luser lserver ljid;
+		(None, autoreply)
+	    | Some subscription ->
+		let new_item =
+		  {item with
+		     subscription = subscription;
+		     askmessage = ask_message}
+		in
+		  write_roster_item luser lserver ljid new_item;
+			(*case roster_version_on_db(LServer) of
+				true -> mnesia:write(#roster_version{us = {LUser, LServer}, version = sha:sha(term_to_binary(now()))});
+				false -> ok
+			end,*)
+		  (Some new_item, autoreply)
+    in
+      match f () with
+	| (push, auto_reply) -> (
+	    (match auto_reply with
+	       | None -> ()
+	       | Some auto_reply ->
+		   let t =
+		     match auto_reply with
+		       | `Subscribed -> "subscribed"
+		       | `Unsubscribed -> "unsubscribed"
+		   in
+		     Router.route
+		       (Jlib.make_jid'
+			  luser lserver (Jlib.resourceprep_exn ""))
+		       jid1
+		       (`XmlElement ("presence", [("type", t)], []))
+	    );
+	    match push with
+	      | Some item -> (
+		    if item.subscription <> `None `In then (
+		      push_item luser lserver
+			(Jlib.make_jid'
+			   luser lserver (Jlib.resourceprep_exn ""))
+			item
+		    );
+		    true;
+	  )
+	      | None ->
+		  false
+	  )
+
+  let in_subscription _ (user, server, jid, type', reason) =
+    (Hooks.OK, process_subscription `In user server jid type' reason)
+
+  let out_subscription (user, server, jid, type') =
+    process_subscription `Out user server jid type' "";
+    Hooks.OK
+
+
+(*
+remove_user(User, Server) ->
+    LUser = jlib:nodeprep(User),
+    LServer = jlib:nameprep(Server),
+    US = {LUser, LServer},
+    send_unsubscription_to_rosteritems(LUser, LServer),
+    F = fun() ->
+		lists:foreach(fun(R) ->
+				      mnesia:delete_object(R)
+			      end,
+			      mnesia:index_read(roster, US, #roster.us))
+        end,
+    mnesia:transaction(F).
+
+%% For each contact with Subscription:
+%% Both or From, send a "unsubscribed" presence stanza;
+%% Both or To, send a "unsubscribe" presence stanza.
+send_unsubscription_to_rosteritems(LUser, LServer) ->
+    RosterItems = get_user_roster([], {LUser, LServer}),
+    From = jlib:make_jid({LUser, LServer, ""}),
+    lists:foreach(fun(RosterItem) ->
+			  send_unsubscribing_presence(From, RosterItem)
+		  end,
+		  RosterItems).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+set_items(User, Server, SubEl) ->
+    {xmlelement, _Name, _Attrs, Els} = SubEl,
+    LUser = jlib:nodeprep(User),
+    LServer = jlib:nameprep(Server),
+    F = fun() ->
+		lists:foreach(fun(El) ->
+				      process_item_set_t(LUser, LServer, El)
+			      end, Els)
+	end,
+    mnesia:transaction(F).
+
+process_item_set_t(LUser, LServer, {xmlelement, _Name, Attrs, Els}) ->
+    JID1 = jlib:string_to_jid(xml:get_attr_s("jid", Attrs)),
+    case JID1 of
+	error ->
+	    ok;
+	_ ->
+	    JID = {JID1#jid.user, JID1#jid.server, JID1#jid.resource},
+	    LJID = {JID1#jid.luser, JID1#jid.lserver, JID1#jid.lresource},
+	    Item = #roster{usj = {LUser, LServer, LJID},
+			   us = {LUser, LServer},
+			   jid = JID},
+	    Item1 = process_item_attrs_ws(Item, Attrs),
+	    Item2 = process_item_els(Item1, Els),
+	    case Item2#roster.subscription of
+		remove ->
+		    mnesia:delete({roster, {LUser, LServer, LJID}});
+		_ ->
+		    mnesia:write(Item2)
+	    end
+    end;
+process_item_set_t(_LUser, _LServer, _) ->
+    ok.
+
+process_item_attrs_ws(Item, [{Attr, Val} | Attrs]) ->
+    case Attr of
+	"jid" ->
+	    case jlib:string_to_jid(Val) of
+		error ->
+		    process_item_attrs_ws(Item, Attrs);
+		JID1 ->
+		    JID = {JID1#jid.user, JID1#jid.server, JID1#jid.resource},
+		    process_item_attrs_ws(Item#roster{jid = JID}, Attrs)
+	    end;
+	"name" ->
+	    process_item_attrs_ws(Item#roster{name = Val}, Attrs);
+	"subscription" ->
+	    case Val of
+		"remove" ->
+		    process_item_attrs_ws(Item#roster{subscription = remove},
+					  Attrs);
+		"none" ->
+		    process_item_attrs_ws(Item#roster{subscription = none},
+					  Attrs);
+		"both" ->
+		    process_item_attrs_ws(Item#roster{subscription = both},
+					  Attrs);
+		"from" ->
+		    process_item_attrs_ws(Item#roster{subscription = from},
+					  Attrs);
+		"to" ->
+		    process_item_attrs_ws(Item#roster{subscription = to},
+					  Attrs);
+		_ ->
+		    process_item_attrs_ws(Item, Attrs)
+	    end;
+	"ask" ->
+	    process_item_attrs_ws(Item, Attrs);
+	_ ->
+	    process_item_attrs_ws(Item, Attrs)
+    end;
+process_item_attrs_ws(Item, []) ->
+    Item.
+
+get_in_pending_subscriptions(Ls, User, Server) ->
+    JID = jlib:make_jid(User, Server, ""),
+    US = {JID#jid.luser, JID#jid.lserver},
+    case mnesia:dirty_index_read(roster, US, #roster.us) of
+	Result when is_list(Result) ->
+    	    Ls ++ lists:map(
+		    fun(R) ->
+			    Message = R#roster.askmessage,
+			    Status  = if is_binary(Message) ->
+					      binary_to_list(Message);
+					 true ->
+					      ""
+				      end,
+			    {xmlelement, "presence",
+			     [{"from", jlib:jid_to_string(R#roster.jid)},
+			      {"to", jlib:jid_to_string(JID)},
+			      {"type", "subscribe"}],
+			     [{xmlelement, "status", [],
+			       [{xmlcdata, Status}]}]}
+		    end,
+		    lists:filter(
+		      fun(R) ->
+			      case R#roster.ask of
+				  in   -> true;
+				  both -> true;
+				  _ -> false
+			      end
+		      end,
+		      Result));
+	_ ->
+	    Ls
+    end.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+get_jid_info(_, User, Server, JID) ->
+    LUser = jlib:nodeprep(User),
+    LJID = jlib:jid_tolower(JID),
+    LServer = jlib:nameprep(Server),
+    case catch mnesia:dirty_read(roster, {LUser, LServer, LJID}) of
+	[#roster{subscription = Subscription, groups = Groups}] ->
+	    {Subscription, Groups};
+	_ ->
+	    LRJID = jlib:jid_tolower(jlib:jid_remove_resource(JID)),
+	    if
+		LRJID == LJID ->
+		    {none, []};
+		true ->
+		    case catch mnesia:dirty_read(
+				 roster, {LUser, LServer, LRJID}) of
+			[#roster{subscription = Subscription,
+				 groups = Groups}] ->
+			    {Subscription, Groups};
+			_ ->
+			    {none, []}
+		    end
+	    end
+    end.
+*)
+(*
+webadmin_page(_, Host,
+	      #request{us = _US,
+		       path = ["user", U, "roster"],
+		       q = Query,
+		       lang = Lang} = _Request) ->
+    Res = user_roster(U, Host, Query, Lang),
+    {stop, Res};
+
+webadmin_page(Acc, _, _) -> Acc.
+
+user_roster(User, Server, Query, Lang) ->
+    US = {jlib:nodeprep(User), jlib:nameprep(Server)},
+    Items1 = mnesia:dirty_index_read(roster, US, #roster.us),
+    Res = user_roster_parse_query(User, Server, Items1, Query),
+    Items = mnesia:dirty_index_read(roster, US, #roster.us),
+    SItems = lists:sort(Items),
+    FItems =
+	case SItems of
+	    [] ->
+		[?CT("None")];
+	    _ ->
+		[?XE("table",
+		     [?XE("thead",
+			  [?XE("tr",
+			       [?XCT("td", "Jabber ID"),
+				?XCT("td", "Nickname"),
+				?XCT("td", "Subscription"),
+				?XCT("td", "Pending"),
+				?XCT("td", "Groups")
+			       ])]),
+		      ?XE("tbody",
+			  lists:map(
+			    fun(R) ->
+				    Groups =
+					lists:flatmap(
+					  fun(Group) ->
+						  [?C(Group), ?BR]
+					  end, R#roster.groups),
+				    Pending = ask_to_pending(R#roster.ask),
+				    TDJID = build_contact_jid_td(R#roster.jid),
+				    ?XE("tr",
+					[TDJID,
+					 ?XAC("td", [{"class", "valign"}],
+					      R#roster.name),
+					 ?XAC("td", [{"class", "valign"}],
+					      atom_to_list(R#roster.subscription)),
+					 ?XAC("td", [{"class", "valign"}],
+					      atom_to_list(Pending)),
+					 ?XAE("td", [{"class", "valign"}], Groups),
+					 if
+					     Pending == in ->
+						 ?XAE("td", [{"class", "valign"}],
+						      [?INPUTT("submit",
+							       "validate" ++
+							       ejabberd_web_admin:term_to_id(R#roster.jid),
+							       "Validate")]);
+					     true ->
+						 ?X("td")
+					 end,
+					 ?XAE("td", [{"class", "valign"}],
+					      [?INPUTT("submit",
+						       "remove" ++
+						       ejabberd_web_admin:term_to_id(R#roster.jid),
+						       "Remove")])])
+			    end, SItems))])]
+	end,
+    [?XC("h1", ?T("Roster of ") ++ us_to_list(US))] ++
+	case Res of
+	    ok -> [?XREST("Submitted")];
+	    error -> [?XREST("Bad format")];
+	    nothing -> []
+	end ++
+	[?XAE("form", [{"action", ""}, {"method", "post"}],
+	      FItems ++
+	      [?P,
+	       ?INPUT("text", "newjid", ""), ?C(" "),
+	       ?INPUTT("submit", "addjid", "Add Jabber ID")
+	      ])].
+
+build_contact_jid_td(RosterJID) ->
+    %% Convert {U, S, R} into {jid, U, S, R, U, S, R}:
+    ContactJID = jlib:make_jid(RosterJID),
+    JIDURI = case {ContactJID#jid.luser, ContactJID#jid.lserver} of
+		 {"", _} -> "";
+		 {CUser, CServer} ->
+		     case lists:member(CServer, ?MYHOSTS) of
+			 false -> "";
+			 true -> "/admin/server/" ++ CServer ++ "/user/" ++ CUser ++ "/"
+		     end
+	     end,
+    case JIDURI of
+	[] ->
+	    ?XAC("td", [{"class", "valign"}], jlib:jid_to_string(RosterJID));
+	URI when is_list(URI) ->
+	    ?XAE("td", [{"class", "valign"}], [?AC(JIDURI, jlib:jid_to_string(RosterJID))])
+    end.
+
+user_roster_parse_query(User, Server, Items, Query) ->
+    case lists:keysearch("addjid", 1, Query) of
+	{value, _} ->
+	    case lists:keysearch("newjid", 1, Query) of
+		{value, {_, undefined}} ->
+		    error;
+		{value, {_, SJID}} ->
+		    case jlib:string_to_jid(SJID) of
+			JID when is_record(JID, jid) ->
+			    user_roster_subscribe_jid(User, Server, JID),
+			    ok;
+			error ->
+			    error
+		    end;
+		false ->
+		    error
+	    end;
+	false ->
+	    case catch user_roster_item_parse_query(
+			 User, Server, Items, Query) of
+		submitted ->
+		    ok;
+		{'EXIT', _Reason} ->
+		    error;
+		_ ->
+		    nothing
+	    end
+    end.
+
+
+user_roster_subscribe_jid(User, Server, JID) ->
+    out_subscription(User, Server, JID, subscribe),
+    UJID = jlib:make_jid(User, Server, ""),
+    ejabberd_router:route(
+      UJID, JID, {xmlelement, "presence", [{"type", "subscribe"}], []}).
+
+user_roster_item_parse_query(User, Server, Items, Query) ->
+    lists:foreach(
+      fun(R) ->
+	      JID = R#roster.jid,
+	      case lists:keysearch(
+		     "validate" ++ ejabberd_web_admin:term_to_id(JID), 1, Query) of
+		  {value, _} ->
+		      JID1 = jlib:make_jid(JID),
+		      out_subscription(
+			User, Server, JID1, subscribed),
+		      UJID = jlib:make_jid(User, Server, ""),
+		      ejabberd_router:route(
+			UJID, JID1, {xmlelement, "presence",
+				     [{"type", "subscribed"}], []}),
+		      throw(submitted);
+		  false ->
+		      case lists:keysearch(
+			     "remove" ++ ejabberd_web_admin:term_to_id(JID), 1, Query) of
+			  {value, _} ->
+			      UJID = jlib:make_jid(User, Server, ""),
+			      process_iq(
+				UJID, UJID,
+				#iq{type = set,
+				    sub_el = {xmlelement, "query",
+					      [{"xmlns", ?NS_ROSTER}],
+					      [{xmlelement, "item",
+						[{"jid", jlib:jid_to_string(JID)},
+						 {"subscription", "remove"}],
+						[]}]}}),
+			      throw(submitted);
+			  false ->
+			      ok
+		      end
+
+	      end
+      end, Items),
+    nothing.
+
+us_to_list({User, Server}) ->
+    jlib:jid_to_string({User, Server, ""}).
+
+webadmin_user(Acc, _User, _Server, Lang) ->
+    Acc ++ [?XE("h3", [?ACT("roster/", "Roster")])].
+*)
+
+  let _ =
+    let test = Jlib.string_to_jid_exn "test@e.localhost" in
+    let test10 = Jlib.string_to_jid_exn "test10@e.localhost" in
+    let i1 = {jid = ("test10", "e.localhost", "");
+	      name = "test10__";
+	      subscription = `Both;
+	      groups = ["asd"; "qwe"];
+	      askmessage = "";
+	     }
+    in
+    let i2 = {jid = ("test", "e.localhost", "");
+	      name = "test";
+	      subscription = `Both;
+	      groups = ["test"];
+	      askmessage = "";
+	     }
+    in
+      write_roster_item test.Jlib.luser test.Jlib.lserver
+	(test10.Jlib.luser, test10.Jlib.lserver, test10.Jlib.lresource)
+	i1;
+      write_roster_item test10.Jlib.luser test10.Jlib.lserver
+	(test.Jlib.luser, test.Jlib.lserver, test.Jlib.lresource)
+	i2;
+      ()
+
+  let _ =
+    let host = Jlib.nameprep_exn "e.localhost" in
+      Hooks.add_fold roster_get host get_user_roster 50;
+      Hooks.add_fold SM.roster_in_subscription host in_subscription 50;
+      Hooks.add C2S.roster_out_subscription host out_subscription 50;
+      Hooks.add_fold C2S.roster_get_subscription_lists host
+	get_subscription_lists 50;
+    (*ejabberd_hooks:add(roster_get_jid_info, Host,
+		       ?MODULE, get_jid_info, 50),
+    ejabberd_hooks:add(remove_user, Host,
+		       ?MODULE, remove_user, 50),
+    ejabberd_hooks:add(anonymous_purge_hook, Host,
+		       ?MODULE, remove_user, 50),
+    ejabberd_hooks:add(resend_subscription_requests_hook, Host,
+		       ?MODULE, get_in_pending_subscriptions, 50),
+    ejabberd_hooks:add(roster_get_versioning_feature, Host,
+		       ?MODULE, get_versioning_feature, 50),
+    ejabberd_hooks:add(webadmin_page_host, Host,
+		       ?MODULE, webadmin_page, 50),
+    ejabberd_hooks:add(webadmin_user, Host,
+		       ?MODULE, webadmin_user, 50),*)
+      GenIQHandler.add_iq_handler `SM host <:ns<ROSTER>> process_iq ()
+
+(*
+  start(Host, Opts) ->
+    IQDisc = gen_mod:get_opt(iqdisc, Opts, one_queue),
+    mnesia:create_table(roster,[{disc_copies, [node()]},
+				{attributes, record_info(fields, roster)}]),
+    mnesia:create_table(roster_version, [{disc_copies, [node()]},
+    				{attributes, record_info(fields, roster_version)}]),
+
+    update_table(),
+    mnesia:add_table_index(roster, us),
+    mnesia:add_table_index(roster_version, us),
+    ejabberd_hooks:add(roster_get, Host,
+		       ?MODULE, get_user_roster, 50),
+    ejabberd_hooks:add(roster_in_subscription, Host,
+		       ?MODULE, in_subscription, 50),
+    ejabberd_hooks:add(roster_out_subscription, Host,
+		       ?MODULE, out_subscription, 50),
+    ejabberd_hooks:add(roster_get_subscription_lists, Host,
+		       ?MODULE, get_subscription_lists, 50),
+    ejabberd_hooks:add(roster_get_jid_info, Host,
+		       ?MODULE, get_jid_info, 50),
+    ejabberd_hooks:add(remove_user, Host,
+		       ?MODULE, remove_user, 50),
+    ejabberd_hooks:add(anonymous_purge_hook, Host,
+		       ?MODULE, remove_user, 50),
+    ejabberd_hooks:add(resend_subscription_requests_hook, Host,
+		       ?MODULE, get_in_pending_subscriptions, 50),
+    ejabberd_hooks:add(roster_get_versioning_feature, Host,
+		       ?MODULE, get_versioning_feature, 50),
+    ejabberd_hooks:add(webadmin_page_host, Host,
+		       ?MODULE, webadmin_page, 50),
+    ejabberd_hooks:add(webadmin_user, Host,
+		       ?MODULE, webadmin_user, 50),
+    gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_ROSTER,
+				  ?MODULE, process_iq, IQDisc).
+
+stop(Host) ->
+    ejabberd_hooks:delete(roster_get, Host,
+			  ?MODULE, get_user_roster, 50),
+    ejabberd_hooks:delete(roster_in_subscription, Host,
+			  ?MODULE, in_subscription, 50),
+    ejabberd_hooks:delete(roster_out_subscription, Host,
+			  ?MODULE, out_subscription, 50),
+    ejabberd_hooks:delete(roster_get_subscription_lists, Host,
+			  ?MODULE, get_subscription_lists, 50),
+    ejabberd_hooks:delete(roster_get_jid_info, Host,
+			  ?MODULE, get_jid_info, 50),
+    ejabberd_hooks:delete(remove_user, Host,
+			  ?MODULE, remove_user, 50),
+    ejabberd_hooks:delete(anonymous_purge_hook, Host,
+			  ?MODULE, remove_user, 50),
+    ejabberd_hooks:delete(resend_subscription_requests_hook, Host,
+			  ?MODULE, get_in_pending_subscriptions, 50),
+    ejabberd_hooks:delete(roster_get_versioning_feature, Host,
+		          ?MODULE, get_versioning_feature, 50),
+    ejabberd_hooks:delete(webadmin_page_host, Host,
+			  ?MODULE, webadmin_page, 50),
+    ejabberd_hooks:delete(webadmin_user, Host,
+			  ?MODULE, webadmin_user, 50),
+    gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_ROSTER).
+*)
+
+
+
+end
 
 
 let rec accept listen_socket =
