@@ -1592,10 +1592,10 @@ struct
 	   ())
 
   let do_route orig_from orig_to orig_packet =
-           Printf.eprintf "Route\nfrom: %s\n to: %s\npacket: %s\n"
+           (*Printf.eprintf "Route\nfrom: %s\n to: %s\npacket: %s\n"
 	     (Jlib.jid_to_string orig_from)
 	     (Jlib.jid_to_string orig_to)
-	     (Xml.element_to_string orig_packet); flush stderr;
+	     (Xml.element_to_string orig_packet); flush stderr;*)
     (*?DEBUG("route~n\tfrom ~p~n\tto ~p~n\tpacket ~p~n",
 	   [OrigFrom, OrigTo, OrigPacket]),*)
     match (*ejabberd_hooks:run_fold(filter_packet,
@@ -2614,7 +2614,7 @@ struct
   let invalid_from = Jlib.serr_invalid_from
 
   let send_text state text =
-    Printf.printf "Send XML on stream = %S\n" text; flush stdout;
+    (*Printf.printf "Send XML on stream = %S\n" text; flush stdout;*)
     Tcp.send_async state.socket text
 
   let send_element state el =
@@ -2882,7 +2882,7 @@ struct
 	  in
 	    Router.route to' from err
       | true ->
-	  Router.route from to' packet
+	  Router.route from_route to' packet
 
 
   let process_presence_probe from to' state =
@@ -4329,7 +4329,7 @@ session_established(timeout, StateData) ->
   let handle msg state =
     match msg with
       | `Tcp_data (socket, data) when socket == state.socket ->
-          lwt () = Lwt_io.printf "tcp data %d %S\n" (String.length data) data in
+          (*lwt () = Lwt_io.printf "tcp data %d %S\n" (String.length data) data in*)
             XMLReceiver.parse state.xml_receiver data;
             Tcp.activate state.socket state.pid;
             (*state.pid $! `Zxc (data, 1);*)
