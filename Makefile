@@ -11,7 +11,7 @@ ANNOTATE = yes
 PRE_TARGETS = jlib_pp.cmo
 
 
-CFLAGS = -Wall -g
+CFLAGS = -Wall -g -O2
 LDFLAGS = -lexpat -g
 
 all:	nc
