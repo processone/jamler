@@ -5,14 +5,14 @@ SOURCES = expatwrap.c expat.ml \
 	  xml.ml main.ml
 RESULT = jamler
 PACKS = lwt lwt.unix camlp4.macro lwt.syntax cryptokit
-OCAMLFLAGS = -syntax camlp4o -ppopt jlib_pp.cmo -w A
+OCAMLFLAGS = -syntax camlp4o -ppopt jlib_pp.cmo -w A -g
 ANNOTATE = yes
 
 PRE_TARGETS = jlib_pp.cmo
 
 
-CFLAGS = -Wall
-LDFLAGS = -lexpat
+CFLAGS = -Wall -g
+LDFLAGS = -lexpat -g
 
 all:	nc
 
