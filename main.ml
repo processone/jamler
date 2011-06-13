@@ -148,14 +148,27 @@ struct
 
   let activate socket pid =
     ignore (
-      lwt len = Lwt_unix.read socket.fd buf 0 buf_size in
-        if len > 0 then (
-	  let data = String.sub buf 0 len in
-	    pid $! `Tcp_data (socket, data)
-	) else (
-	  close' socket
-	);
-        Lwt.return ()
+      try_lwt
+	lwt len = Lwt_unix.read socket.fd buf 0 buf_size in
+          if len > 0 then (
+	    let data = String.sub buf 0 len in
+	      pid $! `Tcp_data (socket, data)
+	  ) else (
+	    close' socket
+	  );
+          Lwt.return ()
+      with
+	| exn ->
+	    lwt () = Lwt_unix.close socket.fd in
+	    lwt () =
+              Lwt_io.eprintf "Reader raised exception: %s\n"
+		(Printexc.to_string exn)
+            in
+	    let senders = socket.waiters in
+              socket.waiters <- [];
+	      List.iter (fun w -> Lwt.wakeup_exn w exn) senders;
+	      socket.pid $! `Tcp_close socket;
+              Lwt.fail exn
     )
 
   let state socket = Lwt_unix.state socket.fd
@@ -5553,7 +5566,6 @@ end
 
 let rec accept listen_socket =
   lwt (socket, _) = Lwt_unix.accept listen_socket in
-    (*ignore (spawn (C2S.start socket));*)
     ignore (C2SServer.start socket);
     accept listen_socket
 
