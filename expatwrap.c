@@ -58,7 +58,7 @@ static void mlXML_StartElementHandler(struct ml_parser *mlp,
 				      const XML_Char **atts)
 {
    CAMLparam0();
-   CAMLlocal3(attr_list, tmp, tmp2);
+   CAMLlocal4(attr_list, tmp, tmp2, str);
    int i;
 
    for (i = 0; atts[i]; i += 2) {}
@@ -74,8 +74,9 @@ static void mlXML_StartElementHandler(struct ml_parser *mlp,
       Store_field(tmp, 1, attr_list);
       attr_list = tmp;
    }
-   
-   callback2(mlp->start_element_handler, copy_string(name), attr_list);
+
+   str = copy_string(name);
+   caml_callback2(mlp->start_element_handler, str, attr_list);
    CAMLreturn0;
 }
 
@@ -97,7 +98,8 @@ value mlXML_SetStartElementHandler(value p, value handler)
 static void mlXML_EndElementHandler(struct ml_parser *mlp,
 				    const XML_Char *name)
 {
-   callback(mlp->end_element_handler, copy_string(name));
+   value str = copy_string(name);
+   caml_callback(mlp->end_element_handler, str);
 }
 
 value mlXML_SetEndElementHandler(value p, value handler)
@@ -120,7 +122,7 @@ static void mlXML_CharacterDataHandler(struct ml_parser *mlp,
 {
    value str = alloc_string(len);
    memcpy(String_val(str), s, len);
-   callback(mlp->character_data_handler, str);
+   caml_callback(mlp->character_data_handler, str);
 }
 
 value mlXML_SetCharacterDataHandler(value p, value handler)
