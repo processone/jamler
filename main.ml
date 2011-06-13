@@ -1923,7 +1923,7 @@ struct
 	with
 	  | Not_found -> []
       in
-      let sids = List.filter ((<>) sid) sids in
+      let sids = List.filter (fun s -> not (HashedSID.equal s sid)) sids in
 	Hashtbl.replace r_idx r (sid :: sids)
 
     let add_ur_idx ur_idx u r sid =
@@ -1962,7 +1962,7 @@ struct
 	with
 	  | Not_found -> []
       in
-      let sids = List.filter ((<>) sid) sids in
+      let sids = List.filter (fun s -> not (HashedSID.equal s sid)) sids in
 	match sids with
 	  | [] ->
 	      Hashtbl.remove r_idx r
@@ -2069,7 +2069,7 @@ struct
 	    let max_sid = List.fold_left max s sids' in
 	      List.iter
 		(fun ((_, pid) as s) ->
-		   if s <> max_sid then (
+		   if s != max_sid then (
 		     (* TODO *)
 		     ()
 		     (* Pid ! replaced; *)
