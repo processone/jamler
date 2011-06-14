@@ -2780,15 +2780,8 @@ struct
     LJIDSet.iter
       (fun ljid ->
 	 let fjid = Jlib.ljid_to_jid ljid in
-	 (* TODO *)
-	   ()
-		      (* ejabberd_router:route(
-			 From,
-			 jlib:make_jid(JID),
-			 {xmlelement, "presence",
-			  [{"type", "probe"}],
-			  []}),
-		      *)
+	   Router.route from fjid
+	     (`XmlElement ("presence", [("type", "probe")], []))
       ) state.pres_t;
     if state.pres_invis
     then state
