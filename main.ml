@@ -5572,6 +5572,17 @@ let listener_start () =
 
 let _ = Sys.set_signal Sys.sigpipe Sys.Signal_ignore
 
+(*
+let _ =
+  List.iter Sql.add_pool ((myhosts ()) :> string list);
+  let user = "test10" in
+  let query =
+    <:sql< SELECT @(password)s from users where username = %(user)s >>
+  in
+  lwt [p] = Sql.query "e.localhost" query in
+    Lwt_io.printf "pwd %s\n" p
+*)
+
 let main () =
   let _ = listener_start () in
     exit_waiter
