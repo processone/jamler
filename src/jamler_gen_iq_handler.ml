@@ -6,7 +6,8 @@ type response = [ `IQ of Jlib.iq_response Jlib.iq | `Ignore ]
 let handlers =
   (Hashtbl.create 10
      : (component * Jlib.namepreped * string,
-        Jlib.jid -> Jlib.jid -> Jlib.iq_query Jlib.iq -> response) Hashtbl.t)
+        Jlib.jid -> Jlib.jid -> Jlib.iq_query Jlib.iq -> response Lwt.t)
+     Hashtbl.t)
 
 let add_iq_handler component host ns f _type' =
   (*case Type of
@@ -51,14 +52,15 @@ stop_iq_handler(_Module, _Function, Opts) ->
 *)
 
 let process_iq _host f from to' iq =
-  try
-    let res_iq = f from to' iq in
+  try_lwt
+    lwt res_iq = f from to' iq in
       match res_iq with
         | `IQ (iq : Jlib.iq_response Jlib.iq) ->
             Router.route to' from
-      	(Jlib.iq_to_xml (iq :> Jlib.iq_query_response Jlib.iq))
+      	      (Jlib.iq_to_xml (iq :> Jlib.iq_query_response Jlib.iq));
+	    Lwt.return ()
         | `Ignore ->
-            ()
+            Lwt.return ()
   with
     | exn ->
         Printf.eprintf "Exception %s in GenIQHandler when processing\nfrom: %s\n to: %s\npacket: %s\n"
@@ -66,7 +68,7 @@ let process_iq _host f from to' iq =
           (Jlib.jid_to_string from)
           (Jlib.jid_to_string to')
           (Xml.element_to_string (Jlib.iq_to_xml (iq :> Jlib.iq_query_response Jlib.iq))); flush stderr;
-        ()
+        Lwt.return ()
 
 let handle component host ns from to' iq =
   let f =
@@ -76,12 +78,12 @@ let handle component host ns from to' iq =
       | Not_found -> None
   in
     match f with
-      | None -> false
+      | None -> Lwt.return false
       | Some f -> (
   (*case Opts of
       no_queue ->*)
-          process_iq host f from to' iq;
-          true
+          lwt () = process_iq host f from to' iq in
+            Lwt.return true
       (*{one_queue, Pid} ->
           Pid ! {process_iq, From, To, IQ};
       {queues, Pids} ->

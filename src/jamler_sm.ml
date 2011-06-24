@@ -353,22 +353,22 @@ let route_message from to' packet =
              positive *)
           List.iter
             (fun (p, _r, sid) ->
-      	 if p = priority then (
-      	   let (_, pid) = sid in
-      	     (*?DEBUG("sending to process ~p~n", [Pid]),*)
-      	     pid $! `Route (from, to', packet)
-      	 )
+      	       if p = priority then (
+      		 let (_, pid) = sid in
+      		   (*?DEBUG("sending to process ~p~n", [Pid]),*)
+      		   pid $! `Route (from, to', packet)
+      	       )
             ) prio_res
       | _ -> (
           match Xml.get_tag_attr_s "type" packet with
             | "error" ->
-      	  ()
+      		()
             | "groupchat"
             | "headline" ->
-      	  bounce_offline_message from to' packet
+      		bounce_offline_message from to' packet
             | _ -> (
-      	  match Auth.does_user_exist luser lserver with
-      	    | true -> (
+      		match Auth.does_user_exist luser lserver with
+      		  | true -> (
       		(* TODO *) ()
       		    (*case is_privacy_allow(From, To, Packet) of
       			true ->
@@ -378,33 +378,38 @@ let route_message from to' packet =
       			false ->
       			    ok
       		    end;*)
+      		    )
+      		  | _ ->
+      		      let err =
+      			Jlib.make_error_reply
+      			  packet Jlib.err_service_unavailable
+      		      in
+      			Router.route to' from err
       	      )
-      	    | _ ->
-      		let err =
-      		  Jlib.make_error_reply
-      		    packet Jlib.err_service_unavailable
-      		in
-      		  Router.route to' from err
-      	)
         )
 
 let process_iq from to' packet =
   match Jlib.iq_query_info packet with
     | `IQ ({Jlib.iq_xmlns = xmlns; _} as iq) -> (
         let host = to'.Jlib.lserver in
-          if not (GenIQHandler.handle `SM host xmlns from to' iq) then (
+	lwt handle_res =
+	  GenIQHandler.handle `SM host xmlns from to' iq
+	in
+          if not handle_res then (
             let err =
-      	Jlib.make_error_reply packet Jlib.err_service_unavailable
+      	      Jlib.make_error_reply packet Jlib.err_service_unavailable
             in
-      	Router.route to' from err
-          )
+      	      Router.route to' from err
+          );
+	  Lwt.return ()
       )
-    | `Reply -> ()
+    | `Reply -> Lwt.return ()
     | _ ->
         let err =
           Jlib.make_error_reply packet Jlib.err_bad_request
         in
-          Router.route to' from err
+          Router.route to' from err;
+	  Lwt.return ()
 
 
 (* The default list applies to the user as a whole,
@@ -445,93 +450,105 @@ let rec do_route from to' packet =
   let `XmlElement (name, attrs, _els) = packet in
     match (lresource :> string) with
       | "" -> (
-          match name with
-            | "presence" -> (
-      	  let pass =
-      	    match Xml.get_attr_s "type" attrs with
-      	      | "subscribe" ->
-      		  let reason =
-      		    Xml.get_path_s packet [`Elem "status"; `Cdata]
-      		  in
-      		    is_privacy_allow from to' packet &&
-      		      (Hooks.run_fold
-      			 roster_in_subscription
-      			 lserver
-      			 false
-      			 (luser, lserver, from, `Subscribe, reason))
-      	      | "subscribed" ->
-      		    is_privacy_allow from to' packet &&
-      		      (Hooks.run_fold
-      			 roster_in_subscription
-      			 lserver
-      			 false
-      			 (luser, lserver, from, `Subscribed, ""))
-      	      | "unsubscribe" ->
-      		    is_privacy_allow from to' packet &&
-      		      (Hooks.run_fold
-      			 roster_in_subscription
-      			 lserver
-      			 false
-      			 (luser, lserver, from, `Unsubscribe, ""))
-      	      | "unsubscribed" ->
-      		    is_privacy_allow from to' packet &&
-      		      (Hooks.run_fold
-      			 roster_in_subscription
-      			 lserver
-      			 false
-      			 (luser, lserver, from, `Unsubscribed, ""))
-      	      | _ -> true
-      	  in
-      	    if pass then (
-      	      let presources =
-      		get_user_present_resources luser lserver
-      	      in
-      		List.iter
-      		  (fun (_, r, _sid) ->
-      		     do_route
-      		       from (Jlib.jid_replace_resource' to' r) packet
-      		  ) presources
-      	    )
-      	)
-            | "message" ->
-      	  route_message from to' packet
-            | "iq" ->
-      	  process_iq from to' packet
-            | "broadcast" ->
-      	  List.iter
-      	    (fun r ->
-      	       do_route from (Jlib.jid_replace_resource' to' r) packet
-      	    ) (get_user_resources luser lserver)
-            | _ ->
-      	  ()
-        )
+	  match name with
+	    | "presence" -> (
+		ignore (
+		  lwt pass =
+		    match Xml.get_attr_s "type" attrs with
+		      | "subscribe" ->
+			  let reason =
+			    Xml.get_path_s packet [`Elem "status"; `Cdata]
+			  in
+			    if is_privacy_allow from to' packet
+			    then
+			      (Hooks.run_fold
+				 roster_in_subscription
+				 lserver
+				 false
+				 (luser, lserver, from, `Subscribe, reason))
+			    else Lwt.return false
+		      | "subscribed" ->
+			  if is_privacy_allow from to' packet
+			  then
+			    (Hooks.run_fold
+			       roster_in_subscription
+			       lserver
+			       false
+			       (luser, lserver, from, `Subscribed, ""))
+			  else Lwt.return false
+		      | "unsubscribe" ->
+			  if is_privacy_allow from to' packet
+			  then
+			    (Hooks.run_fold
+			       roster_in_subscription
+			       lserver
+			       false
+			       (luser, lserver, from, `Unsubscribe, ""))
+			  else Lwt.return false
+		      | "unsubscribed" ->
+			  if is_privacy_allow from to' packet
+			  then
+			    (Hooks.run_fold
+			       roster_in_subscription
+			       lserver
+			       false
+			       (luser, lserver, from, `Unsubscribed, ""))
+			  else Lwt.return false
+		      | _ -> Lwt.return true
+		  in
+		    Lwt.return (
+		      if pass then (
+			let presources =
+			  get_user_present_resources luser lserver
+			in
+			  List.iter
+			    (fun (_, r, _sid) ->
+			       do_route
+				 from (Jlib.jid_replace_resource' to' r) packet
+			    ) presources
+		      )
+		    )
+		)
+	      )
+	    | "message" ->
+		route_message from to' packet
+	    | "iq" ->
+		ignore (process_iq from to' packet)
+	    | "broadcast" ->
+		List.iter
+		  (fun r ->
+		     do_route from (Jlib.jid_replace_resource' to' r) packet
+		  ) (get_user_resources luser lserver)
+	    | _ ->
+		()
+	)
       | _ -> (
-          match find_sids_by_usr luser lserver lresource with
-            | [] -> (
-      	  match name with
-      	    | "message" ->
-      		route_message from to' packet
-      	    | "iq" -> (
-      		match Xml.get_attr_s "type" attrs with
-      		  | "error"
-      		  | "result" -> ()
-      		  | _ ->
-      		      let err =
-      			Jlib.make_error_reply
-      			  packet Jlib.err_service_unavailable
-      		      in
-      			Router.route to' from err
-      	      )
-      	    | _ ->
-      		(*?DEBUG("packet droped~n", [])*)
-      		()
-      	)
-            | s :: sids ->
-      	  let sid = List.fold_left max s sids in
-      	  let (_, pid) = sid in
-      	    (*?DEBUG("sending to process ~p~n", [Pid]),*)
-      	    pid $! `Route (from, to', packet)
-        )
+	  match find_sids_by_usr luser lserver lresource with
+	    | [] -> (
+		match name with
+		  | "message" ->
+		      route_message from to' packet
+		  | "iq" -> (
+		      match Xml.get_attr_s "type" attrs with
+			| "error"
+			| "result" -> ()
+			| _ ->
+			    let err =
+			      Jlib.make_error_reply
+				packet Jlib.err_service_unavailable
+			    in
+			      Router.route to' from err
+		    )
+		  | _ ->
+		      (*?DEBUG("packet droped~n", [])*)
+		      ()
+	      )
+	    | s :: sids ->
+		let sid = List.fold_left max s sids in
+		let (_, pid) = sid in
+		  (*?DEBUG("sending to process ~p~n", [Pid]),*)
+		  pid $! `Route (from, to', packet)
+	)
 
 let route from to' packet =
   try

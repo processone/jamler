@@ -926,7 +926,7 @@ wait_for_stream(timeout, StateData) ->
 					(*Res = setelement(4, Res1, []),*)
 					send_element state res;
 					(*change_shaper(StateData, JID),*)
-					let (fs, ts) =
+					lwt (fs, ts) =
 					  Hooks.run_fold
 					    roster_get_subscription_lists
 					    state.server
@@ -1387,7 +1387,7 @@ wait_for_bind(timeout, StateData) ->
 		      let res = Jlib.make_result_iq_reply el in
 			send_element state res;
 		    (*change_shaper(StateData, JID),*)
-			let (fs, ts) =
+			lwt (fs, ts) =
 			  Hooks.run_fold
 			    roster_get_subscription_lists
 			    state.server

@@ -12,10 +12,11 @@ type subscription =
     | `Both ]
 
 type subscription_request =
-  | Subscribe
-  | Subscribed
-  | Unsubscribe
-  | Unsubscribed
+    [ `Subscribe
+    | `Subscribed
+    | `Unsubscribe
+    | `Unsubscribed
+    ]
 
 type +'a roster_item =
     {jid : string * string * string;
@@ -25,21 +26,173 @@ type +'a roster_item =
      askmessage : string;
     }
 
+let rec process_item_attrs item =
+  function
+    | (attr, value) :: attrs -> (
+	match attr with
+	  | "jid" -> (
+	      match Jlib.string_to_jid value with
+		| None ->
+		    process_item_attrs item attrs
+		| Some jid1 ->
+		    let jid =
+		      (jid1.Jlib.user, jid1.Jlib.server, jid1.Jlib.resource)
+		    in
+		      process_item_attrs {item with jid} attrs
+	    )
+	  | "name" ->
+	      process_item_attrs {item with name = value} attrs
+	  | "subscription" -> (
+	      match value with
+		| "remove" ->
+		    process_item_attrs
+		      {item with subscription = `Remove} attrs
+		| _ ->
+		    process_item_attrs item attrs
+	    )
+	  | "ask" ->
+	      process_item_attrs item attrs
+	  | _ ->
+	      process_item_attrs item attrs
+      )
+    | [] ->
+	item
+
+
+let rec process_item_els item =
+  function
+    | `XmlElement (name, _attrs, sels) :: els -> (
+	match name with
+	  | "group" ->
+	      let groups = Xml.get_cdata sels :: item.groups in
+		process_item_els {item with groups} els
+	  | _ ->
+	      process_item_els item els
+      )
+    | `XmlCdata _ :: els ->
+	process_item_els item els
+    | [] ->
+	item
+
+let in_state_change subscription t =
+  match subscription, t with
+    | `None `None, `Subscribe    -> Some (`None `In)
+    | `None `None, `Subscribed   -> None
+    | `None `None, `Unsubscribe  -> None
+    | `None `None, `Unsubscribed -> None
+    | `None `Out,  `Subscribe    -> Some (`None `Both)
+    | `None `Out,  `Subscribed   -> Some (`To `None)
+    | `None `Out,  `Unsubscribe  -> None
+    | `None `Out,  `Unsubscribed -> Some (`None `None)
+    | `None `In,   `Subscribe    -> None
+    | `None `In,   `Subscribed   -> None
+    | `None `In,   `Unsubscribe  -> Some (`None `None)
+    | `None `In,   `Unsubscribed -> None
+    | `None `Both, `Subscribe    -> None
+    | `None `Both, `Subscribed   -> Some (`To `In)
+    | `None `Both, `Unsubscribe  -> Some (`None `Out)
+    | `None `Both, `Unsubscribed -> Some (`None `In)
+    | `To   `None, `Subscribe    -> Some (`To `In)
+    | `To   `None, `Subscribed   -> None
+    | `To   `None, `Unsubscribe  -> None
+    | `To   `None, `Unsubscribed -> Some (`None `None)
+    | `To   `In,   `Subscribe    -> None
+    | `To   `In,   `Subscribed   -> None
+    | `To   `In,   `Unsubscribe  -> Some (`To `None)
+    | `To   `In,   `Unsubscribed -> Some (`None `In)
+    | `From `None, `Subscribe    -> None
+    | `From `None, `Subscribed   -> Some `Both
+    | `From `None, `Unsubscribe  -> Some (`None `None)
+    | `From `None, `Unsubscribed -> None
+    | `From `Out,  `Subscribe    -> None
+    | `From `Out,  `Subscribed   -> Some `Both
+    | `From `Out,  `Unsubscribe  -> Some (`None `Out)
+    | `From `Out,  `Unsubscribed -> Some (`From `None)
+    | `Both,       `Subscribe    -> None
+    | `Both,       `Subscribed   -> None
+    | `Both,       `Unsubscribe  -> Some (`To `None)
+    | `Both,       `Unsubscribed -> Some (`From `None)
+
+let out_state_change subscription t =
+  match subscription, t with
+    | `None `None, `Subscribe    -> Some (`None `Out)
+    | `None `None, `Subscribed   -> None
+    | `None `None, `Unsubscribe  -> None
+    | `None `None, `Unsubscribed -> None
+    | `None `Out,  `Subscribe    -> Some (`None `Out)
+    | `None `Out,  `Subscribed   -> None
+    | `None `Out,  `Unsubscribe  -> Some (`None `None)
+    | `None `Out,  `Unsubscribed -> None
+    | `None `In,   `Subscribe    -> Some (`None `Both)
+    | `None `In,   `Subscribed   -> Some (`From `None)
+    | `None `In,   `Unsubscribe  -> None
+    | `None `In,   `Unsubscribed -> Some (`None `None)
+    | `None `Both, `Subscribe    -> None
+    | `None `Both, `Subscribed   -> Some (`From `Out)
+    | `None `Both, `Unsubscribe  -> Some (`None `In)
+    | `None `Both, `Unsubscribed -> Some (`None `Out)
+    | `To   `None, `Subscribe    -> None
+    | `To   `None, `Subscribed   -> Some `Both
+    | `To   `None, `Unsubscribe  -> Some (`None `None)
+    | `To   `None, `Unsubscribed -> None
+    | `To   `In,   `Subscribe    -> None
+    | `To   `In,   `Subscribed   -> Some `Both
+    | `To   `In,   `Unsubscribe  -> Some (`None `In)
+    | `To   `In,   `Unsubscribed -> Some (`To `None)
+    | `From `None, `Subscribe    -> Some (`From `Out)
+    | `From `None, `Subscribed   -> None
+    | `From `None, `Unsubscribe  -> None
+    | `From `None, `Unsubscribed -> Some (`None `None)
+    | `From `Out,  `Subscribe    -> None
+    | `From `Out,  `Subscribed   -> None
+    | `From `Out,  `Unsubscribe  -> Some (`From `None)
+    | `From `Out,  `Unsubscribed -> Some (`None `Out)
+    | `Both,       `Subscribe    -> None
+    | `Both,       `Subscribed   -> None
+    | `Both,       `Unsubscribe  -> Some (`From `None)
+    | `Both,       `Unsubscribed -> Some (`To `None)
+
+let in_auto_reply subscription t =
+  match subscription, t with
+    | `From `None, `Subscribe   -> Some `Subscribed
+    | `From `Out,  `Subscribe   -> Some `Subscribed
+    | `Both,       `Subscribe   -> Some `Subscribed
+    | `None `In,   `Unsubscribe -> Some `Unsubscribed
+    | `None `Both, `Unsubscribe -> Some `Unsubscribed
+    | `To   `In,   `Unsubscribe -> Some `Unsubscribed
+    | `From `None, `Unsubscribe -> Some `Unsubscribed
+    | `From `Out,  `Unsubscribe -> Some `Unsubscribed
+    | `Both,       `Unsubscribe -> Some `Unsubscribed
+    | _,           _            -> None
+
+
 
 module type RosterStorage =
 sig
   val read_roster :
     Jlib.nodepreped ->
-    Jlib.namepreped -> (LJID.t * subscription roster_item) list
-  val delete_roster : Jlib.nodepreped -> Jlib.namepreped -> unit
+    Jlib.namepreped -> (LJID.t * subscription roster_item) list Lwt.t
+  val delete_roster : Jlib.nodepreped -> Jlib.namepreped -> unit Lwt.t
   val read_roster_item :
     Jlib.nodepreped ->
-    Jlib.namepreped -> LJID.t -> subscription roster_item option
+    Jlib.namepreped -> LJID.t -> subscription roster_item option Lwt.t
   val write_roster_item :
     Jlib.nodepreped ->
-    Jlib.namepreped -> LJID.t -> subscription roster_item -> unit
+    Jlib.namepreped -> LJID.t -> subscription roster_item -> unit Lwt.t
   val delete_roster_item :
-    Jlib.nodepreped -> Jlib.namepreped -> LJID.t -> unit
+    Jlib.nodepreped -> Jlib.namepreped -> LJID.t -> unit Lwt.t
+  val item_set_transaction :
+    Jlib.nodepreped -> Jlib.namepreped -> Jlib.jid ->
+    Xml.attributes -> Xml.element_cdata list ->
+    (subscription roster_item *
+       [subscription | `Remove ] roster_item *
+       LJID.t) Lwt.t
+  val subscription_transaction :
+    [ `In | `Out ] ->
+    Jlib.nodepreped -> Jlib.namepreped -> Jlib.jid ->
+    subscription_request -> string ->
+    (subscription roster_item option *
+       [ `Subscribed | `Unsubscribed ] option) Lwt.t
 end
 
 module Make(RS : RosterStorage) :
@@ -143,8 +296,8 @@ struct
     let luser = from.Jlib.luser in
     let lserver = from.Jlib.lserver in
     let us = (luser, lserver) in
-      try
-	let to_send =
+      try_lwt
+	lwt to_send =
 	  match Xml.get_tag_attr "ver" subel, 
 	    roster_versioning_enabled lserver,
 	    roster_version_on_db lserver with
@@ -164,22 +317,24 @@ struct
 		    (*mnesia:dirty_write(#roster_version{us = US, version = RosterVersion}),
 					{lists:map(fun item_to_xml/1,
 						ejabberd_hooks:run_fold(roster_get, To#jid.lserver, [], [US])), RosterVersion}*) (* TODO *)
-		    Some ([], Some roster_version)
+		    Lwt.return (Some ([], Some roster_version))
 
 	      | Some requested_version, true, false ->
-		  let roster_items =
+		  lwt roster_items =
 		    Hooks.run_fold roster_get to'.Jlib.lserver [] us
 		  in
 		  let hash = roster_hash roster_items in
-		    if hash = requested_version
-		    then None
-		    else Some (List.map item_to_xml' roster_items, Some hash)
-			
+		    Lwt.return (
+		      if hash = requested_version
+		      then None
+		      else Some (List.map item_to_xml' roster_items, Some hash)
+		    )
+
 	      | _ ->
-		  let roster_items =
+		  lwt roster_items =
 		    Hooks.run_fold roster_get to'.Jlib.lserver [] us
 		  in
-		    Some (List.map item_to_xml' roster_items, None)
+		    Lwt.return (Some (List.map item_to_xml' roster_items, None))
 	in
 	let subel =
 	  match to_send with
@@ -192,70 +347,22 @@ struct
 					     ("ver", version)],
 				   (items :> Xml.element_cdata list)))
 	in
-	let subel = (subel) in
-	  {iq with Jlib.iq_type = `Result subel}
+	  Lwt.return {iq with Jlib.iq_type = `Result subel}
       with
     	| _ ->
-	    {iq with Jlib.iq_type = `Error (Jlib.err_internal_server_error,
-					    Some subel)}
+	    Lwt.return 
+	      {iq with Jlib.iq_type = `Error (Jlib.err_internal_server_error,
+					      Some subel)}
 
   let get_user_roster acc (u, s) =
-    let items = RS.read_roster u s in
+    lwt items = RS.read_roster u s in
     let items =
       List.filter
 	(function
 	   | (jid, {subscription = `None `In; _}) -> false
 	   | _ -> true) items @ acc
     in
-      (Hooks.OK, items)
-
-  let rec process_item_attrs item =
-    function
-      | (attr, value) :: attrs -> (
-	  match attr with
-	    | "jid" -> (
-		match Jlib.string_to_jid value with
-		  | None ->
-		      process_item_attrs item attrs
-		  | Some jid1 ->
-		      let jid =
-			(jid1.Jlib.user, jid1.Jlib.server, jid1.Jlib.resource)
-		      in
-			process_item_attrs {item with jid} attrs
-	      )
-	    | "name" ->
-		process_item_attrs {item with name = value} attrs
-	    | "subscription" -> (
-		match value with
-		  | "remove" ->
-		      process_item_attrs
-			{item with subscription = `Remove} attrs
-		  | _ ->
-		      process_item_attrs item attrs
-	      )
-	    | "ask" ->
-		process_item_attrs item attrs
-	    | _ ->
-		process_item_attrs item attrs
-	)
-      | [] ->
-	  item
-
-
-  let rec process_item_els item =
-    function
-      | `XmlElement (name, _attrs, sels) :: els -> (
-	  match name with
-	    | "group" ->
-		let groups = Xml.get_cdata sels :: item.groups in
-		  process_item_els {item with groups} els
-	    | _ ->
-		process_item_els item els
-	)
-      | `XmlCdata _ :: els ->
-	  process_item_els item els
-      | [] ->
-	  item
+      Lwt.return (Hooks.OK, items)
 
   let push_item'' user server resource from item roster_version =
     let extra_attrs =
@@ -352,74 +459,32 @@ push_item_version(Server, User, From, Item, RosterVersion)  ->
 	  let {Jlib.luser = luser; Jlib.lserver = lserver; _} = from in
 	    match jid with
 	      | None ->
-		  ()
-	      | Some jid1 ->
-		  let jid =
-		    (jid1.Jlib.user, jid1.Jlib.server, jid1.Jlib.resource)
-		  in
-		  let ljid = Jlib.jid_tolower jid1 in
-		  let f =
-		    fun () ->
-		      let res = RS.read_roster_item luser lserver ljid in
-		      let item' =
-			match res with
-			  | None ->
-			      {jid = jid;
-			       name = "";
-			       subscription = `None `None;
-			       groups = [];
-			       askmessage = "";
-			      }
-			  | Some item ->
-			      {item with
-				 jid = jid;
-				 name = "";
-				 groups = []}
-		      in
-		      let item =
-			(item' :> [ subscription | `Remove] roster_item)
-		      in
-		      let item = process_item_attrs item attrs in
-		      let item = process_item_els item els in
-			(match item with
-			   | {subscription = `Remove; _} ->
-			       RS.delete_roster_item luser lserver ljid
-			   | {subscription = #subscription; _} as item ->
-			       RS.write_roster_item luser lserver ljid item
+		  Lwt.return ()
+	      | Some jid1 -> (
+		  match_lwt RS.item_set_transaction luser lserver jid1 attrs els with
+		    | (old_item, item, ljid) -> (
+			push_item luser lserver to' item;
+			(match item.subscription with
+			   | `Remove ->
+			       send_unsubscribing_presence from ljid old_item
+			   | _ ->
+			       ()
 			);
-			(*
-			  %% If the item exist in shared roster, take the
-			  %% subscription information from there:
-			  Item3 = ejabberd_hooks:run_fold(roster_process_item,
-			  LServer, Item2, [LServer]),
-			  case roster_version_on_db(LServer) of
-			  true -> mnesia:write(#roster_version{us = {LUser, LServer}, version = sha:sha(term_to_binary(now()))});
-			  false -> ok
-			  end,
-			*)
-			(item', item, ljid)
-		  in
-		    match f () with
-		      | (old_item, item, ljid) -> (
-			  push_item luser lserver to' item;
-			  match item.subscription with
-			    | `Remove ->
-				send_unsubscribing_presence from ljid old_item
-			    | _ ->
-				()
-			)
+			Lwt.return ()
+		      )
 			  (*E ->
 			    ?DEBUG("ROSTER: roster item set error: ~p~n", [E]),
 			    ok*)
+		)
 	)
-      | `XmlCdata _ -> ()
+      | `XmlCdata _ -> Lwt.return ()
 
 
   let process_iq_set from to' iq =
     let `Set subel = iq.Jlib.iq_type in
     let `XmlElement (_name, _attrs, els) = subel in
-      List.iter (fun el -> process_item_set from to' el) els;
-      {iq with Jlib.iq_type = `Result None}
+    lwt () = Lwt_list.iter_s (fun el -> process_item_set from to' el) els in
+      Lwt.return {iq with Jlib.iq_type = `Result None}
 
 
   let process_local_iq from to' iq =
@@ -432,10 +497,16 @@ push_item_version(Server, User, From, Item, RosterVersion)  ->
   let process_iq from to' iq =
     let (`Set sub_el | `Get sub_el) = iq.Jlib.iq_type in
     let lserver = from.Jlib.lserver in
+    lwt iq_res =
       if List.mem lserver (Jamler_config.myhosts ())
-      then `IQ (process_local_iq from to' iq)
-      else `IQ {iq with
-		  Jlib.iq_type = `Error (Jlib.err_item_not_found, Some sub_el)}
+      then
+	process_local_iq from to' iq
+      else
+	Lwt.return
+	  {iq with
+	     Jlib.iq_type = `Error (Jlib.err_item_not_found, Some sub_el)}
+    in
+      Lwt.return (`IQ iq_res)
 
 
   let rec fill_subscription_lists items f t =
@@ -455,193 +526,49 @@ push_item_version(Server, User, From, Item, RosterVersion)  ->
 	  (f, t)
 
   let get_subscription_lists _ (user, server) =
-    let items = RS.read_roster user server in
-      (Hooks.OK, fill_subscription_lists items [] [])
-
-
-  let in_state_change subscription t =
-    match subscription, t with
-      | `None `None, `Subscribe    -> Some (`None `In)
-      | `None `None, `Subscribed   -> None
-      | `None `None, `Unsubscribe  -> None
-      | `None `None, `Unsubscribed -> None
-      | `None `Out,  `Subscribe    -> Some (`None `Both)
-      | `None `Out,  `Subscribed   -> Some (`To `None)
-      | `None `Out,  `Unsubscribe  -> None
-      | `None `Out,  `Unsubscribed -> Some (`None `None)
-      | `None `In,   `Subscribe    -> None
-      | `None `In,   `Subscribed   -> None
-      | `None `In,   `Unsubscribe  -> Some (`None `None)
-      | `None `In,   `Unsubscribed -> None
-      | `None `Both, `Subscribe    -> None
-      | `None `Both, `Subscribed   -> Some (`To `In)
-      | `None `Both, `Unsubscribe  -> Some (`None `Out)
-      | `None `Both, `Unsubscribed -> Some (`None `In)
-      | `To   `None, `Subscribe    -> Some (`To `In)
-      | `To   `None, `Subscribed   -> None
-      | `To   `None, `Unsubscribe  -> None
-      | `To   `None, `Unsubscribed -> Some (`None `None)
-      | `To   `In,   `Subscribe    -> None
-      | `To   `In,   `Subscribed   -> None
-      | `To   `In,   `Unsubscribe  -> Some (`To `None)
-      | `To   `In,   `Unsubscribed -> Some (`None `In)
-      | `From `None, `Subscribe    -> None
-      | `From `None, `Subscribed   -> Some `Both
-      | `From `None, `Unsubscribe  -> Some (`None `None)
-      | `From `None, `Unsubscribed -> None
-      | `From `Out,  `Subscribe    -> None
-      | `From `Out,  `Subscribed   -> Some `Both
-      | `From `Out,  `Unsubscribe  -> Some (`None `Out)
-      | `From `Out,  `Unsubscribed -> Some (`From `None)
-      | `Both,       `Subscribe    -> None
-      | `Both,       `Subscribed   -> None
-      | `Both,       `Unsubscribe  -> Some (`To `None)
-      | `Both,       `Unsubscribed -> Some (`From `None)
-
-  let out_state_change subscription t =
-    match subscription, t with
-      | `None `None, `Subscribe    -> Some (`None `Out)
-      | `None `None, `Subscribed   -> None
-      | `None `None, `Unsubscribe  -> None
-      | `None `None, `Unsubscribed -> None
-      | `None `Out,  `Subscribe    -> Some (`None `Out)
-      | `None `Out,  `Subscribed   -> None
-      | `None `Out,  `Unsubscribe  -> Some (`None `None)
-      | `None `Out,  `Unsubscribed -> None
-      | `None `In,   `Subscribe    -> Some (`None `Both)
-      | `None `In,   `Subscribed   -> Some (`From `None)
-      | `None `In,   `Unsubscribe  -> None
-      | `None `In,   `Unsubscribed -> Some (`None `None)
-      | `None `Both, `Subscribe    -> None
-      | `None `Both, `Subscribed   -> Some (`From `Out)
-      | `None `Both, `Unsubscribe  -> Some (`None `In)
-      | `None `Both, `Unsubscribed -> Some (`None `Out)
-      | `To   `None, `Subscribe    -> None
-      | `To   `None, `Subscribed   -> Some `Both
-      | `To   `None, `Unsubscribe  -> Some (`None `None)
-      | `To   `None, `Unsubscribed -> None
-      | `To   `In,   `Subscribe    -> None
-      | `To   `In,   `Subscribed   -> Some `Both
-      | `To   `In,   `Unsubscribe  -> Some (`None `In)
-      | `To   `In,   `Unsubscribed -> Some (`To `None)
-      | `From `None, `Subscribe    -> Some (`From `Out)
-      | `From `None, `Subscribed   -> None
-      | `From `None, `Unsubscribe  -> None
-      | `From `None, `Unsubscribed -> Some (`None `None)
-      | `From `Out,  `Subscribe    -> None
-      | `From `Out,  `Subscribed   -> None
-      | `From `Out,  `Unsubscribe  -> Some (`From `None)
-      | `From `Out,  `Unsubscribed -> Some (`None `Out)
-      | `Both,       `Subscribe    -> None
-      | `Both,       `Subscribed   -> None
-      | `Both,       `Unsubscribe  -> Some (`From `None)
-      | `Both,       `Unsubscribed -> Some (`To `None)
-
-  let in_auto_reply subscription t =
-    match subscription, t with
-      | `From `None, `Subscribe   -> Some `Subscribed
-      | `From `Out,  `Subscribe   -> Some `Subscribed
-      | `Both,       `Subscribe   -> Some `Subscribed
-      | `None `In,   `Unsubscribe -> Some `Unsubscribed
-      | `None `Both, `Unsubscribe -> Some `Unsubscribed
-      | `To   `In,   `Unsubscribe -> Some `Unsubscribed
-      | `From `None, `Unsubscribe -> Some `Unsubscribed
-      | `From `Out,  `Unsubscribe -> Some `Unsubscribed
-      | `Both,       `Unsubscribe -> Some `Unsubscribed
-      | _,           _            -> None
+    lwt items = RS.read_roster user server in
+      Lwt.return (Hooks.OK, fill_subscription_lists items [] [])
 
 
   let process_subscription direction luser lserver jid1 type' reason =
-    let us = (luser, lserver) in
-    let ljid = Jlib.jid_tolower jid1 in
-    let f =
-      fun() ->
-	let item =
-	  match RS.read_roster_item luser lserver ljid with
+    match_lwt (RS.subscription_transaction
+		 direction luser lserver jid1 type' reason) with
+      | (push, auto_reply) -> (
+	  (match auto_reply with
+	     | None -> ()
+	     | Some auto_reply ->
+		 let t =
+		   match auto_reply with
+		     | `Subscribed -> "subscribed"
+		     | `Unsubscribed -> "unsubscribed"
+		 in
+		   Router.route
+		     (Jlib.make_jid'
+			luser lserver (Jlib.resourceprep_exn ""))
+		     jid1
+		     (`XmlElement ("presence", [("type", t)], []))
+	  );
+	  match push with
+	    | Some item -> (
+		if item.subscription <> `None `In then (
+		  push_item luser lserver
+		    (Jlib.make_jid'
+		       luser lserver (Jlib.resourceprep_exn ""))
+		    item
+		);
+		Lwt.return true;
+	      )
 	    | None ->
-		let jid =
-		  (jid1.Jlib.user, jid1.Jlib.server, jid1.Jlib.resource)
-		in
-		  {jid;
-		   name = "";
-		   subscription = `None `None;
-		   groups = [];
-		   askmessage = "";
-		  }
-	    | Some i -> i
-	in
-	let new_state =
-	  match direction with
-	    | `Out -> out_state_change item.subscription type'
-	    | `In -> in_state_change item.subscription type'
-	in
-	let autoreply =
-	  match direction with
-	    | `Out -> None
-	    | `In -> in_auto_reply item.subscription type'
-	in
-	let ask_message =
-	  match new_state with
-	    | Some (`None `Both)
-	    | Some (`None `In)
-	    | Some (`To `In) -> reason
-	    | _ -> ""
-	in
-	  match new_state with
-	    | None ->
-		(None, autoreply)
-	    | Some (`None `None) when item.subscription = `None `In ->
-		RS.delete_roster_item luser lserver ljid;
-		(None, autoreply)
-	    | Some subscription ->
-		let new_item =
-		  {item with
-		     subscription = subscription;
-		     askmessage = ask_message}
-		in
-		  RS.write_roster_item luser lserver ljid new_item;
-			(*case roster_version_on_db(LServer) of
-				true -> mnesia:write(#roster_version{us = {LUser, LServer}, version = sha:sha(term_to_binary(now()))});
-				false -> ok
-			end,*)
-		  (Some new_item, autoreply)
-    in
-      match f () with
-	| (push, auto_reply) -> (
-	    (match auto_reply with
-	       | None -> ()
-	       | Some auto_reply ->
-		   let t =
-		     match auto_reply with
-		       | `Subscribed -> "subscribed"
-		       | `Unsubscribed -> "unsubscribed"
-		   in
-		     Router.route
-		       (Jlib.make_jid'
-			  luser lserver (Jlib.resourceprep_exn ""))
-		       jid1
-		       (`XmlElement ("presence", [("type", t)], []))
-	    );
-	    match push with
-	      | Some item -> (
-		    if item.subscription <> `None `In then (
-		      push_item luser lserver
-			(Jlib.make_jid'
-			   luser lserver (Jlib.resourceprep_exn ""))
-			item
-		    );
-		    true;
-	  )
-	      | None ->
-		  false
-	  )
+		Lwt.return false
+	)
 
   let in_subscription _ (user, server, jid, type', reason) =
-    (Hooks.OK, process_subscription `In user server jid type' reason)
+    lwt res = process_subscription `In user server jid type' reason in
+      Lwt.return (Hooks.OK, res)
 
   let out_subscription (user, server, jid, type') =
-    process_subscription `Out user server jid type' "";
-    Hooks.OK
+    lwt _ = process_subscription `Out user server jid type' "" in
+      Lwt.return Hooks.OK
 
 
 (*
@@ -1002,13 +929,17 @@ webadmin_user(Acc, _User, _Server, Lang) ->
 	      askmessage = "";
 	     }
     in
+    lwt () =
       RS.write_roster_item test.Jlib.luser test.Jlib.lserver
 	(test10.Jlib.luser, test10.Jlib.lserver, test10.Jlib.lresource)
-	i1;
+	i1
+    in
+    lwt () =
       RS.write_roster_item test10.Jlib.luser test10.Jlib.lserver
 	(test.Jlib.luser, test.Jlib.lserver, test.Jlib.lresource)
-	i2;
-      ()
+	i2
+    in
+      Lwt.return ()
 
   let _ =
     let host = Jlib.nameprep_exn "e.localhost" in
