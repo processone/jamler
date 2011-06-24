@@ -17,10 +17,6 @@ module C2SServer = Jamler_c2s.C2SServer
 
 
 
-let myhosts () =
-  List.map Jlib.nameprep_exn ["localhost"; "e.localhost"] (* TODO *)
-
-
 let rec accept listen_socket =
   lwt (socket, _) = Lwt_unix.accept listen_socket in
     ignore (C2SServer.start socket);

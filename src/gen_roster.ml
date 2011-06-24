@@ -5,9 +5,6 @@ module GenIQHandler = Jamler_gen_iq_handler
 module SM = Jamler_sm
 module C2S = Jamler_c2s.C2S
 
-let myhosts () =
-  List.map Jlib.nameprep_exn ["localhost"; "e.localhost"] (* TODO *)
-
 type subscription =
     [ `None of [ `None | `Out | `In | `Both ]
     | `To of [ `None | `In ]
@@ -435,7 +432,7 @@ push_item_version(Server, User, From, Item, RosterVersion)  ->
   let process_iq from to' iq =
     let (`Set sub_el | `Get sub_el) = iq.Jlib.iq_type in
     let lserver = from.Jlib.lserver in
-      if List.mem lserver (myhosts ())
+      if List.mem lserver (Jamler_config.myhosts ())
       then `IQ (process_local_iq from to' iq)
       else `IQ {iq with
 		  Jlib.iq_type = `Error (Jlib.err_item_not_found, Some sub_el)}

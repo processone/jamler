@@ -2,9 +2,6 @@ open Process
 module Router = Jamler_router
 module SM = Jamler_sm
 
-let myhosts () =
-  List.map Jlib.nameprep_exn ["localhost"; "e.localhost"] (* TODO *)
-
 let process_iq from to' packet =
   (* TODO *) ()
   (*IQ = jlib:iq_query_info(Packet),
@@ -88,6 +85,6 @@ let () =
          Router.register_route ~local_hint:(Some route) host pid
            (*ejabberd_hooks:add(local_send_to_resource_hook, Host,
              ?MODULE, bounce_resource_packet, 100)*)
-      ) (myhosts ())
+      ) (Jamler_config.myhosts ())
 
 
