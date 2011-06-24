@@ -47,6 +47,8 @@ let _ =
     Lwt_io.printf "pwd %s\n" p
 *)
 
+module Plugins = Plugins
+
 let (exit_waiter, exit_wakener) = Lwt.wait ()
 
 let main () =

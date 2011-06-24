@@ -1,0 +1,70 @@
+OASISFormat: 0.2
+Name:        jamler
+Version:     0.1
+Synopsis:    A jabber server in OCaml
+Authors:     Alexey Shchepin
+License:     GPL
+BuildTools: ocamlbuild
+Plugins: DevFiles (0.2)
+
+Library "pa_jlib"
+  Install: false
+  Path: src
+  Modules: Pa_jlib
+  CompiledObject: byte
+  BuildDepends: camlp4.quotations.o
+
+Library "pa_sql"
+  Install: false
+  Path: src
+  Modules: Pa_sql
+  CompiledObject: byte
+  BuildDepends: camlp4.quotations.o
+
+#Library "jamler-lib"
+#  Install: false
+#  Path: src
+#  Modules:
+#    Expat,
+#    Stringprep,
+#    Xml,
+#    Process,
+#    Tcp,
+#    Jamler_receiver,
+#    Gen_server,
+#    Jlib,
+#    Jamler_hooks,
+#    Jamler_auth,
+#    Jamler_sasl,
+#    Jamler_router,
+#    Jamler_gen_iq_handler,
+#    Jamler_sm,
+#    Jamler_local,
+#    Jamler_c2s,
+#    Gen_roster,
+#    Sql
+#  CompiledObject: native
+#  BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, lwt.syntax, cryptokit, pgocaml
+#  CSources: expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
+#  CCLib: -lexpat
+#
+#Library "jamler-plugins"
+#  Install: false
+#  Path: src
+#  Modules:
+#    Jamler_sasl_plain,
+#    Jamler_sasl_digest,
+#    Mod_roster
+#  CompiledObject: native
+#  BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, lwt.syntax, cryptokit, pgocaml,
+#    jamler-lib
+
+
+Executable jamler
+  Path:       src
+  MainIs:     main.ml
+  CompiledObject: native
+#  BuildDepends: jamler-lib, jamler-plugins
+  BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, lwt.syntax, cryptokit, pgocaml
+  CSources: expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
+  CCLib: -lexpat

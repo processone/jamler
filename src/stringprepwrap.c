@@ -25,8 +25,8 @@
 #include <caml/alloc.h>
 #include <caml/fail.h>
 
-#include "uni_data.c"
-#include "uni_norm.c"
+#include "uni_data.h"
+#include "uni_norm.h"
 
 
 /* Hangul constants */
