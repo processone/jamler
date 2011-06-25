@@ -36,6 +36,7 @@ value mlXML_ParserCreate (value encoding)
    mlp->character_data_handler = 0;
    
    XML_SetUserData(p, mlp);
+   XML_SetDefaultHandler(p, NULL);
    
    //printf("<< XML_ParserCreate >>\n") ; fflush(stdout) ;
    return Val_long(p);
