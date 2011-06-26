@@ -41,7 +41,7 @@ struct
        streamid : string;
        password : string;
        check_from : bool;
-       hosts : string list;
+       hosts : Jlib.namepreped list;
        access: string;}
 
   type init_data = Lwt_unix.file_descr
@@ -60,9 +60,9 @@ struct
                  streamid = new_id ();
 		 (* TODO *)
 		 access = "";
-		 check_from = false;
+		 check_from = true;
 		 password = "password";
-		 hosts = ["service.localhost"];}
+		 hosts = [Jlib.nameprep_exn "service.localhost"];}
     in
       Tcp.activate socket self;
       state
@@ -84,7 +84,6 @@ struct
       "</stream:stream>"
 
   let send_text state text =
-    (*Printf.printf "Send XML on stream = %S\n" text; flush stdout;*)
     Tcp.send_async state.socket text
 
   let send_element state el =
@@ -136,13 +135,12 @@ struct
 	      | digest' when digest' = digest ->
 		send_text state "<handshake/>";
 		List.iter
-		  (fun h ->
-		    Lwt_io.printf "Route registered for service %s\n" h;
-		    Router.register_route
-		      (Jlib.nameprep_exn h) (state.pid :> Router.msg pid))
+		  (fun (h:Jlib.namepreped) ->
+		    Lwt_io.printf "Route registered for service %s\n" (h:>string);
+		    Router.register_route h (state.pid :> Router.msg pid))
 		  state.hosts;
 		Lwt.return (`Continue {state with state = Stream_established})
-	      | res ->
+	      | _ ->
 		send_text state invalid_handshake_err;
 		Lwt.return (`Stop state))
 	  | _ ->
@@ -169,9 +167,14 @@ struct
                behalf of the server users. *)
 	    Jlib.string_to_jid from
 	  | true ->
-	    (*TODO*)
 	    (* The default is the standard behaviour in XEP-0114 *)
-	    None
+	    match Jlib.string_to_jid from with
+	      | Some jid -> (
+		match List.mem jid.Jlib.lserver state.hosts with
+		  | true -> Some jid
+		  | false -> None)
+	      | _ ->
+		None
 	in
 	let to' = Xml.get_attr_s "to" attrs in
 	let to_jid = Jlib.string_to_jid to' in
@@ -250,10 +253,9 @@ struct
   in (match state.state with
     | Stream_established ->
       List.iter
-	(fun h ->
-	  Lwt_io.printf "Route unregistered for service %s\n" h;
-	  Router.unregister_route
-	    (Jlib.nameprep_exn h) (state.pid :> Router.msg pid))
+	(fun (h:Jlib.namepreped) ->
+	  Lwt_io.printf "Route unregistered for service %s\n" (h:>string);
+	  Router.unregister_route h (state.pid :> Router.msg pid))
 	state.hosts;
       Lwt.return ()
     | _ ->
