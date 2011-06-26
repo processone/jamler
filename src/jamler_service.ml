@@ -9,6 +9,7 @@ module Auth = Jamler_auth
 module SASL = Jamler_sasl
 module Router = Jamler_router
 module SM = Jamler_sm
+module ACL = Jamler_acl
 
 module ExtService :
 sig
@@ -41,7 +42,7 @@ struct
        password : string;
        check_from : bool;
        hosts : string list;
-       (* TODO access *)}
+       access: string;}
 
   type init_data = Lwt_unix.file_descr
 
@@ -58,6 +59,7 @@ struct
                  state = Wait_for_stream;
                  streamid = new_id ();
 		 (* TODO *)
+		 access = "";
 		 check_from = false;
 		 password = "password";
 		 hosts = ["service.localhost"];}
@@ -193,19 +195,17 @@ struct
 	  
 
   let handle_route (`Route (from, to', packet)) state =
-    (* TODO:
-       case acl:match_rule(global, StateData#state.access, From) of
-        allow -> *)
-    let `XmlElement (name, attrs, els) = packet in
-    let attrs' = Jlib.replace_from_to_attrs
-      (Jlib.jid_to_string from) (Jlib.jid_to_string to') attrs in
-    send_element state (`XmlElement (name, attrs', els));
-    (* deny ->
-       Err = jlib:make_error_reply(Packet, ?ERR_NOT_ALLOWED),
-       ejabberd_router:route_error(To, From, Err, Packet)
-       end *)
-    Lwt.return (`Continue state)
-
+    let _ = match ACL.match_rule None state.access from with
+      | true ->
+	let `XmlElement (name, attrs, els) = packet in
+	let attrs' = Jlib.replace_from_to_attrs
+	  (Jlib.jid_to_string from) (Jlib.jid_to_string to') attrs in
+	send_element state (`XmlElement (name, attrs', els))
+      | false ->
+	let err = Jlib.make_error_reply packet Jlib.err_not_allowed in
+	Router.route to' from err
+    in Lwt.return (`Continue state)
+    
   let handle_xml msg state =
     match state.state, msg with
       | Wait_for_stream, _ -> wait_for_stream msg state
