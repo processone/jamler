@@ -50,7 +50,7 @@ struct
     Jlib.get_random_string ()
 
   let init socket self =
-    Printf.printf "External service connected\n";
+    Lwt_io.printf "External service connected\n";
     let socket = Tcp.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
     let state = {pid = self;
@@ -137,7 +137,7 @@ struct
 		send_text state "<handshake/>";
 		List.iter
 		  (fun h ->
-		    Printf.printf "Route registered for service %s\n" h;
+		    Lwt_io.printf "Route registered for service %s\n" h;
 		    Router.register_route
 		      (Jlib.nameprep_exn h) (state.pid :> Router.msg pid))
 		  state.hosts;
@@ -251,7 +251,7 @@ struct
     | Stream_established ->
       List.iter
 	(fun h ->
-	  Printf.printf "Route unregistered for service %s\n" h;
+	  Lwt_io.printf "Route unregistered for service %s\n" h;
 	  Router.unregister_route
 	    (Jlib.nameprep_exn h) (state.pid :> Router.msg pid))
 	state.hosts;
