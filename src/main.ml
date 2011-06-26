@@ -18,9 +18,6 @@ module Listener = Jamler_listener
 
 
 
-let listeners_start () =
-  List.iter (Listener.start) [5222]
-
 let _ = Sys.set_signal Sys.sigpipe Sys.Signal_ignore
 
 (*
@@ -39,7 +36,7 @@ module Plugins = Plugins
 let (exit_waiter, exit_wakener) = Lwt.wait ()
 
 let main () =
-  let _ = listeners_start () in
+  let _ = Listener.start_listeners () in
     exit_waiter
 
 let () = Lwt_main.run (main ())
