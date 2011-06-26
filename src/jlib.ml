@@ -468,7 +468,9 @@ let iq_to_xml {iq_id = id; iq_type = type'; _} =
 
 let sha1 s =
   let h = Cryptokit.Hash.sha1 () in
-    Cryptokit.hash_string h s
+  let res = Cryptokit.hash_string h s in
+  let t = Cryptokit.Hexa.encode () in
+    Cryptokit.transform_string t res
 
 let md5 s =
   let h = Cryptokit.Hash.md5 () in
