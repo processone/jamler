@@ -174,9 +174,9 @@ struct
 	let to' = Xml.get_attr_s "to" attrs in
 	let to_jid = Jlib.string_to_jid to' in
 	let _ = match to_jid, from_jid with
-	  | Some to', Some from when (name == "iq"
-				      or name == "message"
-				      or name == "presence") ->
+	  | Some to', Some from when (name = "iq"
+				      or name = "message"
+				      or name = "presence") ->
 	    Router.route from to' newel
 	  | _ ->
 	    let err = Jlib.make_error_reply el Jlib.err_bad_request in
