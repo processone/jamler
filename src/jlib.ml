@@ -481,8 +481,14 @@ let decode_base64 s =
     Cryptokit.transform_string t s
 
 let encode_base64 s =
-  let t = Cryptokit.Base64.encode_compact () in
-    Cryptokit.transform_string t s
+  let t = Cryptokit.Base64.encode_multiline () in
+  let res = Cryptokit.transform_string t s in
+  let buf = Buffer.create (String.length res) in
+  String.iter (function
+    | '\n' | '\r' | '\t' | ' ' -> ()
+    | c -> Buffer.add_char buf c)
+    res;
+  Buffer.contents buf
 
 let get_random_string () =		(* TODO *)
   string_of_int (Random.int 1000000000)
