@@ -1,5 +1,7 @@
 open Process
 
+let section = Jamler_log.new_section "sm"
+
 module LJID = Jlib.LJID
 module Hooks = Jamler_hooks
 module Auth = Jamler_auth
@@ -555,13 +557,13 @@ let route from to' packet =
     do_route from to' packet
   with
     | exn ->
-        (* TODO *)
-        Printf.eprintf "Exception %s in SM when processing\nfrom: %s\n to: %s\npacket: %s\n"
-          (Printexc.to_string exn)
-          (Jlib.jid_to_string from)
-          (Jlib.jid_to_string to')
-          (Xml.element_to_string packet); flush stderr;
-        ()
-        (*?ERROR_MSG("~p~nwhen processing: ~p",
-      	       [Reason, {From, To, Packet}]);*)
+	ignore (
+	  Lwt_log.error_f
+	    ~section
+	    ~exn:exn
+	    "Exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
+            (Jlib.jid_to_string from)
+            (Jlib.jid_to_string to')
+            (Xml.element_to_string packet)
+	)
 

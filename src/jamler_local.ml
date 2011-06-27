@@ -1,4 +1,7 @@
 open Process
+
+let section = Jamler_log.new_section "router"
+
 module Router = Jamler_router
 module SM = Jamler_sm
 
@@ -68,15 +71,15 @@ let route from to' packet =
     do_route from to' packet
   with
     | exn ->
-        (* TODO *)
-        Printf.eprintf "Exception %s in Local when processing\nfrom: %s\n to: %s\npacket: %s\n"
-          (Printexc.to_string exn)
-          (Jlib.jid_to_string from)
-          (Jlib.jid_to_string to')
-          (Xml.element_to_string packet); flush stderr;
-        ()
-        (*?ERROR_MSG("~p~nwhen processing: ~p",
-      	       [Reason, {From, To, Packet}]);*)
+	ignore (
+	  Lwt_log.error_f
+	    ~section
+	    ~exn:exn
+	    "Exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
+            (Jlib.jid_to_string from)
+            (Jlib.jid_to_string to')
+            (Xml.element_to_string packet)
+	)
 
 let () =
   let pid = spawn (fun s -> Lwt.return ()) in

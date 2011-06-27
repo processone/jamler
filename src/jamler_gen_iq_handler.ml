@@ -1,5 +1,7 @@
 module Router = Jamler_router
 
+let section = Jamler_log.new_section "gen_iq_handler"
+
 type component = [ `SM ]
 type response = [ `IQ of Jlib.iq_response Jlib.iq | `Ignore ]
 
@@ -63,12 +65,14 @@ let process_iq _host f from to' iq =
             Lwt.return ()
   with
     | exn ->
-        Printf.eprintf "Exception %s in GenIQHandler when processing\nfrom: %s\n to: %s\npacket: %s\n"
-          (Printexc.to_string exn)
+	Lwt_log.error_f
+	  ~section
+	  ~exn:exn
+	  "Exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
           (Jlib.jid_to_string from)
           (Jlib.jid_to_string to')
-          (Xml.element_to_string (Jlib.iq_to_xml (iq :> Jlib.iq_query_response Jlib.iq))); flush stderr;
-        Lwt.return ()
+	  (Xml.element_to_string
+	     (Jlib.iq_to_xml (iq :> Jlib.iq_query_response Jlib.iq)))
 
 let handle component host ns from to' iq =
   let f =

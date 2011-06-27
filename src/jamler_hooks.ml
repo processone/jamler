@@ -1,3 +1,5 @@
+let section = Jamler_log.new_section "router"
+
 let sort_hooks hs =
   let hcompare ((s1 : int), _) (s2, _) = compare s1 s2 in
     List.sort hcompare hs
@@ -30,9 +32,10 @@ let run hook host x =
 	       | Stop -> Lwt.return ()
 	   with
 	     | exn ->
-		 Printf.printf "Exception %s\nrunning hook"
-		   (Printexc.to_string exn);
-		 aux x h
+		 lwt () =
+		   Lwt_log.error_f ~section ~exn:exn "Exception running hook"
+		 in
+		   aux x h
 	  )
       | [] -> Lwt.return ()
   in
@@ -68,9 +71,10 @@ let run_fold hook host v x =
 	       | (Stop, v) -> Lwt.return v
 	   with
 	     | exn ->
-		 Printf.printf "Exception %s\nrunning hook"
-		   (Printexc.to_string exn);
-		 aux v x h
+		 lwt () =
+		   Lwt_log.error_f ~section ~exn:exn "Exception running hook"
+		 in
+		   aux v x h
 	  )
       | [] -> Lwt.return v
   in
@@ -104,8 +108,9 @@ let run_plain hook host x =
 	       | Stop -> ()
 	   with
 	     | exn ->
-		 Printf.printf "Exception %s\nrunning hook"
-		   (Printexc.to_string exn);
+		 ignore (
+		   Lwt_log.error_f ~section ~exn:exn "Exception running hook"
+		 );
 		 aux x h
 	  )
       | [] -> ()
@@ -142,8 +147,9 @@ let run_fold_plain hook host v x =
 	       | (Stop, v) -> v
 	   with
 	     | exn ->
-		 Printf.printf "Exception %s\nrunning hook"
-		   (Printexc.to_string exn);
+		 ignore (
+		   Lwt_log.error_f ~section ~exn:exn "Exception running hook"
+		 );
 		 aux v x h
 	  )
       | [] -> v
