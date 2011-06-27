@@ -68,3 +68,4 @@ Executable jamler
   BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, lwt.syntax, cryptokit, pgocaml
   CSources: expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
   CCLib: -lexpat
+  NativeOpt: -w A

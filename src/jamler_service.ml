@@ -131,8 +131,7 @@ struct
       | `XmlStreamElement (`XmlElement (name, _attrs, els)) -> (
 	match name, (Xml.get_cdata els) with
 	  | "handshake", digest -> (
-	    match Jlib.sha1 (state.streamid ^ state.password) with
-	      | digest' when digest' = digest ->
+	      if Jlib.sha1 (state.streamid ^ state.password) = digest then (
 		send_text state "<handshake/>";
 		List.iter
 		  (fun (h:Jlib.namepreped) ->
@@ -140,9 +139,11 @@ struct
 		    Router.register_route h (state.pid :> Router.msg pid))
 		  state.hosts;
 		Lwt.return (`Continue {state with state = Stream_established})
-	      | _ ->
+	      ) else (
 		send_text state invalid_handshake_err;
-		Lwt.return (`Stop state))
+		Lwt.return (`Stop state)
+	      )
+	    )
 	  | _ ->
 	    Lwt.return (`Continue state))
       | `XmlStreamEnd _ ->
@@ -173,7 +174,7 @@ struct
 		match List.mem jid.Jlib.lserver state.hosts with
 		  | true -> Some jid
 		  | false -> None)
-	      | _ ->
+	      | None ->
 		None
 	in
 	let to' = Xml.get_attr_s "to" attrs in
@@ -210,10 +211,10 @@ struct
     in Lwt.return (`Continue state)
     
   let handle_xml msg state =
-    match state.state, msg with
-      | Wait_for_stream, _ -> wait_for_stream msg state
-      | Wait_for_handshake, _ -> wait_for_handshake msg state
-      | Stream_established, _ -> stream_established msg state
+    match state.state with
+      | Wait_for_stream -> wait_for_stream msg state
+      | Wait_for_handshake -> wait_for_handshake msg state
+      | Stream_established -> stream_established msg state
 
   let handle msg state =
     match msg with
@@ -250,19 +251,20 @@ struct
       if Tcp.state state.socket = Lwt_unix.Opened
       then Tcp.close state.socket
       else Lwt.return ()
-  in (match state.state with
-    | Stream_established ->
-      List.iter
-	(fun (h:Jlib.namepreped) ->
-	  Lwt_io.printf "Route unregistered for service %s\n" (h:>string);
-	  Router.unregister_route h (state.pid :> Router.msg pid))
-	state.hosts;
+    in
+      (match state.state with
+	 | Stream_established ->
+	     List.iter
+	       (fun (h:Jlib.namepreped) ->
+		  Lwt_io.printf "Route unregistered for service %s\n" (h:>string);
+		  Router.unregister_route h (state.pid :> Router.msg pid))
+	       state.hosts;
+	     Lwt.return ()
+	 | _ ->
+	     Lwt.return ()
+      );
       Lwt.return ()
-    | _ ->
-      Lwt.return ()
-  );
-  Lwt.return ()
-    
+
 end
   
 module Service = GenServer.Make(ExtService)

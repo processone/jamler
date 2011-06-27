@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: a72cd041563b0e2dd4fd87acc642b93b)
+# DO NOT EDIT (digest: 22ad194ee7abb95f4aa106023ba1d351)
 # Library pa_sql
 # Library pa_jlib
 "src": include
@@ -9,6 +9,10 @@
 "src/dlljamler.dll": oasis_executable_jamler_cclib
 "src/libjamler.a": oasis_executable_jamler_cclib
 "src/dlljamler.so": oasis_executable_jamler_cclib
+"src/main.native": oasis_executable_jamler_native
+<src/*.ml{,i}>: oasis_executable_jamler_native
+"src/expatwrap.c": oasis_executable_jamler_native
+"src/stringprepwrap.c": oasis_executable_jamler_native
 "src/main.native": use_libjamler
 "src/main.native": use_pa_jlib
 "src/main.native": use_pa_sql
