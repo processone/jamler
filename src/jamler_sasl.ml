@@ -1,7 +1,8 @@
-type get_password = Jlib.nodepreped -> (string * string) option
-type check_password = Jlib.nodepreped -> string -> string option
+type get_password = Jlib.nodepreped -> (string * string) option Lwt.t
+type check_password = Jlib.nodepreped -> string -> string option Lwt.t
 type check_password_digest =
-    Jlib.nodepreped -> string -> string -> (string -> string) -> string option
+    Jlib.nodepreped -> string -> string -> (string -> string) ->
+      string option Lwt.t
 
 type props = ([ `Username | `Auth_module | `Authzid ] * string) list
 
@@ -10,12 +11,12 @@ type step_result =
   | Continue of string * t
   | ErrorUser of string * string
   | Error of string
-and t = string -> step_result
+and t = string -> step_result Lwt.t
 
 module type SASLMechanism =
 sig
   val mech_new : Jlib.namepreped -> get_password ->
-    check_password -> check_password_digest -> string -> step_result
+    check_password -> check_password_digest -> string -> step_result Lwt.t
 end
 
 let mechanisms : (string, (module SASLMechanism)) Hashtbl.t =
@@ -43,7 +44,11 @@ let rec process_mech_result =
     | Done props ->
 	check_credentials props
     | Continue (server_out, f) ->
-	Continue (server_out, fun s -> process_mech_result (f s))
+	Continue (server_out,
+		  fun s ->
+		    lwt res = f s in
+		      Lwt.return (process_mech_result res)
+		 )
     | (ErrorUser _ | Error _) as error -> error
 
 let server_start ~service:_service ~server_fqdn ~user_realm:_user_realm
@@ -51,15 +56,16 @@ let server_start ~service:_service ~server_fqdn ~user_realm:_user_realm
   try
     let mech_mod = Hashtbl.find mechanisms mech in
     let module Mech = (val mech_mod : SASLMechanism) in
-    let mech =
+    lwt mech =
       Mech.mech_new server_fqdn
 	get_password check_password check_password_digest client_in
     in
-      process_mech_result mech
+      Lwt.return (process_mech_result mech)
   with
     | Not_found ->
-	Error "no-mechanism"
+	Lwt.return (Error "no-mechanism")
 
 let server_step f client_in =
-  process_mech_result (f client_in)
+  lwt res = f client_in in
+    Lwt.return (process_mech_result res)
 

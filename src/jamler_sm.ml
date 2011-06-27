@@ -369,9 +369,9 @@ let route_message from to' packet =
             | "headline" ->
       		bounce_offline_message from to' packet
             | _ -> (
-      		match Auth.does_user_exist luser lserver with
+      		match_lwt Auth.does_user_exist luser lserver with
       		  | true -> (
-      		(* TODO *) ()
+      		(* TODO *) Lwt.return ()
       		    (*case is_privacy_allow(From, To, Packet) of
       			true ->
       			    ejabberd_hooks:run(offline_message_hook,
@@ -386,8 +386,10 @@ let route_message from to' packet =
       			Jlib.make_error_reply
       			  packet Jlib.err_service_unavailable
       		      in
-      			Router.route to' from err
-      	      )
+      			Router.route to' from err;
+			Lwt.return ()
+      	      );
+		()
         )
 
 let process_iq from to' packet =

@@ -953,10 +953,10 @@ wait_for_stream(timeout, StateData) ->
                                              jid = jid;
                                              sid = sid;
                                                (*conn = Conn,
-                                               auth_module = AuthModule,
-                                               pres_f = ?SETS:from_list(Fs1),
-                                               pres_t = ?SETS:from_list(Ts1),
-                                               privacy_list = PrivList*)}
+                                               auth_module = AuthModule,*)
+					     pres_f = LJIDSet.from_list fs;
+					     pres_t = LJIDSet.from_list ts;
+                                               (*privacy_list = PrivList*)}
 					in
 					  (*DebugFlag = ejabberd_hooks:run_fold(
                                             c2s_debug_start_hook,
@@ -1042,7 +1042,7 @@ wait_for_auth(timeout, StateData) ->
 				      TLSRequired)*) (* TODO *) -> (
 		  let mech = Xml.get_attr_s "mechanism" attrs in
 		  let client_in = Jlib.decode_base64 (Xml.get_cdata els) in
-		  let sasl_result =
+		  lwt sasl_result =
 		    SASL.server_start
 		      ~service:"jabber"
 		      ~server_fqdn:state.server
@@ -1220,7 +1220,7 @@ wait_for_feature_request(timeout, StateData) ->
 	    match Xml.get_attr_s "xmlns" attrs, name with
 	      | <:ns<SASL>>, "response" -> (
 		  let client_in = Jlib.decode_base64 (Xml.get_cdata els) in
-		    match SASL.server_step sasl_state client_in with
+		    match_lwt SASL.server_step sasl_state client_in with
 		      | SASL.Done props -> (
 			  (*catch (StateData#state.sockmod):reset_stream(
                             StateData#state.socket),*)
