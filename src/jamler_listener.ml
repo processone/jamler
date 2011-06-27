@@ -4,13 +4,14 @@ type t = C2S | S2S | Service
 
 module C2SServer = Jamler_c2s.C2SServer
 module Service = Jamler_service.Service
+module S2SInServer = Jamler_s2s_in.S2SInServer
 
 let rec accept listen_type listen_socket =
   lwt (socket, _) = Lwt_unix.accept listen_socket in
   (match listen_type with
-    | C2S -> ignore (C2SServer.start socket);
-    | Service -> ignore (Service.start socket);
-    | S2S -> ());
+    | C2S -> ignore (C2SServer.start socket)
+    | Service -> ignore (Service.start socket)
+    | S2S -> ignore (S2SInServer.start socket));
   accept listen_type listen_socket
 
 let start_listener listen_type port self =
@@ -26,8 +27,10 @@ let start_listener port =
   match port with
     | 5222 ->
       ignore (spawn (start_listener C2S port))
+    | 5269 ->
+      ignore (spawn (start_listener S2S port))
     | 5270 ->
       ignore (spawn (start_listener Service port))
 
 let start_listeners () =
-  List.iter start_listener [5222; 5270]
+  List.iter start_listener [5222; 5269; 5270]

@@ -9,3 +9,5 @@ val route : t
 val register_route :
   ?local_hint : t option -> Jlib.namepreped -> msg pid -> unit
 val unregister_route : Jlib.namepreped -> msg pid -> unit
+
+val dirty_get_all_domains: unit -> Jlib.namepreped list

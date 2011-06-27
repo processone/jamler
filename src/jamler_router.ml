@@ -192,3 +192,5 @@ let route from to' packet =
             (Xml.element_to_string packet)
 	)
 
+let dirty_get_all_domains () =
+  Hashtbl.fold (fun route _ acc -> route :: acc) route_table []
