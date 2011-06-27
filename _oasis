@@ -65,7 +65,7 @@ Executable jamler
   MainIs:     main.ml
   CompiledObject: native
 #  BuildDepends: jamler-lib, jamler-plugins
-  BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, lwt.syntax, cryptokit, pgocaml
+  BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, lwt.syntax, lwt.syntax.log, cryptokit, pgocaml
   CSources: expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
   CCLib: -lexpat
   NativeOpt: -w A

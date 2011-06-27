@@ -33,10 +33,13 @@ let _ =
 
 module Plugins = Plugins
 
+let section = Jamler_log.new_section "main"
+
 let (exit_waiter, exit_wakener) = Lwt.wait ()
 
 let main () =
   let _ = Listener.start_listeners () in
+  lwt () = Lwt_log.notice ~section "jamler started" in
     exit_waiter
 
 let () = Lwt_main.run (main ())

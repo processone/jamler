@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 22ad194ee7abb95f4aa106023ba1d351)
+# DO NOT EDIT (digest: 7e1f249bd45f3b81edade4d64e448aab)
 # Library pa_sql
 # Library pa_jlib
 "src": include
@@ -18,6 +18,7 @@
 "src/main.native": use_pa_sql
 "src/main.native": pkg_pgocaml
 "src/main.native": pkg_lwt.unix
+"src/main.native": pkg_lwt.syntax.log
 "src/main.native": pkg_lwt.syntax
 "src/main.native": pkg_lwt
 "src/main.native": pkg_cryptokit
@@ -26,6 +27,7 @@
 <src/*.ml{,i}>: use_pa_sql
 <src/*.ml{,i}>: pkg_pgocaml
 <src/*.ml{,i}>: pkg_lwt.unix
+<src/*.ml{,i}>: pkg_lwt.syntax.log
 <src/*.ml{,i}>: pkg_lwt.syntax
 <src/*.ml{,i}>: pkg_lwt
 <src/*.ml{,i}>: pkg_cryptokit
@@ -34,6 +36,7 @@
 "src/expatwrap.c": use_pa_sql
 "src/expatwrap.c": pkg_pgocaml
 "src/expatwrap.c": pkg_lwt.unix
+"src/expatwrap.c": pkg_lwt.syntax.log
 "src/expatwrap.c": pkg_lwt.syntax
 "src/expatwrap.c": pkg_lwt
 "src/expatwrap.c": pkg_cryptokit
@@ -42,6 +45,7 @@
 "src/stringprepwrap.c": use_pa_sql
 "src/stringprepwrap.c": pkg_pgocaml
 "src/stringprepwrap.c": pkg_lwt.unix
+"src/stringprepwrap.c": pkg_lwt.syntax.log
 "src/stringprepwrap.c": pkg_lwt.syntax
 "src/stringprepwrap.c": pkg_lwt
 "src/stringprepwrap.c": pkg_cryptokit

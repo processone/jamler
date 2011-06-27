@@ -18,7 +18,7 @@ sig
       | SM.msg | `Zxc of string * int ]
   type init_data = Lwt_unix.file_descr
   type state
-  val init : init_data -> msg pid -> state
+  val init : init_data -> msg pid -> state Lwt.t
   val handle : msg -> state -> state GenServer.result
   val terminate : state -> unit Lwt.t
 
@@ -46,11 +46,13 @@ struct
 
   type init_data = Lwt_unix.file_descr
 
+  let section = Jamler_log.new_section "service"
+
   let new_id () =
     Jlib.get_random_string ()
 
   let init socket self =
-    Lwt_io.printf "External service connected\n";
+    lwt () = Lwt_log.notice ~section "External service connected" in
     let socket = Tcp.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
     let state = {pid = self;
@@ -65,7 +67,7 @@ struct
 		 hosts = [Jlib.nameprep_exn "service.localhost"];}
     in
       Tcp.activate socket self;
-      state
+      Lwt.return state
 
   let myname = "localhost"              (* TODO *)
   let invalid_ns_err = Jlib.serr_invalid_namespace
@@ -133,12 +135,16 @@ struct
 	  | "handshake", digest -> (
 	      if Jlib.sha1 (state.streamid ^ state.password) = digest then (
 		send_text state "<handshake/>";
-		List.iter
-		  (fun (h:Jlib.namepreped) ->
-		    Lwt_io.printf "Route registered for service %s\n" (h:>string);
-		    Router.register_route h (state.pid :> Router.msg pid))
-		  state.hosts;
-		Lwt.return (`Continue {state with state = Stream_established})
+		lwt () =
+		  Lwt_list.iter_s
+		    (fun (h : Jlib.namepreped) ->
+		       Router.register_route h (state.pid :> Router.msg pid);
+		       Lwt_log.notice_f ~section
+			 "Route registered for service %s\n" (h :> string)
+		    )
+		  state.hosts
+		in
+		  Lwt.return (`Continue {state with state = Stream_established})
 	      ) else (
 		send_text state invalid_handshake_err;
 		Lwt.return (`Stop state)
@@ -219,14 +225,17 @@ struct
   let handle msg state =
     match msg with
       | `Tcp_data (socket, data) when socket == state.socket ->
-          (*lwt () = Lwt_io.printf "tcp data %d %S\n" (String.length data) data in*)
+          lwt () =
+	    Lwt_log.debug_f ~section
+	      "tcp data %d %S\n" (String.length data) data
+	  in
             XMLReceiver.parse state.xml_receiver data;
             Tcp.activate state.socket state.pid;
             (*state.pid $! `Zxc (data, 1);*)
             Lwt.return (`Continue state)
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
-          lwt () = Lwt_io.printf "tcp close\n" in
+          lwt () = Lwt_log.debug ~section "tcp close\n" in
             (*Gc.print_stat stdout;
             Gc.compact ();
             Gc.print_stat stdout; flush stdout;*)
@@ -254,17 +263,21 @@ struct
     in
       (match state.state with
 	 | Stream_established ->
-	     List.iter
-	       (fun (h:Jlib.namepreped) ->
-		  Lwt_io.printf "Route unregistered for service %s\n" (h:>string);
-		  Router.unregister_route h (state.pid :> Router.msg pid))
-	       state.hosts;
-	     Lwt.return ()
+	     lwt () =
+	       Lwt_list.iter_s
+		 (fun (h : Jlib.namepreped) ->
+		    Router.unregister_route h (state.pid :> Router.msg pid);
+		    Lwt_log.notice_f ~section
+		      "Route unregistered for service %s\n" (h :> string)
+		 )
+		 state.hosts
+	     in
+	       Lwt.return ()
 	 | _ ->
 	     Lwt.return ()
       );
       Lwt.return ()
 
 end
-  
+
 module Service = GenServer.Make(ExtService)

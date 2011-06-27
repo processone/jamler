@@ -11,7 +11,7 @@ sig
   type msg
   type state
   type init_data
-  val init : init_data -> msg pid -> state
+  val init : init_data -> msg pid -> state Lwt.t
   val handle : msg -> state -> state result
   val terminate : state -> unit Lwt.t
 end
@@ -57,6 +57,6 @@ struct
 		      T.terminate state
     in
       spawn (fun self ->
-	       let state = T.init init_data self in
+	       lwt state = T.init init_data self in
 		 loop self state)
 end

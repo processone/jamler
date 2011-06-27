@@ -17,7 +17,7 @@ sig
       | SM.msg | `Zxc of string * int ]
   type init_data = Lwt_unix.file_descr
   type state
-  val init : init_data -> msg pid -> state
+  val init : init_data -> msg pid -> state Lwt.t
   val handle : msg -> state -> state GenServer.result
   val terminate : state -> unit Lwt.t
 
@@ -83,6 +83,8 @@ struct
 
   type init_data = Lwt_unix.file_descr
 
+  let section = Jamler_log.new_section "c2s"
+
   let init socket self =
     let socket = Tcp.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
@@ -109,7 +111,7 @@ struct
 		}
     in
       Tcp.activate socket self;
-      state
+      Lwt.return state
 
   let myname = "localhost"		(* TODO *)
   let is_my_host _server = true		(* TODO *)
@@ -901,7 +903,7 @@ wait_for_stream(timeout, StateData) ->
 				"(~w) Accepted legacy authentication for ~s by ~p",
 				[StateData#state.socket,
 				jlib:jid_to_string(JID), AuthModule]),*)
-			      lwt () = Lwt_io.printf "Accepted legacy authentication for %s\n" (Jlib.jid_to_string jid) in
+			      lwt () = Lwt_log.notice_f ~section "Accepted legacy authentication for %s\n" (Jlib.jid_to_string jid) in
 				match (*need_redirect(StateData#state{user = U})*) (* TODO *)
 				  None
 				with
@@ -909,7 +911,7 @@ wait_for_stream(timeout, StateData) ->
                                     (*?INFO_MSG("(~w) Redirecting ~s to ~s",
                                               [StateData#state.socket,
                                                jlib:jid_to_string(JID), Host]),*)
-				      lwt () = Lwt_io.printf "Redirecting %s to %s\n" (Jlib.jid_to_string jid) host in
+				      lwt () = Lwt_log.notice_f ~section "Redirecting %s to %s\n" (Jlib.jid_to_string jid) host in
                                         send_element state
 					  (Jlib.serr_see_other_host host);
                                         send_trailer state;
@@ -970,7 +972,7 @@ wait_for_stream(timeout, StateData) ->
 			       "(~w) Failed legacy authentication for ~s",
 			       [StateData#state.socket,
 				jlib:jid_to_string(JID)]),*)
-			      lwt () = Lwt_io.printf "Failed legacy authentication for %s\n" (Jlib.jid_to_string jid) in
+			      lwt () = Lwt_log.notice_f ~section "Failed legacy authentication for %s\n" (Jlib.jid_to_string jid) in
 		              let err =
 				Jlib.make_error_reply el Jlib.err_not_authorized
 			      in
@@ -984,7 +986,7 @@ wait_for_stream(timeout, StateData) ->
 			"(~w) Forbidden legacy authentication for "
 			"username '~s' with resource '~s'",
 			[StateData#state.socket, U, R]),*)
-		      lwt () = Lwt_io.printf "Forbidden legacy authentication for %s with resource '%s'\n" u r in
+		      lwt () = Lwt_log.notice_f ~section "Forbidden legacy authentication for %s with resource '%s'\n" u r in
 		      let err = Jlib.make_error_reply el Jlib.err_jid_malformed
 		      in
 			send_element state err;
@@ -996,7 +998,7 @@ wait_for_stream(timeout, StateData) ->
 			"(~w) Forbidden legacy authentication for ~s",
 			[StateData#state.socket,
 			jlib:jid_to_string(JID)]),*)
-		      lwt () = Lwt_io.printf "Forbidden legacy authentication for %s\n" (Jlib.jid_to_string jid) in
+		      lwt () = Lwt_log.notice_f ~section "Forbidden legacy authentication for %s\n" (Jlib.jid_to_string jid) in
 		      let err = Jlib.make_error_reply el Jlib.err_not_allowed
 		      in
 			send_element state err;
@@ -1070,7 +1072,7 @@ wait_for_auth(timeout, StateData) ->
 			    (*AuthModule = xml:get_attr_s(auth_module, Props),*)
 			    (*?INFO_MSG("(~w) Accepted authentication for ~s by ~p",
                               [StateData#state.socket, U, AuthModule]),*)
-			  lwt () = Lwt_io.printf "Accepted authentication for %s\n" (u :> string) in
+			  lwt () = Lwt_log.notice_f ~section "Accepted authentication for %s\n" (u :> string) in
                             send_element state
                               (`XmlElement ("success",
                                             [("xmlns", <:ns<SASL>>)], []));
@@ -1098,7 +1100,7 @@ wait_for_auth(timeout, StateData) ->
 			    "(~w) Failed authentication for ~s@~s",
 			    [StateData#state.socket,
 			    Username, StateData#state.server]),*)
-			  lwt () = Lwt_io.printf "Failed authentication for %s@%s\n" username (state.server :> string) in
+			  lwt () = Lwt_log.notice_f ~section "Failed authentication for %s@%s\n" username (state.server :> string) in
 			    send_element state
 			      (`XmlElement
 				 ("failure",
@@ -1227,7 +1229,7 @@ wait_for_feature_request(timeout, StateData) ->
 			    (*AuthModule = xml:get_attr_s(auth_module, Props),
 			      ?INFO_MSG("(~w) Accepted authentication for ~s by ~p",
 			      [StateData#state.socket, U, AuthModule]),*)
-			  lwt () = Lwt_io.printf "Accepted authentication for %s\n" (u :> string) in
+			  lwt () = Lwt_log.notice_f ~section "Accepted authentication for %s\n" (u :> string) in
                             send_element state
                               (`XmlElement ("success",
                                             [("xmlns", <:ns<SASL>>)], []));
@@ -1255,7 +1257,7 @@ wait_for_feature_request(timeout, StateData) ->
 			    "(~w) Failed authentication for ~s@~s",
 			    [StateData#state.socket,
 			    Username, StateData#state.server]),*)
-			  lwt () = Lwt_io.printf "Failed authentication for %s@%s\n" username (state.server :> string) in
+			  lwt () = Lwt_log.notice_f ~section "Failed authentication for %s@%s\n" username (state.server :> string) in
 			    send_element state
 			      (`XmlElement
 				 ("failure",
@@ -1383,7 +1385,7 @@ wait_for_bind(timeout, StateData) ->
 			(*?INFO_MSG("(~w) Opened session for ~s",
 			      [StateData#state.socket,
 			       jlib:jid_to_string(JID)]),*)
-		      lwt () = Lwt_io.printf "Opened session for %s\n" (Jlib.jid_to_string jid) in
+		      lwt () = Lwt_log.notice_f ~section "Opened session for %s\n" (Jlib.jid_to_string jid) in
 		      let res = Jlib.make_result_iq_reply el in
 			send_element state res;
 		    (*change_shaper(StateData, JID),*)
@@ -1433,7 +1435,7 @@ wait_for_bind(timeout, StateData) ->
 		    ?INFO_MSG("(~w) Forbidden session for ~s",
 			      [StateData#state.socket,
 			       jlib:jid_to_string(JID)]),*)
-			lwt () = Lwt_io.printf "Forbidden session for %s\n" (Jlib.jid_to_string jid) in
+			lwt () = Lwt_log.notice_f ~section "Forbidden session for %s\n" (Jlib.jid_to_string jid) in
 			let err = Jlib.make_error_reply el Jlib.err_not_allowed
 			in
 			  send_element state err;
@@ -1597,32 +1599,15 @@ session_established(timeout, StateData) ->
 
 
   let handle_xml msg state =
-    match state.state, msg with
-      | Wait_for_stream, _ -> wait_for_stream msg state
-      | Wait_for_auth, _ -> wait_for_auth msg state
-      | Wait_for_feature_request, _ -> wait_for_feature_request msg state
-      | Wait_for_bind, _ -> wait_for_bind msg state
-      | Wait_for_session, _ -> wait_for_session msg state
-      | Wait_for_sasl_response sasl_state, _ ->
+    match state.state with
+      | Wait_for_stream -> wait_for_stream msg state
+      | Wait_for_auth -> wait_for_auth msg state
+      | Wait_for_feature_request -> wait_for_feature_request msg state
+      | Wait_for_bind -> wait_for_bind msg state
+      | Wait_for_session -> wait_for_session msg state
+      | Wait_for_sasl_response sasl_state ->
 	  wait_for_sasl_response msg sasl_state state
-      | Session_established, _ -> session_established msg state
-(*      | _, `XmlStreamStart (name, attrs) ->
-          lwt () = Lwt_io.printf "stream start: %s %s\n"
-            name (Xml.attrs_to_string attrs)
-          in
-            Lwt.return (`Continue state)
-      | _, `XmlStreamElement el ->
-          lwt () = Lwt_io.printf "stream el: %s\n"
-            (Xml.element_to_string el)
-          in
-            Lwt.return (`Continue state)
-      | _, `XmlStreamEnd name ->
-          lwt () = Lwt_io.printf "stream end: %s\n" name in
-            Lwt.return (`Continue state)
-      | _, `XmlStreamError error ->
-          lwt () = Lwt_io.printf "stream error: %s\n" error in
-            Lwt.return (`Stop state)
-*)
+      | Session_established -> session_established msg state
 
   let handle_route (`Route (from, to', packet)) state =
     let `XmlElement (name, attrs, els) = packet in
@@ -1827,14 +1812,17 @@ session_established(timeout, StateData) ->
   let handle msg state =
     match msg with
       | `Tcp_data (socket, data) when socket == state.socket ->
-          (*lwt () = Lwt_io.printf "tcp data %d %S\n" (String.length data) data in*)
+          lwt () =
+	    Lwt_log.debug_f ~section
+	      "tcp data %d %S\n" (String.length data) data
+	  in
             XMLReceiver.parse state.xml_receiver data;
             Tcp.activate state.socket state.pid;
             (*state.pid $! `Zxc (data, 1);*)
             Lwt.return (`Continue state)
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
-          lwt () = Lwt_io.printf "tcp close\n" in
+          lwt () = Lwt_log.debug ~section "tcp close\n" in
             (*Gc.print_stat stdout;
             Gc.compact ();
             Gc.print_stat stdout; flush stdout;*)
@@ -1886,7 +1874,7 @@ session_established(timeout, StateData) ->
 		    (*?INFO_MSG("(~w) Close session for ~s",
 			      [StateData#state.socket,
 			       jlib:jid_to_string(StateData#state.jid)]),*)
-	     lwt () = Lwt_io.printf "Close session for %s\n" (Jlib.jid_to_string state.jid) in
+	     lwt () = Lwt_log.notice_f ~section "Close session for %s\n" (Jlib.jid_to_string state.jid) in
 	       (match state with
 		  | {pres_last = None;
 		     pres_a;
