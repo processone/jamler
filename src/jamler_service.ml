@@ -198,7 +198,7 @@ struct
 	  
 
   let handle_route (`Route (from, to', packet)) state =
-    let _ = match ACL.match_rule None state.access from with
+    let _ = match ACL.match_global_rule state.access from with
       | true ->
 	let `XmlElement (name, attrs, els) = packet in
 	let attrs' = Jlib.replace_from_to_attrs
