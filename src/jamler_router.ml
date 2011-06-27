@@ -188,3 +188,5 @@ let route from to' packet =
         (*?ERROR_MSG("~p~nwhen processing: ~p",
       	       [Reason, {From, To, Packet}]);*)
 
+let dirty_get_all_domains () =
+  Hashtbl.fold (fun route _ acc -> route :: acc) route_table []
