@@ -280,33 +280,44 @@ struct
 	    let `XmlElement (name, attrs, _els) = newel in
 	    let from_s = Xml.get_attr_s "from" attrs in
 	    let to_s = Xml.get_attr_s "to" attrs in
-	    (match (Jlib.string_to_jid from_s, Jlib.string_to_jid to_s) with
-	      | Some from, Some to' ->
-		let lfrom = from.Jlib.lserver in
-		let lto = to'.Jlib.lserver in
-		if state.authenticated then (
-		  if (lfrom = state.auth_domain &&
-		      List.mem lto (Router.dirty_get_all_domains ())) then (
-		    if (name = "iq" || name = "message" || name = "presence")
-		    then (
-		      Hooks.run s2s_receive_packet lto (from, to', newel);
-		      Router.route from to' newel
-		    )
-		  )
-		) else (
-		  try if (
-		    Hashtbl.find state.connections (lfrom, lto) = Established
-		    && (name = "iq" || name = "message" || name = "presence"))
-		    then (
-		      Hooks.run s2s_receive_packet lto (from, to', newel);
-        	      Router.route from to' newel)
-		  with Not_found ->
-		    ()
-		);
-	      | _, _ ->
-		());
-	    Hooks.run s2s_loop_debug state.server (`XmlStreamElement el);
-	    Lwt.return (`Continue state)))
+	    lwt () =
+	      (match (Jlib.string_to_jid from_s, Jlib.string_to_jid to_s) with
+		 | Some from, Some to' ->
+		     let lfrom = from.Jlib.lserver in
+		     let lto = to'.Jlib.lserver in
+		       if state.authenticated then (
+			 if (lfrom = state.auth_domain &&
+			     List.mem lto (Router.dirty_get_all_domains ())) then (
+			   if (name = "iq" || name = "message" || name = "presence")
+			   then (
+			     lwt () =
+			       Hooks.run s2s_receive_packet lto (from, to', newel)
+			     in
+			       Router.route from to' newel;
+			       Lwt.return ()
+			   ) else Lwt.return ()
+			 ) else Lwt.return ()
+		       ) else (
+			 try
+			   if (Hashtbl.find state.connections (lfrom, lto) = Established
+			       && (name = "iq" || name = "message" || name = "presence"))
+			   then (
+			     lwt () =
+			       Hooks.run s2s_receive_packet lto (from, to', newel)
+			     in
+        		       Router.route from to' newel;
+			       Lwt.return ()
+			   ) else Lwt.return ()
+			 with Not_found ->
+			   Lwt.return ()
+		       );
+		 | _, _ ->
+		     Lwt.return ())
+	    in
+	    lwt () =
+	      Hooks.run s2s_loop_debug state.server (`XmlStreamElement el)
+	    in
+	      Lwt.return (`Continue state)))
       | `XmlStreamEnd _ ->
 	Lwt.return (`Stop state)
       | `XmlStreamError _ ->
