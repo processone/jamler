@@ -92,7 +92,7 @@ struct
     send_text state stream_trailer
 
   let init socket self =
-    (* ?DEBUG("started: ~p", [{SockMod, Socket}]), *)
+    lwt () = Lwt_log.debug ~secion "started" in
     let socket = Tcp.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
     let state = {pid = self;
@@ -232,7 +232,9 @@ struct
 	   Timer = erlang:start_timer(?S2STIMEOUT, self(), []), *)
 	(match is_key_packet el with
 	  | Key (to', from, id, key) ->
-	    (* ?DEBUG("GET KEY: ~p", [{To, From, Id, Key}]), *)
+	    lwt () = Lwt_log.debug_f ~section
+		       "GET KEY: to = %s, from = %s, id = %s, key = %s"
+		       to' from id key in
 	    (match (Jlib.nameprep to', Jlib.nameprep from) with
 	      | Some lto, Some lfrom ->
 		(match (S2S.allow_host lto lfrom,
@@ -256,7 +258,9 @@ struct
 		send_element state Jlib.serr_host_unknown;
 		Lwt.return (`Stop state))
 	  | Verify (to', from, id, key) ->
-	    (* ?DEBUG("VERIFY KEY: ~p", [{To, From, Id, Key}]), *)
+	    lwt () = Lwt_log.debug_f ~section
+		       "VERIFY KEY: to = %s, from = %s, id = %s, key =%s"
+		       to' from id key in
 	    let type' = match (Jlib.nameprep to', Jlib.nameprep from) with
 	      | Some lto, Some lfrom -> (
 		match S2S.has_key (lto, lfrom) key with
@@ -466,25 +470,24 @@ stream_established(closed, StateData) ->
   let handle msg state =
     match msg with
       | `Tcp_data (socket, data) when socket == state.socket ->
-          (*lwt () = Lwt_io.printf "tcp data %d %S\n" (String.length data) data in*)
+	lwt () =
+            Lwt_log.debug_f ~section
+              "tcp data %d %S" (String.length data) data
+          in
             XMLReceiver.parse state.xml_receiver data;
             Tcp.activate state.socket state.pid;
-            (*state.pid $! `Zxc (data, 1);*)
             Lwt.return (`Continue state)
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
-          lwt () = Lwt_io.printf "tcp close\n" in
-            (*Gc.print_stat stdout;
-            Gc.compact ();
-            Gc.print_stat stdout; flush stdout;*)
-            Lwt.return (`Stop state)
+	lwt () = Lwt_log.debug ~section "tcp close" in
+        Lwt.return (`Stop state)
       | `Tcp_close _socket -> assert false
       | #XMLReceiver.msg as m ->
           handle_xml m state
       | #GenServer.msg -> assert false
 
   let terminate state =
-    (* ?DEBUG("terminated: ~p", [Reason]), *)
+    lwt () = Lwt_log.debug ~section "terminated" in
     XMLReceiver.free state.xml_receiver;
     lwt () =
       if Tcp.state state.socket = Lwt_unix.Opened
