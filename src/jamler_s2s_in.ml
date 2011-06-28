@@ -22,7 +22,8 @@ sig
   val handle : msg -> state -> state GenServer.result
   val terminate : state -> unit Lwt.t
 
-  val s2s_stream_features : (Jlib.namepreped, Xml.element_cdata list) Hooks.fold_hook
+  val s2s_stream_features :
+    (Jlib.namepreped, Xml.element_cdata list) Hooks.fold_hook
   val s2s_receive_packet : (Jlib.jid * Jlib.jid * Xml.element) Hooks.hook
   val s2s_loop_debug : (XMLReceiver.msg) Hooks.hook
 
@@ -241,7 +242,8 @@ struct
 		      S2SOut.terminate_if_waiting_delay lto lfrom;
 		      S2SOut.start lto lfrom (Verify (state.pid, key, state.streamid));
 		    *)
-		    Hashtbl.replace state.connections (lfrom, lto) Wait_for_verification;
+		    Hashtbl.replace state.connections
+		      (lfrom, lto) Wait_for_verification;
 		    (* change_shaper(StateData, LTo, jlib:make_jid("", LFrom, "")), *)
 		    Lwt.return (`Continue state) (* timer = Timer *)
 		  | _, false ->
@@ -281,14 +283,16 @@ struct
 		if state.authenticated then (
 		  if (lfrom = state.auth_domain &&
 		      List.mem lto (Router.dirty_get_all_domains ())) then (
-		    if (name = "iq" || name = "message" || name = "presence") then (
+		    if (name = "iq" || name = "message" || name = "presence")
+		    then (
 		      Hooks.run s2s_receive_packet lto (from, to', newel);
 		      Router.route from to' newel
 		    )
 		  )
 		) else (
-		  try if (Hashtbl.find state.connections (lfrom, lto) = Established
-			 && (name = "iq" || name = "message" || name = "presence"))
+		  try if (
+		    Hashtbl.find state.connections (lfrom, lto) = Established
+		    && (name = "iq" || name = "message" || name = "presence"))
 		    then (
 		      Hooks.run s2s_receive_packet lto (from, to', newel);
         	      Router.route from to' newel)
