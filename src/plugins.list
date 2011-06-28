@@ -1,3 +1,4 @@
 jamler_sasl_plain
 jamler_sasl_digest
+jamler_auth_sql
 mod_roster

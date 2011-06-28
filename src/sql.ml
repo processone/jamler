@@ -59,6 +59,8 @@ type state =
   {dbh : unit PG.t;
    queries : (string, string) Hashtbl.t}
 
+type host = Jlib.namepreped
+
 let pools = Hashtbl.create 10
 
 let add_pool host =
@@ -107,6 +109,7 @@ let query host q =
 
 let string_of_bool = PG.string_of_bool
 let bool_of_string = PG.bool_of_string
+
 
 (*
 let _ =
