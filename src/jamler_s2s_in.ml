@@ -1,5 +1,7 @@
 open Process
 
+let section = Jamler_log.new_section "s2s_in"
+
 module XMLReceiver = Jamler_receiver
 module GenServer = Gen_server
 module LJID = Jlib.LJID
