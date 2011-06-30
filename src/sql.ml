@@ -20,6 +20,10 @@ end
 
 module PG = PGOCaml_generic.Make(Lwt_thread)
 
+let section = Jamler_log.new_section "sql"
+
+exception Error = PG.PostgreSQL_Error
+
 type val_type =
   | Int
   | String
@@ -74,6 +78,10 @@ let add_pool host =
 	     ~password:"ejabberd"
 	     ~database:"ejabberd" ()
 	 in
+	 lwt () = PG.prepare dbh
+	   ~query:"SET default_transaction_isolation TO SERIALIZABLE" ()
+	 in
+	 lwt _ = PG.execute dbh ~params:[] () in
 	   Lwt.return {dbh; queries = Hashtbl.create 10}
       )
   in
@@ -82,30 +90,136 @@ let add_pool host =
 let get_pool host =
   Hashtbl.find pools host
 
+let state_key = Lwt.new_key ()
+
+exception Aborted of string
+
+let is_exn_rollback =
+  function
+    | Error (_, fields) -> (
+	try
+	  let s = List.assoc 'C' fields in
+	    String.length s >= 2 && s.[0] = '4' && s.[1] = '0'
+	with
+	  | Not_found -> false
+      )
+    | _ -> false
+
+let is_exn_unique_violation =
+  function
+    | Error (_, fields) -> (
+	try
+	  let s = List.assoc 'C' fields in
+	    s = "23505"
+	with
+	  | Not_found -> false
+      )
+    | _ -> false
+
 let qcounter = ref 0
 
-let query host q =
-  let pool = get_pool host in
-    Lwt_pool.use pool
-      (fun st ->
-	 lwt name =
-	   try_lwt
-	     Lwt.return (Hashtbl.find st.queries q.query)
-	   with
-	     | Not_found ->
-		 incr qcounter;
-		 let name = "q" ^ string_of_int !qcounter in
-		   Hashtbl.add st.queries q.query name;
-		   lwt () =
-		     PG.prepare st.dbh
-		       ~query:q.query ~name:name ()
-		   in
-		     Lwt.return name
-	 in
-	 lwt rows = PG.execute st.dbh ~name:name ~params:q.params () in
-	   Lwt.return (process_results rows q.handler)
-      )
+let query' q st =
+  lwt name =
+    try_lwt
+      Lwt.return (Hashtbl.find st.queries q.query)
+    with
+      | Not_found ->
+	  incr qcounter;
+	  let name = "q" ^ string_of_int !qcounter in
+	    Hashtbl.add st.queries q.query name;
+	    lwt () =
+	      PG.prepare st.dbh
+		~query:q.query ~name:name ()
+	    in
+	      Lwt.return name
+  in
+  lwt rows = PG.execute st.dbh ~name:name ~params:q.params () in
+    Lwt.return (process_results rows q.handler)
 
+let query host q =
+  match Lwt.get state_key with
+    | Some _ ->
+	lwt () =
+	  Lwt_log.error ~section
+	    "Sql.query called inside transaction"
+	in
+	  raise_lwt (Aborted "Sql.query called inside transaction")
+    | None ->
+	let pool = get_pool host in
+	  Lwt_pool.use pool (query' q)
+
+let query_t q =
+  match Lwt.get state_key with
+    | Some st ->
+	query' q st
+    | None ->
+	lwt () =
+	  Lwt_log.error ~section
+	    "Sql.query_t called outside transaction"
+	in
+	  raise_lwt (Aborted "Sql.query_t called outside transaction")
+
+let max_transaction_restarts = 10
+
+let transaction host f =
+  match Lwt.get state_key with
+    | Some _ ->
+	f ()
+    | None ->
+	let transaction' f st =
+	  let rec loop f n () =
+	    lwt () = PG.begin_work st.dbh in
+	      try_lwt
+		lwt res = f () in
+		lwt () = PG.commit st.dbh in
+		  Lwt.return res
+	      with
+		| Error _ as exn when is_exn_rollback exn ->
+		    lwt () = PG.rollback st.dbh in
+		      if n > 0 then (
+			loop f (n - 1) ()
+		      ) else (
+			lwt () =
+			  Lwt_log.error ~section ~exn
+			    "SQL transaction restarts exceeded"
+			in
+			  raise_lwt (Aborted "SQL transaction restarts exceeded")
+		      )
+		| exn ->
+		    lwt () = PG.rollback st.dbh in
+		    lwt () =
+		      Lwt_log.error ~section ~exn "SQL transaction failed"
+		    in
+		      Lwt.fail exn
+	  in
+	    Lwt.with_value state_key (Some st) (loop f max_transaction_restarts)
+	in
+	let pool = get_pool host in
+	  Lwt_pool.use pool (transaction' f)
+
+let update_t insert_query update_query =
+  match Lwt.get state_key with
+    | Some st -> (
+	lwt () = PG.prepare st.dbh ~query:"SAVEPOINT update_sp" () in
+	lwt _ = PG.execute st.dbh ~params:[] () in
+	  try_lwt
+	    lwt _ = query_t insert_query in
+	      Lwt.return ()
+	  with
+	    | exn when is_exn_unique_violation exn ->
+		lwt () =
+		  PG.prepare st.dbh ~query:"ROLLBACK TO SAVEPOINT update_sp" ()
+		in
+		lwt _ = PG.execute st.dbh ~params:[] () in
+		lwt _ = query_t update_query in
+		  Lwt.return ()
+      )
+    | None ->
+	lwt () =
+	  Lwt_log.error ~section
+	    "Sql.update_t called outside transaction"
+	in
+	  raise_lwt (Aborted "Sql.update_t called outside transaction")
 
 let string_of_bool = PG.string_of_bool
 let bool_of_string = PG.bool_of_string

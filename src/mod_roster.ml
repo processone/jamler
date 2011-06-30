@@ -2,6 +2,8 @@ open Gen_roster
 
 module RosterMemoryStorage : RosterStorage =
 struct
+  let name = "mod_roster"
+
   let rosters = (Hashtbl.create 100
 		   : (Jlib.nodepreped * Jlib.namepreped,
 		      (LJID.t, subscription roster_item) Hashtbl.t) Hashtbl.t)
@@ -147,7 +149,7 @@ struct
 	| None ->
 	    Lwt.return (None, autoreply)
 	| Some (`None `None) when item.subscription = `None `In ->
-	    delete_roster_item luser lserver ljid;
+	    delete_roster_item' luser lserver ljid;
 	    Lwt.return (None, autoreply)
 	| Some subscription ->
 	    let new_item =
@@ -155,14 +157,44 @@ struct
 		 subscription = subscription;
 		 askmessage = ask_message}
 	    in
-	      write_roster_item luser lserver ljid new_item;
+	      write_roster_item' luser lserver ljid new_item;
 	      (*case roster_version_on_db(LServer) of
 		true -> mnesia:write(#roster_version{us = {LUser, LServer}, version = sha:sha(term_to_binary(now()))});
 		false -> ok
 		end,*)
 	      Lwt.return (Some new_item, autoreply)
 
+  let _ =
+    let test = Jlib.string_to_jid_exn "test@e.localhost" in
+    let test10 = Jlib.string_to_jid_exn "test10@e.localhost" in
+    let i1 = {jid = ("test10", "e.localhost", "");
+	      name = "test10__";
+	      subscription = `Both;
+	      groups = ["asd"; "qwe"];
+	      askmessage = "";
+	     }
+    in
+    let i2 = {jid = ("test", "e.localhost", "");
+	      name = "test";
+	      subscription = `Both;
+	      groups = ["test"];
+	      askmessage = "";
+	     }
+    in
+    lwt () =
+      write_roster_item test.Jlib.luser test.Jlib.lserver
+	(test10.Jlib.luser, test10.Jlib.lserver, test10.Jlib.lresource)
+	i1
+    in
+    lwt () =
+      write_roster_item test10.Jlib.luser test10.Jlib.lserver
+	(test.Jlib.luser, test.Jlib.lserver, test.Jlib.lresource)
+	i2
+    in
+      Lwt.return ()
+
 end
 
 module ModRoster = Gen_roster.Make(RosterMemoryStorage)
 
+let () = Gen_mod.register_mod (module ModRoster : Gen_mod.Module)

@@ -22,10 +22,15 @@ val make_part_query :
 val concat_queries :
   ('a, select) query -> (unit, part) query -> ('a, select) query
 
+exception Error of string * (char * string) list
+
 type host = Jlib.namepreped
 
 val add_pool : host -> unit
 val query : host -> ('a, select) query -> 'a list Lwt.t
+val query_t : ('a, select) query -> 'a list Lwt.t
+val transaction : host -> (unit -> 'a Lwt.t) -> 'a Lwt.t
+val update_t : (unit, select) query -> (unit, select) query -> unit Lwt.t
 
 val string_of_bool : bool -> string
 val bool_of_string : string -> bool

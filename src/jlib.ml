@@ -493,10 +493,17 @@ let encode_base64 s =
 let get_random_string () =		(* TODO *)
   string_of_int (Random.int 1000000000)
 
-module LJID =
+module LJID :
+sig
+  type t = nodepreped * namepreped * resourcepreped
+  val compare : t -> t -> int
+  val to_string : t -> string
+end
+  =
 struct
   type t = nodepreped * namepreped * resourcepreped
   let compare = compare
+  let to_string (u, s, r) = jid_to_string' u s r
 end
 
 module LJIDSet =

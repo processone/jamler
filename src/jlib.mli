@@ -150,8 +150,12 @@ val encode_base64 : string -> string
 
 val get_random_string : unit -> string
 
-module LJID : Set.OrderedType
-  with type t = nodepreped * namepreped * resourcepreped
+module LJID :
+sig
+  type t = nodepreped * namepreped * resourcepreped
+  val compare : t -> t -> int
+  val to_string : t -> string
+end
 
 module LJIDSet :
 sig

@@ -169,10 +169,12 @@ let in_auto_reply subscription t =
 
 module type RosterStorage =
 sig
+  val name : string
+
   val read_roster :
     Jlib.nodepreped ->
     Jlib.namepreped -> (LJID.t * subscription roster_item) list Lwt.t
-  val delete_roster : Jlib.nodepreped -> Jlib.namepreped -> unit Lwt.t
+  (*val delete_roster : Jlib.nodepreped -> Jlib.namepreped -> unit Lwt.t
   val read_roster_item :
     Jlib.nodepreped ->
     Jlib.namepreped -> LJID.t -> subscription roster_item option Lwt.t
@@ -180,7 +182,7 @@ sig
     Jlib.nodepreped ->
     Jlib.namepreped -> LJID.t -> subscription roster_item -> unit Lwt.t
   val delete_roster_item :
-    Jlib.nodepreped -> Jlib.namepreped -> LJID.t -> unit Lwt.t
+    Jlib.nodepreped -> Jlib.namepreped -> LJID.t -> unit Lwt.t*)
   val item_set_transaction :
     Jlib.nodepreped -> Jlib.namepreped -> Jlib.jid ->
     Xml.attributes -> Xml.element_cdata list ->
@@ -197,6 +199,7 @@ end
 
 module Make(RS : RosterStorage) :
 sig
+  include Gen_mod.Module
 end
   =
 struct
@@ -912,42 +915,14 @@ webadmin_user(Acc, _User, _Server, Lang) ->
     Acc ++ [?XE("h3", [?ACT("roster/", "Roster")])].
 *)
 
-  let _ =
-    let test = Jlib.string_to_jid_exn "test@e.localhost" in
-    let test10 = Jlib.string_to_jid_exn "test10@e.localhost" in
-    let i1 = {jid = ("test10", "e.localhost", "");
-	      name = "test10__";
-	      subscription = `Both;
-	      groups = ["asd"; "qwe"];
-	      askmessage = "";
-	     }
-    in
-    let i2 = {jid = ("test", "e.localhost", "");
-	      name = "test";
-	      subscription = `Both;
-	      groups = ["test"];
-	      askmessage = "";
-	     }
-    in
-    lwt () =
-      RS.write_roster_item test.Jlib.luser test.Jlib.lserver
-	(test10.Jlib.luser, test10.Jlib.lserver, test10.Jlib.lresource)
-	i1
-    in
-    lwt () =
-      RS.write_roster_item test10.Jlib.luser test10.Jlib.lserver
-	(test.Jlib.luser, test.Jlib.lserver, test.Jlib.lresource)
-	i2
-    in
-      Lwt.return ()
+  let name = RS.name
 
-  let _ =
-    let host = Jlib.nameprep_exn "e.localhost" in
-      Hooks.add_fold roster_get host get_user_roster 50;
-      Hooks.add_fold SM.roster_in_subscription host in_subscription 50;
-      Hooks.add C2S.roster_out_subscription host out_subscription 50;
-      Hooks.add_fold C2S.roster_get_subscription_lists host
-	get_subscription_lists 50;
+  let start host _opts =
+    Hooks.add_fold roster_get host get_user_roster 50;
+    Hooks.add_fold SM.roster_in_subscription host in_subscription 50;
+    Hooks.add C2S.roster_out_subscription host out_subscription 50;
+    Hooks.add_fold C2S.roster_get_subscription_lists host
+      get_subscription_lists 50;
     (*ejabberd_hooks:add(roster_get_jid_info, Host,
 		       ?MODULE, get_jid_info, 50),
     ejabberd_hooks:add(remove_user, Host,
@@ -962,7 +937,12 @@ webadmin_user(Acc, _User, _Server, Lang) ->
 		       ?MODULE, webadmin_page, 50),
     ejabberd_hooks:add(webadmin_user, Host,
 		       ?MODULE, webadmin_user, 50),*)
-      GenIQHandler.add_iq_handler `SM host <:ns<ROSTER>> process_iq ()
+    GenIQHandler.add_iq_handler `SM host <:ns<ROSTER>> process_iq ();
+    Lwt.return ()
+
+  let stop host =
+    (* TODO *)
+    Lwt.return ()
 
 (*
   start(Host, Opts) ->
