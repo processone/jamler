@@ -1,5 +1,5 @@
 (* OASIS_START *)
-(* DO NOT EDIT (digest: b37815181bdd9ad02fcbd44c11fe7dc6) *)
+(* DO NOT EDIT (digest: 2110101a0f4d4522ce6c8c97a043c35e) *)
 module OASISGettext = struct
 # 21 "/tmp/buildd/oasis-0.2.0/src/oasis/OASISGettext.ml"
   
@@ -457,9 +457,12 @@ let package_default =
      flags =
        [
           (["oasis_executable_jamler_cclib"; "link"],
-            [(OASISExpr.EBool true, S [A "-cclib"; A "-lexpat"])]);
+            [
+               (OASISExpr.EBool true,
+                 S [A "-cclib"; A "-lexpat"; A "-cclib"; A "-lidn"])
+            ]);
           (["oasis_executable_jamler_cclib"; "ocamlmklib"; "c"],
-            [(OASISExpr.EBool true, S [A "-lexpat"])]);
+            [(OASISExpr.EBool true, S [A "-lexpat"; A "-lidn"])]);
           (["oasis_executable_jamler_native"; "ocaml"; "link"; "native"],
             [(OASISExpr.EBool true, S [A "-w"; A "A"])]);
           (["oasis_executable_jamler_native"; "ocaml"; "ocamldep"; "native"],

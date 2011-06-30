@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 7e1f249bd45f3b81edade4d64e448aab)
+# DO NOT EDIT (digest: 0d46fc7b4e6a501eab0d312a387612e9)
 # Library pa_sql
 # Library pa_jlib
 "src": include
@@ -11,6 +11,7 @@
 "src/dlljamler.so": oasis_executable_jamler_cclib
 "src/main.native": oasis_executable_jamler_native
 <src/*.ml{,i}>: oasis_executable_jamler_native
+"src/idnawrap.c": oasis_executable_jamler_native
 "src/expatwrap.c": oasis_executable_jamler_native
 "src/stringprepwrap.c": oasis_executable_jamler_native
 "src/main.native": use_libjamler
@@ -32,6 +33,15 @@
 <src/*.ml{,i}>: pkg_lwt
 <src/*.ml{,i}>: pkg_cryptokit
 <src/*.ml{,i}>: pkg_camlp4.quotations.o
+"src/idnawrap.c": use_pa_jlib
+"src/idnawrap.c": use_pa_sql
+"src/idnawrap.c": pkg_pgocaml
+"src/idnawrap.c": pkg_lwt.unix
+"src/idnawrap.c": pkg_lwt.syntax.log
+"src/idnawrap.c": pkg_lwt.syntax
+"src/idnawrap.c": pkg_lwt
+"src/idnawrap.c": pkg_cryptokit
+"src/idnawrap.c": pkg_camlp4.quotations.o
 "src/expatwrap.c": use_pa_jlib
 "src/expatwrap.c": use_pa_sql
 "src/expatwrap.c": pkg_pgocaml

@@ -45,8 +45,8 @@ Library "pa_sql"
 #    Sql
 #  CompiledObject: native
 #  BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, lwt.syntax, cryptokit, pgocaml
-#  CSources: expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
-#  CCLib: -lexpat
+#  CSources: idnawrap.c, expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
+#  CCLib: -lexpat -lidn
 #
 #Library "jamler-plugins"
 #  Install: false
@@ -66,6 +66,6 @@ Executable jamler
   CompiledObject: native
 #  BuildDepends: jamler-lib, jamler-plugins
   BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, lwt.syntax, lwt.syntax.log, cryptokit, pgocaml
-  CSources: expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
-  CCLib: -lexpat
+  CSources: idnawrap.c, expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
+  CCLib: -lexpat -lidn
   NativeOpt: -w A
