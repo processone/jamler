@@ -16,8 +16,9 @@ module S2S = Jamler_s2s
 
 module S2SIn :
 sig
+  type validation_msg = Jamler_s2s_lib.validation_msg
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg ]
+      [ Tcp.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
   type init_data = Lwt_unix.file_descr
   type state
   val init : init_data -> msg pid -> state Lwt.t
@@ -31,8 +32,9 @@ sig
 
 end =
 struct
+  type validation_msg = Jamler_s2s_lib.validation_msg
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg ]
+      [ Tcp.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
 
   type s2s_in_state =
     | Wait_for_stream
@@ -226,6 +228,8 @@ struct
       | `XmlStreamElement _ ->
 	send_trailer state;
 	Lwt.return (`Stop state)
+      | `Valid _
+      | `Invalid _ -> assert false
 
   let stream_established msg state =
     match msg with
@@ -239,7 +243,7 @@ struct
 		       to' from id key in
 	    (match (Jlib.nameprep to', Jlib.nameprep from) with
 	      | Some lto, Some lfrom ->
-		(match (S2S.allow_host lto lfrom,
+		(match (Jamler_s2s_lib.allow_host lto lfrom,
 			List.mem lto (Router.dirty_get_all_domains ())) with
 		  | true, true ->
 		    (*
@@ -265,7 +269,7 @@ struct
 		       to' from id key in
 	    let type' = match (Jlib.nameprep to', Jlib.nameprep from) with
 	      | Some lto, Some lfrom -> (
-		match S2S.has_key (lto, lfrom) key with
+		match Jamler_s2s_lib.has_key (lto, lfrom) key with
 		  | true -> "valid"
 		  | false -> "invalid")
 	      | _, _ ->
@@ -320,6 +324,28 @@ struct
 	      Hooks.run s2s_loop_debug state.server (`XmlStreamElement el)
 	    in
 	      Lwt.return (`Continue state)))
+      | `Valid (from, to') ->
+	  send_element state
+	    (`XmlElement
+	       ("db:result",
+		[("from", (to' : Jlib.namepreped :> string));
+		 ("to", (from : Jlib.namepreped :> string));
+		 ("type", "valid")],
+		[]));
+	  Hashtbl.replace state.connections (from, to') Established;
+	  Lwt.return (`Continue state)
+
+      | `Invalid (from, to') ->
+	  send_element state
+	    (`XmlElement
+	       ("db:result",
+		[("from", (to' : Jlib.namepreped :> string));
+		 ("to", (from : Jlib.namepreped :> string));
+		 ("type", "invalid")],
+		[]));
+	  Hashtbl.remove state.connections (from, to');
+	  Lwt.return (`Continue state)
+
       | `XmlStreamEnd _ ->
 	Lwt.return (`Stop state)
       | `XmlStreamError _ ->
@@ -328,6 +354,14 @@ struct
 	Lwt.return (`Stop state)
       | `XmlStreamStart _ ->
 	Lwt.return (`Stop state)
+
+(*
+stream_established(timeout, StateData) ->
+    {stop, normal, StateData};
+
+stream_established(closed, StateData) ->
+    {stop, normal, StateData}.
+*)		      
 
   let wait_for_feature_request msg state =
     match msg with
@@ -435,52 +469,16 @@ struct
 	Lwt.return (`Stop state)
       | `XmlStreamStart _ ->
 	Lwt.return (`Stop state)
+      | `Valid _
+      | `Invalid _ -> assert false
 
-(*
-stream_established({valid, From, To}, StateData) ->
-    send_element(StateData,
-		 {xmlelement,
-		  "db:result",
-		  [{"from", To},
-		   {"to", From},
-		   {"type", "valid"}],
-		  []}),
-    LFrom = jlib:nameprep(From),
-    LTo = jlib:nameprep(To),
-    NSD = StateData#state{
-	    connections = ?DICT:store({LFrom, LTo}, established,
-				      StateData#state.connections)},
-    {next_state, stream_established, NSD};
-
-stream_established({invalid, From, To}, StateData) ->
-    send_element(StateData,
-		 {xmlelement,
-		  "db:result",
-		  [{"from", To},
-		   {"to", From},
-		   {"type", "invalid"}],
-		  []}),
-    LFrom = jlib:nameprep(From),
-    LTo = jlib:nameprep(To),
-    NSD = StateData#state{
-	    connections = ?DICT:erase({LFrom, LTo},
-				      StateData#state.connections)},
-    {next_state, stream_established, NSD};
-
-stream_established(timeout, StateData) ->
-    {stop, normal, StateData};
-
-stream_established(closed, StateData) ->
-    {stop, normal, StateData}.
-*)		      
-
-  let handle_xml msg state =
+  let handle_xml (msg : [ XMLReceiver.msg | validation_msg ]) state =
     match state.state with
       | Wait_for_stream -> wait_for_stream msg state
       | Wait_for_feature_request -> wait_for_feature_request msg state
       | Stream_established -> stream_established msg state
 
-  let handle msg state =
+  let handle (msg : msg) state =
     match msg with
       | `Tcp_data (socket, data) when socket == state.socket ->
 	lwt () =
@@ -495,7 +493,8 @@ stream_established(closed, StateData) ->
 	lwt () = Lwt_log.debug ~section "tcp close" in
         Lwt.return (`Stop state)
       | `Tcp_close _socket -> assert false
-      | #XMLReceiver.msg as m ->
+      | #XMLReceiver.msg
+      | #validation_msg as m ->
           handle_xml m state
       | #GenServer.msg -> assert false
 

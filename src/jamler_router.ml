@@ -83,6 +83,9 @@ let s2s_route =
            (Xml.element_to_string packet); flush stderr;
          ())
 
+let register_s2s_route f =
+  s2s_route := f
+
 let do_route orig_from orig_to orig_packet =
   ignore (
     Lwt_log.debug_f

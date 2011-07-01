@@ -12,26 +12,31 @@ module SASL = Jamler_sasl
 module Router = Jamler_router
 module SM = Jamler_sm
 module ACL = Jamler_acl
-module S2S = Jamler_s2s
+module S2SLib = Jamler_s2s_lib
 
 module S2SOut :
 sig
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg | SM.msg
-      | `Init | `Closed | `Timeout
-      | `Send_element of Xml.element]
-  type init_data
+      [ Tcp.msg | XMLReceiver.msg | GenServer.msg
+      | unit timer_msg
+      | Jamler_s2s_lib.s2s_out_msg ]
+  type start_type =
+      [ `New of string
+      | `Verify of (Jamler_s2s_lib.validation_msg pid * string * string)
+      ]
+  type init_data = Jlib.namepreped * Jlib.namepreped * start_type
   type state
   val init : init_data -> msg pid -> state Lwt.t
   val handle : msg -> state -> state GenServer.result
   val terminate : state -> unit Lwt.t
-
+  val start_connection : Jamler_s2s_lib.s2s_out_msg pid -> unit
+  val stop_connection : Jamler_s2s_lib.s2s_out_msg pid -> unit
 end =
 struct
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg | SM.msg
-      | `Init | `Closed | `Timeout
-      | `Send_element of Xml.element]
+      [ Tcp.msg | XMLReceiver.msg | GenServer.msg
+      | unit timer_msg
+      | Jamler_s2s_lib.s2s_out_msg ]
 
   type s2s_out_state =
     | Open_socket
@@ -50,7 +55,9 @@ struct
     | Connect
 
   type start_type =
-      [ `New of string | `Verify of (msg pid * string * string)]
+      [ `New of string
+      | `Verify of (Jamler_s2s_lib.validation_msg pid * string * string)
+      ]
 
   type init_data = Jlib.namepreped * Jlib.namepreped * start_type
 
@@ -59,7 +66,7 @@ struct
        socket : Tcp.socket option;
        xml_receiver : XMLReceiver.t;
        state: s2s_out_state;
-       streamid : string;
+       stream_id : string;
        use_v10 : bool;
        tls : bool;
        tls_required : bool;
@@ -71,19 +78,62 @@ struct
        myname : Jlib.namepreped;
        server : Jlib.namepreped;
        queue : Xml.element Queue.t;
-       delay_to_retry: int;
+       delay_to_retry: float;
        new' : string option;
-       verify : (msg pid * string * string) option;
-	 (* bridge, timer *)}
+       verify : (Jamler_s2s_lib.validation_msg pid * string * string) option;
+       timer : timer;
+	 (* bridge *)}
 
   let new_id () =
     Jlib.get_random_string ()
+
+  let s2stimeout = 600.0
+
+  let send_text state text =
+    match state.socket with
+      | Some socket ->
+	  Tcp.send_async socket text
+      | None -> assert false
+
+  let send_element state el =
+    send_text state (Xml.element_to_string el)
+
+  let send_queue state =
+    Queue.iter (send_element state) state.queue
+
+(* Bounce a single message (xmlelement) *)
+  let bounce_element el error =
+    let `XmlElement (_name, attrs, _subtags) = el in
+      match Xml.get_attr_s "type" attrs with
+	| "error"
+	| "result" -> ()
+	| _ ->
+	    let err = Jlib.make_error_reply el error in
+	    let from = Jlib.string_to_jid_exn (Xml.get_tag_attr_s "from" el) in
+	    let to' = Jlib.string_to_jid_exn (Xml.get_tag_attr_s "to" el) in
+	      Jamler_router.route to' from err
 
   let start_connection pid =
     pid $! `Init
 
   let stop_connection pid =
     pid $! `Closed
+
+  let stream_header_fmt =
+    "<?xml version='1.0'?>" ^^
+      "<stream:stream " ^^
+      "xmlns:stream='http://etherx.jabber.org/streams' " ^^
+      "xmlns='jabber:server' " ^^
+      "xmlns:db='jabber:server:dialback' " ^^
+      "from='%s' " ^^
+      "to='%s'%s>"
+
+  let stream_header id server version =
+    Printf.sprintf stream_header_fmt id server version
+
+  let send_trailer state =
+    let stream_trailer = "</stream:stream>" in
+    send_text state stream_trailer
 
   let socket_default_result = None
 
@@ -134,12 +184,17 @@ struct
 	 | `Verify (pid, key, sid) ->
 	     start_connection self;
 	     None, Some (pid, key, sid)) in
-      (* Timer = erlang:start_timer(?S2STIMEOUT, self(), []), *)
+    let timer =
+      start_timer
+	s2stimeout
+	(self :> unit timer_msg pid)
+	()
+    in
     let state = {pid = self;
 		 socket = None;
 		 xml_receiver;
 		 state = Open_socket;
-		 streamid = new_id ();
+		 stream_id = new_id ();
 		 use_v10 = use_v10;
 		 tls = tls;
 		 tls_required = tls_required;
@@ -151,9 +206,10 @@ struct
 		 myname = from;
 		 server = server;
 		 queue = Queue.create ();
-		 delay_to_retry = 0;
+		 delay_to_retry = 0.0;
 		 new' = new';
-		 verify = verify'}
+		 verify = verify';
+		 timer = timer}
     in Lwt.return state
 
   let outgoing_s2s_timeout () =
@@ -213,6 +269,91 @@ struct
   let get_addr_port ascii_addr =
     []
 
+(* Maximum delay to wait before retrying to connect after a failed attempt.
+   Specified in miliseconds. Default value is 5 minutes. *)
+  let max_retry_delay = 300.0
+
+(* @doc Get the maximum allowed delay for retry to reconnect (in miliseconds).
+   The default value is 5 minutes.
+   The option {s2s_max_retry_delay, Seconds} can be used (in seconds).
+   @spec () -> integer() *)
+  let get_max_retry_delay () =
+    (*case ejabberd_config:get_local_option(s2s_max_retry_delay) of
+	Seconds when is_integer(Seconds) ->
+	    Seconds*1000;
+	_ ->*)
+    max_retry_delay
+
+(* This function is intended to be called at the end of a state
+   function that want to wait for a reconnect delay before stopping. *)
+  let wait_before_reconnect state =
+    (* TODO *)
+    (* bounce queue manage by process and Erlang message queue *)
+    (*bounce_queue(StateData#state.queue, ?ERR_REMOTE_SERVER_NOT_FOUND),
+    bounce_messages(?ERR_REMOTE_SERVER_NOT_FOUND),*)
+    cancel_timer state.timer;
+    let delay =
+      match state.delay_to_retry with
+	| 0.0 ->
+	    (* The initial delay is random between 1 and 15 seconds
+	       Return a random integer between 1000 and 15000 *)
+	    Random.float 14.0 +. 1.0
+	| delay ->
+	    (* Duplicate the delay with each successive failed
+	       reconnection attempt, but don't exceed the max *)
+	    min (delay *. 2.0) (get_max_retry_delay ())
+    in
+    let timer =
+      start_timer
+	delay
+	(state.pid :> unit timer_msg pid)
+	()
+    in
+      Lwt.return
+	(`Continue {state with
+		      state = Wait_before_retry;
+		      timer;
+		      delay_to_retry = delay;
+		      queue = Queue.create ();})
+
+  let send_db_request state =
+    let server = state.server in
+    let new' =
+      match state.new' with
+	| None -> (
+	    match (S2SLib.try_register (state.myname, server)
+		     (state.pid :> Jamler_s2s_lib.s2s_out_msg pid)) with
+	      | Some key ->
+		  Some key
+	      | None ->
+		  None
+	  )
+	| Some key ->
+	    Some key
+    in
+    let state = {state with new'} in
+      (match new' with
+	 | None -> ()
+	 | Some key ->
+	     send_element state
+	       (`XmlElement ("db:result",
+			     [("from", (state.myname :> string));
+			      ("to", (server :> string))],
+			     [`XmlCdata key]))
+      );
+      (match state.verify with
+	 | None -> ()
+	 | Some (_pid, key, sid) ->
+	     send_element state
+	       (`XmlElement ("db:verify",
+			     [("from", (state.myname :> string));
+			      ("to", (state.server :> string));
+			      ("id", sid)],
+			     [`XmlCdata key]))
+      );
+      Lwt.return (`Continue state) (* ?FSMTIMEOUT*6 *)
+
+
   let close_socket state =
     match state.socket with
       | Some tcpsock ->
@@ -234,18 +375,24 @@ struct
 	       let ascii_addr = Idna.domain_utf8_to_ascii (state.server :> string) in
 		 get_addr_port ascii_addr
 	     with
-	       | _ -> []) in
-	    (match (List.fold_left
-		      (fun (addr, port) acc ->
-			 match acc with
-			   | Some socket ->
-			       Some socket
-			   | None -> (
-			       try_lwt
-				 lwt s = open_socket1 addr port state.pid in
-				   Some s
-			       with | _ -> None))
-		      addr_list None) with
+	       | _ -> [])
+	  in
+	  lwt open_res =
+	    Lwt_list.fold_left_s
+	      (fun acc (addr, port) ->
+		 match acc with
+		   | Some socket ->
+		       Lwt.return acc
+		   | None -> (
+		       try_lwt
+			 lwt s = open_socket1 addr port state.pid in
+			   Lwt.return (Some s)
+		       with
+			 | _ -> Lwt.return None
+		     )
+	      ) None addr_list
+	  in
+	    (match open_res with
 	       | Some socket ->
 		   let version = match state.use_v10 with
 		     | true -> " version='1.0'"
@@ -254,12 +401,15 @@ struct
 	                              tls_enabled = false;
 				      stream_id = new_id();
 				      state = Wait_for_stream} in
-		     send_text new_state (stream_header state.myname state.server version);
+		     send_text new_state
+		       (stream_header (state.myname :> string)
+			  (state.server :> string) version);
 		     Lwt.return (`Continue new_state) (* ?FSMTIMEOUT *)
 	       | None ->
 		   lwt () = Lwt_log.notice_f ~section
 		     "s2s connection: %s -> %s (remote server not found)"
-		     state.myname state.server in
+		     (state.myname :> string) (state.server :> string)
+		   in
 		     (* case ejabberd_hooks:run_fold(find_s2s_bridge,
 			undefined,
 			[StateData#state.myname,
@@ -272,17 +422,23 @@ struct
 			{next_state, relay_to_bridge, NewStateData};
 		       _ ->
 			wait_before_reconnect(StateData) *)
-		     wait_before_reconnect state)
+		     wait_before_reconnect state
+	    )
       | `Closed ->
 	  lwt () = Lwt_log.notice_f ~section
 	    "s2s connection: %s -> %s (stopped in open socket)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string) in
             Lwt.return (`Stop state)
       | `Timeout ->
 	  lwt () = Lwt_log.notice_f ~section
 	    "s2s connection: %s -> %s (timeout in open socket)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string) in
             Lwt.return (`Stop state)
+      | `Send_element _
+      | `XmlStreamElement _
+      | `XmlStreamEnd _
+      | `XmlStreamError _
+      | `XmlStreamStart _ -> assert false
 
   let wait_for_stream msg state =
     match msg with
@@ -303,34 +459,42 @@ struct
 	    | ns_provided, db, _ ->
 		send_element state Jlib.serr_invalid_namespace;
 		lwt () = Lwt_log.notice_f ~section
- 		  "Closing s2s connection: %s -> %s (invalid namespace):"
-		  ^ "namespace provided = %s, "
-		  ^ "namespace expected = \"jabber:server\", "
-		  ^ "xmlns:db provided = %s"
-		  state.myname state.server ns_provided db in
+ 		  ("Closing s2s connection: %s -> %s (invalid namespace):"
+		  ^^ "namespace provided = %s, "
+		  ^^ "namespace expected = \"jabber:server\", "
+		  ^^ "xmlns:db provided = %s")
+		  (state.myname :> string)
+		  (state.server :> string)
+		  ns_provided
+		  db
+		in
 		  Lwt.return (`Stop state))
       | `XmlStreamError _ ->
 	  send_element state Jlib.serr_xml_not_well_formed;
 	  send_trailer state;
 	  lwt () = Lwt_log.notice_f ~section
             "Closing s2s connection: %s -> %s (invalid xml)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string)
+	  in
             Lwt.return (`Stop state)
       | `XmlStreamEnd _ ->
 	  lwt () = Lwt_log.notice_f ~section
 	    "Closing s2s connection: %s -> %s (xmlstreamend)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
       | `Timeout ->
 	  lwt () = Lwt_log.notice_f ~section
 	    "Closing s2s connection: %s -> %s (timeout in wait_for_stream)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
       | `Closed ->
 	  lwt () = Lwt_log.notice_f ~section
-	    "Closing s2s connection: ~s -> ~s (close in wait_for_stream)"
-	    state.myname state.server in
+	    "Closing s2s connection: %s -> %s (close in wait_for_stream)"
+	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
+      | `Init
+      | `Send_element _
+      | `XmlStreamElement _ -> assert false
 
   let wait_for_validation msg state =
     match msg with
@@ -342,10 +506,11 @@ struct
 		  from to' id type' in
 		  (match (type', state.tls_enabled, state.tls_required) with
 		     | "valid", enabled, required when (enabled = true || required = false) ->
-			 send_queue state state.queue;
+			 send_queue state;
 			 lwt () = Lwt_log.notice_f ~section
 			   "Connection established: %s -> %s with TLS=%B"
-			   state.myname state.servr state.tls_enabled in
+			   (state.myname :> string)
+			   (state.server :> string) state.tls_enabled in
 			   (* ejabberd_hooks:run(s2s_connect_hook,
 			      [StateData#state.myname,
 			      StateData#state.server]), *)
@@ -356,7 +521,9 @@ struct
 			 (* TODO: bounce packets *)
 			 lwt () = Lwt_log.notice_f ~section
 			   "Closing s2s connection: %s -> %s (invalid dialback key)"
-			   state.myname state.server in
+			   (state.myname :> string)
+			   (state.server :> string)
+			 in
 			   Lwt.return (`Stop state))
 	    | Verify (to', from, id, type') ->
 		lwt () = Lwt_log.debug_f ~section
@@ -381,17 +548,19 @@ struct
 			     Lwt.return (`Continue {state with state = next_state})
 			       (* get_timeout_interval(NextState) *)
 			 ))
-	    | None ->
+	    | False ->
 		Lwt.return (`Continue state)) (* ?FSMTIMEOUT *)
       | `XmlStreamEnd _ ->
 	  lwt () = Lwt_log.notice_f ~section
 	    "wait for validation: %s -> %s (xmlstreamend)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string)
+	  in
 	    Lwt.return (`Stop state)
       | `XmlStreamError _ ->
 	  lwt () = Lwt_log.notice_f ~section
 	    "wait for validation: %s -> %s (xmlstreamerror)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string)
+	  in
 	    send_element state Jlib.serr_xml_not_well_formed;
 	    send_trailer state;
 	    Lwt.return (`Stop state)
@@ -407,14 +576,18 @@ struct
 	    | None ->
 		lwt () = Lwt_log.notice_f ~section
 		  "wait_for_validation: %s -> %s (connect timeout)"
-		  state.myname state.server in
+		  (state.myname :> string) (state.server :> string) in
 		  Lwt.return (`Stop state))
       | `Closed ->
 	  lwt () = Lwt_log.notice_f ~section
-	    "wait for validation: ~s -> ~s (closed)"
-	    state.myname state.server in
+	    "wait for validation: %s -> %s (closed)"
+	    (state.myname :> string) (state.server :> string)
+	  in
 	    Lwt.return (`Stop state)
-	      
+      | `Init
+      | `Send_element _
+      | `XmlStreamStart _ -> assert false
+
   let wait_for_features msg state =
     match msg with
       | `XmlStreamElement el -> (
@@ -422,13 +595,13 @@ struct
 	    | `XmlElement ("stream:features", _attrs, els) -> (
 		let sasl_ext, start_tls, start_tls_required =
 		  List.fold_left
-		    (fun el' acc -> (
+		    (fun acc el' -> (
 		       match el' with
 			 | `XmlElement ("mechanisms", attrs1, els1) ->
 			     let (_sext, stls, stlsreq) = acc in (
 				 match Xml.get_attr_s "xmlns" attrs1 with
 				   | <:ns<SASL>> ->
-				     let new_sext = List.exist
+				     let new_sext = List.exists
 				       (function
 					  | `XmlElement ("mechanism", _, els2) ->
 					      (match Xml.get_cdata els2 with
@@ -456,10 +629,11 @@ struct
 		    (false, false, false) els
 		in
 		  if (not sasl_ext) && (not start_tls) && state.authenticated then (
-		    send_queue state state.queue;
+		    send_queue state;
 		    lwt () = Lwt_log.notice_f ~section
-		      "Connection established: ~s -> ~s"
-		      state.myname state.server in
+		      "Connection established: %s -> %s"
+		      (state.myname :> string) (state.server :> string)
+		    in
 		      (* ejabberd_hooks:run(s2s_connect_hook,
 				       [StateData#state.myname,
 					StateData#state.server]), *)
@@ -472,7 +646,7 @@ struct
 				    [("xmlns", <:ns<SASL>>);
 				     ("mechanism", "EXTERNAL")],
 				    [`XmlCdata (Jlib.encode_base64
-						  state.myname)]));
+						  (state.myname :> string))]));
 		    Lwt.return (`Continue {state with
 					     state = Wait_for_auth_result;
 					     try_auth = false}) (* ?FSMTIMEOUT *)
@@ -484,31 +658,32 @@ struct
 		  ) else if start_tls_required && (not state.tls) then (
 		    lwt () = Lwt_log.debug_f ~section
 		      "restarted: %s -> %s"
-		      state.myname state.server in
-		      close_socket state;
-		      (* ejabberd_socket:close(StateData#state.socket), *)
+		      state.myname state.server
+		    in
+		    lwt () = close_socket state in
 		      Lwt.return (`Continue {state with
-					       state = reopen_socket;
+					       state = Reopen_socket;
 					       use_v10 = false;
 					       socket = None}) (* ?FSMTIMEOUT *)
-		  ) else if db_enabled then (
+		  ) else if state.db_enabled then (
 		    send_db_request state
 		  ) else (
 		    lwt () = Lwt_log.debug_f ~section
 		      "restarted: %s -> %s"
 		      state.myserver state.server in
 		      (* TODO: clear message queue *)
-		      close_socket state;
+		    lwt () = close_socket state in
 		      Lwt.return (`Continue {state with
 					       socket = None;
 					       use_v10 = false;
 					       state = Reopen_socket}))) (* ?FSMTIMEOUT *)
 	    | _ ->
 		send_element state Jlib.serr_bad_format;
-		send_trailer;
+		send_trailer state;
 		lwt () = Lwt_log.notice_f ~section
-		  "Closing s2s connection: ~s -> ~s (bad format)"
-		  state.myname state.server in
+		  "Closing s2s connection: %s -> %s (bad format)"
+		  (state.myname :> string) (state.server :> string)
+		in
 		  Lwt.return (`Stop state))
       | `XmlStreamEnd _ ->
 	  lwt () = Lwt_log.notice ~section
@@ -528,6 +703,9 @@ struct
 	  lwt () = Lwt_log.notice ~section
 	    "wait_for_features: closed" in
 	    Lwt.return (`Stop state)
+      | `Init
+      | `Send_element _
+      | `XmlStreamStart _ -> assert false
 
   let wait_for_auth_result msg state =
     match msg with
@@ -538,8 +716,11 @@ struct
 		"auth: %s -> %s"
 		state.myname state.server in
 		XMLReceiver.reset_stream state.xml_receiver;
-		send_element state
-		  (stream_header state.myname state.server " version='1.0'");
+		send_text state
+		  (stream_header
+		     (state.myname :> string)
+		     (state.server :> string)
+		     " version='1.0'");
 		Lwt.return (`Continue {state with
 					 state = Wait_for_stream;
 					 stream_id = new_id();
@@ -549,15 +730,17 @@ struct
 		send_trailer state;
 		lwt () = Lwt_log.notice_f ~section
 		  "Closing s2s connection: %s -> %s (bad format)"
-		  state.myname state.server in
+		  (state.myname :> string) (state.server :> string)
+		in
 		  Lwt.return (`Stop state))
       | `XmlStreamElement (`XmlElement ("failure", attrs, _els)) -> (
 	  match Xml.get_attr_s "xmlns" attrs with
 	    | <:ns<SASL>> ->
 	      lwt () = Lwt_log.debug_f ~section
 		"restarted: %s -> %s"
-		state.myname state.server in
-		close_socket state;
+		state.myname state.server
+	      in
+	      lwt () = close_socket state in
 		Lwt.return (`Continue {state with
 					 state = Reopen_socket;
 					 socket = None}) (* ?FSMTIMEOUT *)
@@ -566,14 +749,16 @@ struct
 		send_trailer state;
 		lwt () = Lwt_log.notice_f ~section
 		  "Closing s2s connection: %s -> %s (bad format)"
-		  state.myname state.server in
+		  (state.myname :> string) (state.server :> string)
+		in
 		  Lwt.return (`Stop state))
       | `XmlStreamElement _ ->
 	  send_element state Jlib.serr_bad_format;
 	  send_trailer state;
 	  lwt () = Lwt_log.notice_f ~section
 	    "Closing s2s connection: %s -> %s (bad format)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string)
+	  in
 	    Lwt.return (`Stop state)
       | `XmlStreamEnd _ ->
 	  lwt () = Lwt_log.notice ~section
@@ -593,6 +778,9 @@ struct
 	  lwt () = Lwt_log.notice ~section
 	    "wait for auth result: closed" in
 	    Lwt.return (`Stop state)
+      | `Init
+      | `Send_element _
+      | `XmlStreamStart _ -> assert false
 
   let wait_for_starttls_proceed msg state =
     match msg with
@@ -616,7 +804,7 @@ struct
 			      end,
 		    TLSSocket = ejabberd_socket:starttls(Socket, TLSOpts),
 		    NewStateData = StateData#state{socket = TLSSocket,
-						   streamid = new_id(),
+						   stream_id = new_id(),
 						   tls_enabled = true,
 						   tls_options = TLSOpts
 						  },
@@ -633,12 +821,14 @@ struct
 		send_trailer state;
 		lwt () = Lwt_log.notice_f ~section
 		  "Closing s2s connection: %s -> %s (bad format)"
-		  state.myname state.server in
+		  (state.myname :> string) (state.server :> string)
+		in
 		  Lwt.return (`Stop state))
       | `XmlStreamElement _ ->
 	  lwt () = Lwt_log.notice_f ~section
 	    "Closing s2s connection: %s -> %s (bad format)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string)
+	  in
 	    Lwt.return (`Stop state)
       | `XmlStreamEnd _ ->
 	  lwt () = Lwt_log.notice ~section
@@ -658,6 +848,9 @@ struct
 	  lwt () = Lwt_log.notice ~section
 	    "wait for starttls proceed: closed" in
 	    Lwt.return (`Stop state)
+      | `Init
+      | `Send_element _
+      | `XmlStreamStart _ -> assert false
 
   let reopen_socket msg state =
     match msg with
@@ -674,10 +867,26 @@ struct
       | `Closed ->
 	  start_connection state.pid;
 	  Lwt.return (`Continue {state with state = Open_socket}) (* ?FSMTIMEOUT *)
+      | `Init
+      | `Send_element _
+      | `XmlStreamStart _ -> assert false
 
+  (* This state is use to avoid reconnecting to often to bad sockets *)
   let wait_before_retry msg state =
-    (* This state is use to avoid reconnecting to often to bad sockets *)
-    Lwt.return (`Continue state) (* ?FSMTIMEOUT *)
+    match msg with
+      | `Send_element el ->
+	  bounce_element el Jlib.err_remote_server_not_found;
+	  Lwt.return (`Continue state)
+(*      | `Timeout (timer, ()) when timer == state.timer ->
+	  lwt () =
+	    Lwt_log.notice_f ~section
+	      "Reconnect delay expired: Will now retry to connect to %s when needed"
+	      (state.server :> string)
+	  in
+	    Lwt.return (`Stop state)
+*)
+      | _ ->
+	  Lwt.return (`Continue state) (* ?FSMTIMEOUT *)
 
   (* relay_to_bridge(stop, StateData) ->
      wait_before_reconnect(StateData);
@@ -699,37 +908,76 @@ struct
 		     "recv verify: to = %s, from = %s, id = %s, type = %s"
 		     vto vfrom vid vtype in
 		     (match state.verify with
-			| Some (vpid, _vkey, _sid) when vtype = "valid" ->
-			    vpid $! (`Valid (state.server, state.myname))
+			| Some (vpid, _vkey, _sid) ->
+			    if vtype = "valid"
+			    then vpid $! (`Valid (state.server, state.myname))
+			    else vpid $! (`Invalid (state.server, state.myname))
 			| _ ->
-			    vpid $! (`Invalid (state.server, state.myname)));
+			    ()
+		     );
 		     Lwt.return (`Continue state)
 	       | _ ->
 		   Lwt.return (`Continue state))
       | `XmlStreamEnd _ ->
 	  lwt () = Lwt_log.notice_f ~section
 	    "Connection closed in stream established: %s -> %s (xmlstreamend)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
       | `XmlStreamError _ ->
 	  send_element state Jlib.serr_xml_not_well_formed;
 	  send_trailer state;
 	  lwt () = Lwt_log.notice_f ~section
 	    "stream established: %s -> %s (xmlstreamerror)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string)
+	  in
 	    Lwt.return (`Stop state)
       | `Timeout ->
 	  lwt () = Lwt_log.notice_f ~section
 	    "stream established: %s -> %s (timeout)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string)
+	  in
 	    Lwt.return (`Stop state)
       | `Closed ->
 	  lwt () = Lwt_log.notice_f ~section
 	    "stream established: %s -> %s (closed)"
-	    state.myname state.server in
+	    (state.myname :> string) (state.server :> string)
+	  in
 	    Lwt.return (`Stop state)
+      | `Send_element el ->
+	  cancel_timer state.timer;
+	  let timer =
+	    start_timer
+	      s2stimeout
+	      (state.pid :> unit timer_msg pid)
+	      ()
+	  in
+	    send_element state el;
+	    Lwt.return (`Continue {state with timer})
+      | `Init
+      | `XmlStreamStart _ -> assert false
 
-  let handle' msg state =
+  let handle_timer (`TimerTimeout (timer, ())) state =
+    if state.timer == timer then (
+      match state.state with
+	| wait_before_retry ->
+	    lwt () =
+	      Lwt_log.notice_f ~section
+		"Reconnect delay expired: Will now retry to connect to %s when needed"
+		(state.server :> string)
+	    in
+	      Lwt.return (`Stop state)
+	| _ ->
+	    lwt () =
+	      Lwt_log.notice_f ~section
+		"Closing connection with %s: timeout"
+		(state.server :> string)
+	    in
+	      Lwt.return (`Stop state)
+    ) else (
+      Lwt.return (`Continue state)
+    )
+
+  let handle' (msg : [ Jamler_s2s_lib.s2s_out_msg | `Timeout | XMLReceiver.msg ]) state =
     match state.state with
       | Open_socket -> open_socket msg state
       | Wait_for_stream -> wait_for_stream msg state
@@ -742,29 +990,61 @@ struct
       | Wait_before_retry -> wait_before_retry msg state
       | Stream_established -> stream_established msg state
 
-  let handle msg state =
+  let handle (msg : msg) state =
     match msg with
-      | `Tcp_data (socket, data) when socket == state.socket ->
-          lwt () =
-            Lwt_log.debug_f ~section
-              "tcp data %d %S" (String.length data) data
-          in
-            XMLReceiver.parse state.xml_receiver data;
-            Tcp.activate state.socket state.pid;
-            Lwt.return (`Continue state)
-      | `Tcp_data (_socket, _data) -> assert false
-      | `Tcp_close socket when socket == state.socket ->
-          lwt () = Lwt_log.debug ~section "tcp close" in
-            Lwt.return (`Stop state)
-      | `Tcp_close _socket -> assert false
-      | `Init as m
-      | `Closed as m
-      | `Timeout as m
-      | `Send_element el as m
+      | `Tcp_data (socket, data) -> (
+	  match state.socket with
+	    | Some socket' when socket == socket' ->
+		lwt () =
+		  Lwt_log.debug_f ~section
+		    "tcp data %d %S" (String.length data) data
+		in
+		  XMLReceiver.parse state.xml_receiver data;
+		  Tcp.activate socket state.pid;
+		  Lwt.return (`Continue state)
+	    | _ -> assert false
+	)
+      | `Tcp_close socket -> (
+	  match state.socket with
+	    | Some socket' when socket == socket' ->
+		lwt () = Lwt_log.debug ~section "tcp close" in
+		  Lwt.return (`Stop state)
+	    | _ -> assert false
+	)
+      | #Jamler_s2s_lib.s2s_out_msg
+      | `Timeout
       | #XMLReceiver.msg as m ->
 	  handle' m state
+      | `TimerTimeout _ as m ->
+	  handle_timer m state
       | #GenServer.msg -> assert false
-			  
+
+  let terminate state =
+    lwt () = Lwt_log.debug ~section "terminated" in
+      (match state.new' with
+	 | None -> ()
+	 | Some key ->
+	     S2SLib.remove_connection
+	       (state.myname, state.server)
+	       (state.pid :> Jamler_s2s_lib.s2s_out_msg pid)
+	       key
+      );
+      (* bounce queue manage by process and Erlang message queue *)
+      (* TODO *)
+    (*bounce_queue(StateData#state.queue, ?ERR_REMOTE_SERVER_NOT_FOUND),
+      bounce_messages(?ERR_REMOTE_SERVER_NOT_FOUND),*)
+      match state.socket with
+	| None ->
+	    Lwt.return ()
+	| Some socket ->
+	    lwt () =
+	      if Tcp.state socket = Lwt_unix.Opened
+	      then Tcp.close socket
+	      else Lwt.return ()
+	    in
+	      Lwt.return ()
+
+
 end
 
 module S2SOutServer = GenServer.Make(S2SOut)

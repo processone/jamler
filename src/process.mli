@@ -10,3 +10,9 @@ val spawn : ('a pid -> 'b Lwt.t) -> 'a pid
 (*val send : 'a pid -> 'a -> unit*)
 val ( $! ) : 'a pid -> 'a -> unit
 val receive : 'a pid -> 'a Lwt.t
+
+type timer = unit Lwt.t
+type 'a timer_msg = [ `TimerTimeout of timer * 'a ]
+val send_after : float -> 'a pid -> 'a -> timer
+val start_timer : float -> 'a timer_msg pid -> 'a -> timer
+val cancel_timer : timer -> unit
