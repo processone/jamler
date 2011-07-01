@@ -15,7 +15,7 @@ extern value domain_utf8_to_ascii(value s)
     int pos;
     int rc;
     
-    rc = idna_to_ascii_8z(input, &output, 0);
+    rc = idna_to_ascii_8z(input, &output, IDNA_USE_STD3_ASCII_RULES);
 
     if (rc == IDNA_SUCCESS) {
 	CAMLlocal1(res);
