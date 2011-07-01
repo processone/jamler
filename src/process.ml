@@ -54,3 +54,30 @@ let receive pid =
     ) else (
       Lwt.return (Queue.take proc.queue)
     )
+
+type timer = unit Lwt.t
+type 'a timer_msg = [ `TimerTimeout of timer * 'a ]
+
+let send_after timeout pid msg =
+  Lwt_unix.sleep timeout >>
+    (pid $! msg;
+     Lwt.return ())
+
+let start_timer timeout pid msg =
+  let t0 = Lwt.return () in
+  let timer = ref t0 in
+  let t =
+    Lwt_unix.sleep timeout >>
+      (pid $! `TimerTimeout (!timer, msg);
+       Lwt.return ())
+  in
+    match Lwt.state t with
+      | Lwt.Sleep ->
+	  timer := t;
+	  t
+      | Lwt.Return () ->
+	  t0
+      | Lwt.Fail _ -> assert false
+
+let cancel_timer timer = Lwt.cancel timer
+

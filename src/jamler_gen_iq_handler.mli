@@ -1,4 +1,4 @@
-type component = [ `SM ]
+type component = [ `SM | `Local ]
 type response = [ `IQ of Jlib.iq_response Jlib.iq | `Ignore ]
 val add_iq_handler :
   component -> Jlib.namepreped -> string ->

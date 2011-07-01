@@ -1,5 +1,7 @@
 open Process
 
+let section = Jamler_log.new_section "gen_server"
+
 type msg = [ `System ]
 type 'a result =
     [ `Continue of 'a
@@ -45,8 +47,8 @@ struct
 		with
 		  | exn ->
 		      lwt () =
-                        Lwt_io.eprintf "GenServer raised an exception: %s\n"
-			  (Printexc.to_string exn)
+                        Lwt_log.error ~exn ~section
+			  "GenServer raised an exception"
                       in
                         Lwt.return (`Stop state)
               in
