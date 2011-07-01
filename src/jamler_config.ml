@@ -1,5 +1,6 @@
 let myhosts () =
-  List.map Jlib.nameprep_exn ["localhost"; "e.localhost"; "hoi.jabber.ru"] (* TODO *)
+  List.map Jlib.nameprep_exn
+    ["localhost"; "e.localhost"; "hoi.jabber.ru"; "zinid.ru"] (* TODO *)
 
 let auth_modules _host =
   ["sql"]
