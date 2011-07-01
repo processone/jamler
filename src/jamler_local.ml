@@ -4,39 +4,33 @@ let section = Jamler_log.new_section "router"
 
 module Router = Jamler_router
 module SM = Jamler_sm
+module GenIQHandler = Jamler_gen_iq_handler
 
 let process_iq from to' packet =
-  (* TODO *) ()
-  (*IQ = jlib:iq_query_info(Packet),
-  case IQ of
-      #iq{xmlns = XMLNS} ->
-          Host = To#jid.lserver,
-          case ets:lookup(?IQTABLE, {XMLNS, Host}) of
-      	[{_, Module, Function}] ->
-      	    ResIQ = Module:Function(From, To, IQ),
-      	    if
-      		ResIQ /= ignore ->
-      		    ejabberd_router:route(
-      		      To, From, jlib:iq_to_xml(ResIQ));
-      		true ->
-      		    ok
-      	    end;
-      	[{_, Module, Function, Opts}] ->
-      	    gen_iq_handler:handle(Host, Module, Function, Opts,
-      				  From, To, IQ);
-      	[] ->
-      	    Err = jlib:make_error_reply(
-      		    Packet, ?ERR_FEATURE_NOT_IMPLEMENTED),
-      	    ejabberd_router:route(To, From, Err)
-          end;
-      reply ->
-          IQReply = jlib:iq_query_or_response_info(Packet),
-          process_iq_reply(From, To, IQReply);
-      _ ->
-          Err = jlib:make_error_reply(Packet, ?ERR_BAD_REQUEST),
-          ejabberd_router:route(To, From, Err),
-          ok
-  end.*)
+  match Jlib.iq_query_info packet with
+    | `IQ ({Jlib.iq_xmlns = xmlns; _} as iq) -> (
+        let host = to'.Jlib.lserver in
+	lwt handle_res =
+	  GenIQHandler.handle `Local host xmlns from to' iq
+	in
+          if not handle_res then (
+            let err =
+      	      Jlib.make_error_reply packet Jlib.err_service_unavailable
+            in
+      	      Router.route to' from err
+          );
+	  Lwt.return ()
+      )
+    | `Reply ->
+        (*IQReply = jlib:iq_query_or_response_info(Packet),
+          process_iq_reply(From, To, IQReply);*)
+	Lwt.return ()
+    | _ ->
+        let err =
+          Jlib.make_error_reply packet Jlib.err_bad_request
+        in
+          Router.route to' from err;
+	  Lwt.return ()
 
 
 let do_route from to' packet =
@@ -48,7 +42,7 @@ let do_route from to' packet =
     let `XmlElement (name, _attrs, _els) = packet in
       match name with
         | "iq" ->
-            process_iq from to' packet
+            ignore (process_iq from to' packet)
         | "message"
         | "presence"
         | _ ->

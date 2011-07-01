@@ -85,7 +85,8 @@ struct
     "<?xml version='1.0'?>" ^^
       "<stream:stream " ^^
       "xmlns:stream='http://etherx.jabber.org/streams' " ^^
-      "xmlns='jabber:component:accept' " ^^
+      "xmlns='jabber:server' " ^^
+      "xmlns:db='jabber:server:dialback' " ^^
       "id='%s'%s>"
 
   let stream_header id version =
@@ -240,7 +241,8 @@ struct
 	  | Key (to', from, id, key) ->
 	    lwt () = Lwt_log.debug_f ~section
 		       "GET KEY: to = %s, from = %s, id = %s, key = %s"
-		       to' from id key in
+		       to' from id key
+	    in
 	    (match (Jlib.nameprep to', Jlib.nameprep from) with
 	      | Some lto, Some lfrom ->
 		(match (Jamler_s2s_lib.allow_host lto lfrom,
@@ -248,8 +250,13 @@ struct
 		  | true, true ->
 		    (*
 		      S2SOut.terminate_if_waiting_delay lto lfrom;
-		      S2SOut.start lto lfrom (Verify (state.pid, key, state.streamid));
 		    *)
+		    Jamler_s2s_out.S2SOutServer.start
+		      (lto, lfrom,
+		       `Verify
+			 ((state.pid :> Jamler_s2s_lib.validation_msg pid),
+			  key,
+			  state.streamid));
 		    Hashtbl.replace state.connections
 		      (lfrom, lto) Wait_for_verification;
 		    (* change_shaper(StateData, LTo, jlib:make_jid("", LFrom, "")), *)

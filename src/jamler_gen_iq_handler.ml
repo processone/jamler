@@ -2,7 +2,7 @@ module Router = Jamler_router
 
 let section = Jamler_log.new_section "gen_iq_handler"
 
-type component = [ `SM ]
+type component = [ `SM | `Local ]
 type response = [ `IQ of Jlib.iq_response Jlib.iq | `Ignore ]
 
 let handlers =

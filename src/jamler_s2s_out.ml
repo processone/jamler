@@ -155,6 +155,10 @@ struct
     | _ ->
 	False
 
+  let enqueue el state =
+    Queue.add el state.queue;
+    Lwt.return (`Continue state) (* get_timeout_interval(StateName) *)
+
   let init (from, server, start_type) self =
     (* ?DEBUG("started: ~p", [{From, Server, Type}]),
        {TLS, TLSRequired} = case ejabberd_config:get_local_option(s2s_use_starttls) of
@@ -267,7 +271,14 @@ struct
     )
 
   let get_addr_port ascii_addr =
-    []
+    (* TODO: srv *)
+    lwt h = Lwt_lib.gethostbyname ascii_addr in
+    let res =
+      List.map
+	(fun addr -> (addr, 5269))
+	(Array.to_list h.Unix.h_addr_list)
+    in
+      Lwt.return res
 
 (* Maximum delay to wait before retrying to connect after a failed attempt.
    Specified in miliseconds. Default value is 5 minutes. *)
@@ -351,7 +362,7 @@ struct
 			      ("id", sid)],
 			     [`XmlCdata key]))
       );
-      Lwt.return (`Continue state) (* ?FSMTIMEOUT*6 *)
+      Lwt.return (`Continue {state with state = Wait_for_validation}) (* ?FSMTIMEOUT*6 *)
 
 
   let close_socket state =
@@ -370,12 +381,12 @@ struct
             "open_socket: %s -> %s"
             (* TODO "new = %s, verify = %s" *)
 	    state.myname state.server in
-	  let addr_list =
-	    (try
+	  lwt addr_list =
+	    (try_lwt
 	       let ascii_addr = Idna.domain_utf8_to_ascii (state.server :> string) in
 		 get_addr_port ascii_addr
 	     with
-	       | _ -> [])
+	       | _ -> Lwt.return [])
 	  in
 	  lwt open_res =
 	    Lwt_list.fold_left_s
@@ -434,7 +445,7 @@ struct
 	    "s2s connection: %s -> %s (timeout in open socket)"
 	    (state.myname :> string) (state.server :> string) in
             Lwt.return (`Stop state)
-      | `Send_element _
+      | `Send_element el -> enqueue el state
       | `XmlStreamElement _
       | `XmlStreamEnd _
       | `XmlStreamError _
@@ -492,8 +503,8 @@ struct
 	    "Closing s2s connection: %s -> %s (close in wait_for_stream)"
 	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
+      | `Send_element el -> enqueue el state
       | `Init
-      | `Send_element _
       | `XmlStreamElement _ -> assert false
 
   let wait_for_validation msg state =
@@ -503,7 +514,8 @@ struct
 	    | Result (to', from, id, type') ->
 		lwt () = Lwt_log.debug_f ~section
 		  "recv result: from = %s, to = %s, id = %, type = %s"
-		  from to' id type' in
+		  from to' id type'
+		in
 		  (match (type', state.tls_enabled, state.tls_required) with
 		     | "valid", enabled, required when (enabled = true || required = false) ->
 			 send_queue state;
@@ -514,9 +526,11 @@ struct
 			   (* ejabberd_hooks:run(s2s_connect_hook,
 			      [StateData#state.myname,
 			      StateData#state.server]), *)
-			   Lwt.return (`Continue {state
-						  with state = Stream_established;
-						    queue = Queue.create ()}) 
+			   Lwt.return
+			     (`Continue
+				{state with
+				   state = Stream_established;
+				   queue = Queue.create ()})
 		     | _ ->
 			 (* TODO: bounce packets *)
 			 lwt () = Lwt_log.notice_f ~section
@@ -584,8 +598,8 @@ struct
 	    (state.myname :> string) (state.server :> string)
 	  in
 	    Lwt.return (`Stop state)
+      | `Send_element el -> enqueue el state
       | `Init
-      | `Send_element _
       | `XmlStreamStart _ -> assert false
 
   let wait_for_features msg state =
@@ -703,8 +717,8 @@ struct
 	  lwt () = Lwt_log.notice ~section
 	    "wait_for_features: closed" in
 	    Lwt.return (`Stop state)
+      | `Send_element el -> enqueue el state
       | `Init
-      | `Send_element _
       | `XmlStreamStart _ -> assert false
 
   let wait_for_auth_result msg state =
@@ -778,8 +792,8 @@ struct
 	  lwt () = Lwt_log.notice ~section
 	    "wait for auth result: closed" in
 	    Lwt.return (`Stop state)
+      | `Send_element el -> enqueue el state
       | `Init
-      | `Send_element _
       | `XmlStreamStart _ -> assert false
 
   let wait_for_starttls_proceed msg state =
@@ -848,8 +862,8 @@ struct
 	  lwt () = Lwt_log.notice ~section
 	    "wait for starttls proceed: closed" in
 	    Lwt.return (`Stop state)
+      | `Send_element el -> enqueue el state
       | `Init
-      | `Send_element _
       | `XmlStreamStart _ -> assert false
 
   let reopen_socket msg state =
@@ -867,8 +881,8 @@ struct
       | `Closed ->
 	  start_connection state.pid;
 	  Lwt.return (`Continue {state with state = Open_socket}) (* ?FSMTIMEOUT *)
+      | `Send_element el -> enqueue el state
       | `Init
-      | `Send_element _
       | `XmlStreamStart _ -> assert false
 
   (* This state is use to avoid reconnecting to often to bad sockets *)
