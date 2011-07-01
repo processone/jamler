@@ -7,7 +7,7 @@
 
 #include <idna.h>
 
-static value domain_utf8_to_ascii(value s)
+extern value domain_utf8_to_ascii(value s)
 {
     CAMLparam1(s);
     char *input = String_val(s);
