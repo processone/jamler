@@ -1,6 +1,6 @@
 open Process
 
-let section = Jamler_log.new_section "s2s"
+let section = Jamler_log.new_section "listener"
 
 type t = C2S | S2S | Service
 
