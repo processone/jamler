@@ -301,7 +301,7 @@ let process_config cfg =
     traverse [] cfg None;
     config := cfg;
     config_timestamp := Unix.gettimeofday ();
-    lwt () = Lwt_log.notice_f ~section "config is fine" in
+    lwt () = Lwt_log.notice_f ~section "config syntax is fine" in
       Lwt.return ()
 
 let read_config filename =

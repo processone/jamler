@@ -69,7 +69,7 @@ let start_modules () =
 let (exit_waiter, exit_wakener) = Lwt.wait ()
 
 let main () =
-  lwt () = Jamler_config.read_config "src/jamler.js" in
+  lwt () = Jamler_config.read_config "src/jamler.cfg" in
   Jamler_local.start ();
   List.iter Sql.add_pool (Jamler_config.myhosts ());
   lwt () = start_modules () in
