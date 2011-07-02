@@ -75,7 +75,7 @@ let route from to' packet =
             (Xml.element_to_string packet)
 	)
 
-let () =
+let start () =
   let pid = spawn (fun s -> Lwt.return ()) in
     List.iter
       (fun host ->
