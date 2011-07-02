@@ -59,6 +59,26 @@ let list (P p) =
 			   (JSON.to_string json)))
     )
 
+let enum vals =
+  P (function
+       | `String x -> (
+	   try
+	     List.assoc x vals
+	   with
+	     | Not_found ->
+		 let vs = List.map (fun (v, _) -> "\"" ^ v ^ "\"") vals in
+		 let vs = String.concat ", " vs in
+		   raise
+		     (Error
+			(Printf.sprintf
+			   "got \"%s\", but only the following values are allowed:%s"
+			   x vs))
+	 )
+       | json ->
+	   raise (Error (Printf.sprintf "expected string, got %s"
+			   (JSON.to_string json)))
+    )
+
 let parse (P p) json =
   p json
 
@@ -193,6 +213,13 @@ let get_opt host path p =
 
 
 let myhosts = get_global_opt_with_default ["hosts"] (list namepreped) []
+let loglevel =
+  get_global_opt_with_default ["loglevel"]
+    (enum [("notice", `Notice);
+	   ("debug", `Debug);
+	   ("error", `Error);
+	  ])
+    `Notice
 
 let auth_modules _host =
   ["sql"]
