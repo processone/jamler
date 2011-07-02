@@ -30,8 +30,8 @@ let rec accept listen_type listen_socket =
   accept listen_type listen_socket
 
 let start_listener listen_type port _self =
-  let socket = Lwt_unix.socket Unix.PF_INET6 Unix.SOCK_STREAM 0 in
-  let addr = Unix.ADDR_INET (Unix.inet6_addr_any, port) in
+  let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  let addr = Unix.ADDR_INET (Unix.inet_addr_any, port) in
     Lwt_unix.setsockopt socket Unix.SO_REUSEADDR true;
     Lwt_unix.bind socket addr;
     Lwt_unix.listen socket 1024;

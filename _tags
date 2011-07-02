@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: f2078e1f98edb792de50ac8afb9b4eb7)
+# DO NOT EDIT (digest: 81d44f87357dc6229b02bfcb16344302)
 # Library pa_sql
 # Library pa_jlib
 "src": include
@@ -27,8 +27,6 @@
 "src/main.native": pkg_lwt
 "src/main.native": pkg_cryptokit
 "src/main.native": pkg_camlp4.quotations.o
-"src/main.native": pkg_biniou
-"src/main.native": pkg_atdgen
 <src/*.ml{,i}>: use_pa_jlib
 <src/*.ml{,i}>: use_pa_sql
 <src/*.ml{,i}>: pkg_yojson
@@ -41,8 +39,6 @@
 <src/*.ml{,i}>: pkg_lwt
 <src/*.ml{,i}>: pkg_cryptokit
 <src/*.ml{,i}>: pkg_camlp4.quotations.o
-<src/*.ml{,i}>: pkg_biniou
-<src/*.ml{,i}>: pkg_atdgen
 "src/idnawrap.c": use_pa_jlib
 "src/idnawrap.c": use_pa_sql
 "src/idnawrap.c": pkg_yojson
@@ -55,8 +51,6 @@
 "src/idnawrap.c": pkg_lwt
 "src/idnawrap.c": pkg_cryptokit
 "src/idnawrap.c": pkg_camlp4.quotations.o
-"src/idnawrap.c": pkg_biniou
-"src/idnawrap.c": pkg_atdgen
 "src/expatwrap.c": use_pa_jlib
 "src/expatwrap.c": use_pa_sql
 "src/expatwrap.c": pkg_yojson
@@ -69,8 +63,6 @@
 "src/expatwrap.c": pkg_lwt
 "src/expatwrap.c": pkg_cryptokit
 "src/expatwrap.c": pkg_camlp4.quotations.o
-"src/expatwrap.c": pkg_biniou
-"src/expatwrap.c": pkg_atdgen
 "src/stringprepwrap.c": use_pa_jlib
 "src/stringprepwrap.c": use_pa_sql
 "src/stringprepwrap.c": pkg_yojson
@@ -83,8 +75,6 @@
 "src/stringprepwrap.c": pkg_lwt
 "src/stringprepwrap.c": pkg_cryptokit
 "src/stringprepwrap.c": pkg_camlp4.quotations.o
-"src/stringprepwrap.c": pkg_biniou
-"src/stringprepwrap.c": pkg_atdgen
 # OASIS_STOP
 <src/*.ml{,i}>: syntax_camlp4o, pkg_camlp4
 <src/*.ml{,i}>: pa_jlib, pa_sql
