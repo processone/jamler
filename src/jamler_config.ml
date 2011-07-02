@@ -227,6 +227,7 @@ let auth_modules _host =
 let modules _host =
   [("mod_roster_sql", []);
    ("mod_version", []);
+   ("mod_time", []);
   ]
 
 let process_config config =
