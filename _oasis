@@ -6,6 +6,7 @@ Authors:     Alexey Shchepin
 License:     GPL
 BuildTools: ocamlbuild
 Plugins: DevFiles (0.2)
+PreBuildCommand: atdgen -std-json src/cfg.atd
 
 Library "pa_jlib"
   Install: false
@@ -65,7 +66,7 @@ Executable jamler
   MainIs:     main.ml
   CompiledObject: native
 #  BuildDepends: jamler-lib, jamler-plugins
-  BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, threads, lwt.extra, lwt.syntax, lwt.syntax.log, cryptokit, pgocaml
+  BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, threads, lwt.extra, lwt.syntax, lwt.syntax.log, cryptokit, pgocaml, biniou, yojson, atdgen
   CSources: idnawrap.c, expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
   CCLib: -lexpat -lidn
   NativeOpt: -w A
