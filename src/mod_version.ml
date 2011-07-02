@@ -24,16 +24,16 @@ struct
 
   let version = "0.1"			(* TODO *)
 
-  let process_local_iq _from to'
+  let process_local_iq _from _to'
       ({Jlib.iq_id = _ID;
 	Jlib.iq_type = iq_type;
-	Jlib.iq_xmlns = _xmlns} as iq) =
+	Jlib.iq_xmlns = _xmlns; _} as iq) =
     let iq_res =
       match iq_type with
 	| `Set subel ->
 	    {iq with
 	       Jlib.iq_type = `Error (Jlib.err_not_allowed, Some subel)};
-	| `Get subel ->
+	| `Get _subel ->
 	    (*let host = to'.Jlib.server in
 	      OS = case gen_mod:get_module_opt(Host, ?MODULE, show_os, true) of
 	      true -> [get_os()];
