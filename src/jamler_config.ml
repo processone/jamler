@@ -71,7 +71,7 @@ let enum vals =
 		   raise
 		     (Error
 			(Printf.sprintf
-			   "got \"%s\", but only the following values are allowed:%s"
+			   "got \"%s\", but only the following values are allowed: %s"
 			   x vs))
 	 )
        | json ->
@@ -230,7 +230,7 @@ let modules _host =
    ("mod_time", []);
   ]
 
-let process_config config =
+let process_config cfg =
   let host_path_to_string host path =
     let path =
       match host with
@@ -298,7 +298,9 @@ let process_config config =
 	  raise (Error "config must be a JSON object")
       | _ -> ()
   in
-    traverse [] config None;
+    traverse [] cfg None;
+    config := cfg;
+    config_timestamp := Unix.gettimeofday ();
     lwt () = Lwt_log.notice_f ~section "config is fine" in
       Lwt.return ()
 
