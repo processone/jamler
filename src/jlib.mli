@@ -151,6 +151,7 @@ val encode_base64 : string -> string
 val get_random_string : unit -> string
 
 val timestamp_to_iso: Unix.tm -> string
+val timestamp_to_iso': float -> (string * string)
 
 module LJID :
 sig

@@ -498,6 +498,23 @@ let timestamp_to_iso tm =
     (tm.Unix.tm_year + 1900) (tm.Unix.tm_mon + 1) tm.Unix.tm_mday
     tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec
 
+let timestamp_to_iso' tfloat =
+  let tm_local = Unix.localtime tfloat in
+  let tm_utc = Unix.gmtime tfloat in
+  let utc = Printf.sprintf
+    "%04d-%02d-%02dT%02d:%02d:%02dZ"
+    (tm_utc.Unix.tm_year + 1900) (tm_utc.Unix.tm_mon + 1)
+    tm_utc.Unix.tm_mday tm_utc.Unix.tm_hour
+    tm_utc.Unix.tm_min tm_utc.Unix.tm_sec in
+  let time_f_utc, _ = Unix.mktime tm_utc in
+  let time_f_local, _ = Unix.mktime tm_local in
+  let sec_diff = int_of_float (time_f_local -. time_f_utc) in
+  let div = abs(sec_diff) / 3600 in
+  let rem = abs(sec_diff) mod 3600 in
+  let sign = if sec_diff >= 0 then "" else "-" in
+  let tzo = sign ^ (Printf.sprintf "%02d:%02d" div rem) in
+    (utc, tzo)
+
 module LJID :
 sig
   type t = nodepreped * namepreped * resourcepreped
