@@ -150,6 +150,8 @@ val encode_base64 : string -> string
 
 val get_random_string : unit -> string
 
+val timestamp_to_iso: Unix.tm -> string
+
 module LJID :
 sig
   type t = nodepreped * namepreped * resourcepreped

@@ -4,3 +4,4 @@ jamler_auth_sql
 mod_roster
 mod_roster_sql
 mod_version
+mod_time

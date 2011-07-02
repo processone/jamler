@@ -493,6 +493,11 @@ let encode_base64 s =
 let get_random_string () =		(* TODO *)
   string_of_int (Random.int 1000000000)
 
+let timestamp_to_iso tm =
+  Printf.sprintf "%04d%02d%02dT%02d:%02d:%02d"
+    (tm.Unix.tm_year + 1900) (tm.Unix.tm_mon + 1) tm.Unix.tm_mday
+    tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec
+
 module LJID :
 sig
   type t = nodepreped * namepreped * resourcepreped
