@@ -68,8 +68,8 @@ let start_modules () =
 
 let (exit_waiter, exit_wakener) = Lwt.wait ()
 
-let main () =
-  lwt () = Jamler_config.read_config "src/jamler.cfg" in
+let main config_file =
+  lwt () = Jamler_config.read_config config_file in
   Jamler_local.start ();
   List.iter Sql.add_pool (Jamler_config.myhosts ());
   lwt () = start_modules () in
@@ -77,4 +77,16 @@ let main () =
   lwt () = Lwt_log.notice ~section "jamler started" in
     exit_waiter
 
-let () = Lwt_main.run (main ())
+let config_file_path = ref None
+
+let usage = Printf.sprintf "Usage: %s -f config.cfg" Sys.argv.(0)
+
+let () = 
+  let speclist = [("-f", Arg.String (fun s -> config_file_path := Some s),
+		   "Path to configuation file")] in
+  let _ = Arg.parse speclist (fun _ -> ()) usage in
+    match !config_file_path with
+      | Some config_file ->
+	  Lwt_main.run (main config_file)
+      | _ ->
+	  print_endline usage
