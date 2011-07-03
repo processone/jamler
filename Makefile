@@ -1,3 +1,4 @@
+BUILDFLAGS := -classic-display $(BUILDFLAGS)
 # OASIS_START
 # DO NOT EDIT (digest: bc1e05bfc8b39b664f29dae8dbd3ebbb)
 
