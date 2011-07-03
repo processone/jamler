@@ -9,21 +9,10 @@ struct
   let name = "mod_version"
 
   let get_os =
-    let os_type = Sys.os_type in
-      (*OSVersion = case os:version() of
-		    {Major, Minor, Release} ->
-			lists:flatten(
-			  io_lib:format("~w.~w.~w",
-					[Major, Minor, Release]));
-		    VersionString ->
-			VersionString
-		end,
-    OS = OSType ++ " " ++ OSVersion,*)
-    let os = os_type in
-      `XmlElement ("os", [], [`XmlCdata os])
-
-  let version = "0.1"			(* TODO *)
-
+    let os_str = Printf.sprintf
+      "%s/%s/%s (OCaml %s)" Cfg.os Cfg.system Cfg.arch Cfg.ocaml in
+      `XmlElement ("os", [], [`XmlCdata os_str])
+      
   let process_local_iq _from _to'
       ({Jlib.iq_id = _ID;
 	Jlib.iq_type = iq_type;
@@ -47,9 +36,9 @@ struct
 			     ("query",
 			      [("xmlns", <:ns<VERSION>>)],
 			      [`XmlElement ("name", [],
-					    [`XmlCdata "jamler"]);
+					    [`XmlCdata Cfg.name]);
 			       `XmlElement ("version", [],
-					    [`XmlCdata version])
+					    [`XmlCdata Cfg.version])
 			      ] @ os
 			     )))}
     in
@@ -66,4 +55,3 @@ struct
 end
 
 let () = Gen_mod.register_mod (module ModVersion : Gen_mod.Module)
-

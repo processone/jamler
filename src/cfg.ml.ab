@@ -1,0 +1,6 @@
+let os = "$(os_type)"
+let version = "$(pkg_version)"
+let system = "$(system)"
+let arch = "$(architecture)"
+let name = "$(pkg_name)"
+let ocaml = "$(ocaml_version)"

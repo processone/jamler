@@ -6,6 +6,7 @@ Authors:     Alexey Shchepin
 License:     GPL
 BuildTools: ocamlbuild
 Plugins: DevFiles (0.2)
+FilesAB: src/cfg.ml.ab
 
 Library "pa_jlib"
   Install: false
@@ -69,3 +70,10 @@ Executable jamler
   CSources: idnawrap.c, expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
   CCLib: -lexpat -lidn
   NativeOpt: -w A
+
+SourceRepository jamler
+  Type: git
+  Location: git+ssh://git@gitorious.process-one.net/jamler/jamler.git
+  Browser: https://gitorious.process-one.net/jamler
+  Branch: master
+  Subdir: .
