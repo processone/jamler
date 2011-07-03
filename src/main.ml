@@ -89,4 +89,4 @@ let () =
       | Some config_file ->
 	  Lwt_main.run (main config_file)
       | _ ->
-	  print_endline usage
+	  Arg.usage speclist usage
