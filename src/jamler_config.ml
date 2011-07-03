@@ -179,9 +179,9 @@ let get_global_opt path p =
   get_global_opt_common path p None (fun x -> Some x)
 
 
-let get_opt_common host path p default map =
+let get_opt_common path p default map =
   let opt = {v = Hashtbl.create 1; timestamp = 0.0} in
-  let get () =
+  let get host =
     let ts = !config_timestamp in
       if ts > opt.timestamp then (
 	Hashtbl.clear opt.v;
@@ -205,12 +205,22 @@ let get_opt_common host path p default map =
     register_opt path p;
     get
 
-let get_opt_with_default host path p default =
-  get_opt_common host path p default (fun x -> x)
+let get_opt_with_default path p default =
+  get_opt_common path p default (fun x -> x)
 
-let get_opt host path p =
-  get_opt_common host path p None (fun x -> Some x)
+let get_opt path p =
+  get_opt_common path p None (fun x -> Some x)
 
+let mod_path mod_name = ["modules"; mod_name]
+
+let get_module_opt_common mod_name path p default map =
+  get_opt_common (mod_path mod_name @ path) p default map
+
+let get_module_opt_with_default mod_name path p default =
+  get_module_opt_common mod_name path p default (fun x -> x)
+
+let get_module_opt mod_name path p =
+  get_module_opt_common mod_name path p None (fun x -> Some x)
 
 let myhosts = get_global_opt_with_default ["hosts"] (list namepreped) []
 let loglevel =
