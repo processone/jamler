@@ -12,8 +12,11 @@ struct
     let os_str = Printf.sprintf
       "%s/%s/%s (OCaml %s)" Cfg.os Cfg.system Cfg.arch Cfg.ocaml in
       `XmlElement ("os", [], [`XmlCdata os_str])
-      
-  let process_local_iq _from _to'
+
+  let show_os = Jamler_config.(get_module_opt_with_default
+				 name ["show_os"] bool true)
+
+  let process_local_iq _from to'
       ({Jlib.iq_id = _ID;
 	Jlib.iq_type = iq_type;
 	Jlib.iq_xmlns = _xmlns; _} as iq) =
@@ -23,12 +26,12 @@ struct
 	    {iq with
 	       Jlib.iq_type = `Error (Jlib.err_not_allowed, Some subel)};
 	| `Get _subel ->
-	    (*let host = to'.Jlib.server in
-	      OS = case gen_mod:get_module_opt(Host, ?MODULE, show_os, true) of
-	      true -> [get_os()];
-	      false -> []
-	      end,*)
-	    let os = [get_os] in
+	    let host = to'.Jlib.lserver in
+	    let os =
+	      if show_os host
+	      then [get_os]
+	      else []
+	    in
 	      {iq with
 		 Jlib.iq_type =
 		  `Result

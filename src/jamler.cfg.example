@@ -2,6 +2,12 @@
   "hosts" : ["localhost", "e.localhost",
 	     "hoi.jabber.ru", "zinid.ru"],
   "loglevel" : "notice"
+
+  "modules": {
+    "mod_version": {
+      "show_os": false
+    }
+  }
 }
 
 /* Local Variables: */
