@@ -7,6 +7,7 @@ end
   =
 struct
   let name = "mod_time"
+  let section = Jamler_log.new_section name
 
   let process_local_iq _from _to = function
     | {Jlib.iq_type = `Set subel; _} as iq ->
@@ -46,12 +47,14 @@ struct
   let start host _opts =
     GenIQHandler.add_iq_handler `Local host <:ns<TIME>> process_local_iq ();
     GenIQHandler.add_iq_handler `Local host <:ns<TIME90>> process_local_iq ();
-    Lwt.return ()
+    lwt () = Lwt_log.notice ~section "started" in
+      Lwt.return ()
 
   let stop host =
     GenIQHandler.remove_iq_handler `Local host <:ns<TIME90>>;
     GenIQHandler.remove_iq_handler `Local host <:ns<TIME>>;
-    Lwt.return ()
+    lwt() = Lwt_log.notice ~section "stopped" in
+      Lwt.return ()
 
 end
 
