@@ -14,8 +14,6 @@ val nameprep_exn : string -> namepreped
 val nodeprep_exn : string -> nodepreped
 val resourceprep_exn : string -> resourcepreped
 
-val uptime : unit -> float
-
 val nameprep : string -> namepreped option
 val nodeprep : string -> nodepreped option
 val resourceprep : string -> resourcepreped option
@@ -154,6 +152,8 @@ val get_random_string : unit -> string
 
 val timestamp_to_iso: Unix.tm -> string
 val timestamp_to_iso': float -> (string * string)
+
+val uptime : unit -> float
 
 module LJID :
 sig
