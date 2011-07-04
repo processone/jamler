@@ -7,7 +7,6 @@ end
   =
 struct
   let name = "mod_version"
-  let section = Jamler_log.new_section name
 
   let get_os =
     let os_str = Printf.sprintf
@@ -50,13 +49,11 @@ struct
 
   let start host =
     GenIQHandler.add_iq_handler `Local host <:ns<VERSION>> process_local_iq ();
-    lwt () = Lwt_log.notice ~section "started" in
-      Lwt.return ()
+    Lwt.return ()
 
   let stop host =
     GenIQHandler.remove_iq_handler `Local host <:ns<VERSION>>;
-    lwt() = Lwt_log.notice ~section "stopped" in
-      Lwt.return ()
+    Lwt.return ()
 
 end
 

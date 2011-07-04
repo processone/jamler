@@ -916,7 +916,6 @@ webadmin_user(Acc, _User, _Server, Lang) ->
 *)
 
   let name = RS.name
-  let section = Jamler_log.new_section RS.name
 
   let start host =
     Hooks.add_fold roster_get host get_user_roster 50;
@@ -939,13 +938,11 @@ webadmin_user(Acc, _User, _Server, Lang) ->
     ejabberd_hooks:add(webadmin_user, Host,
 		       ?MODULE, webadmin_user, 50),*)
     GenIQHandler.add_iq_handler `SM host <:ns<ROSTER>> process_iq ();
-    lwt () = Lwt_log.notice ~section "started" in
-      Lwt.return ()
+    Lwt.return ()
 
   let stop host =
     (* TODO *)
-    lwt() = Lwt_log.notice ~section "stopped" in
-      Lwt.return ()
+    Lwt.return ()
 
 (*
   start(Host, Opts) ->
