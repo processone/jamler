@@ -48,11 +48,12 @@ struct
       Lwt.return (`IQ iq_res)
 
   let start host =
-    GenIQHandler.add_iq_handler `Local host <:ns<VERSION>> process_local_iq ();
-    Lwt.return ()
+    Lwt.return (
+      [Gen_mod.iq_handler `Local host <:ns<VERSION>> process_local_iq ();
+      ]
+    )
 
   let stop host =
-    GenIQHandler.remove_iq_handler `Local host <:ns<VERSION>>;
     Lwt.return ()
 
 end

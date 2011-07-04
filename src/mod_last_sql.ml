@@ -31,14 +31,13 @@ struct
                         `Error (Jlib.err_not_allowed, Some subel)})
 
   let start host =
-    GenIQHandler.add_iq_handler `Local host <:ns<LAST>> process_local_iq ();
-    lwt () = Lwt_log.notice ~section "started" in
-      Lwt.return ()
+    Lwt.return (
+      [Gen_mod.iq_handler `Local host <:ns<LAST>> process_local_iq ();
+      ]
+    )
 
   let stop host =
-    GenIQHandler.remove_iq_handler `Local host <:ns<LAST>>;
-    lwt() = Lwt_log.notice ~section "stopped" in
-      Lwt.return ()
+    Lwt.return ()
 
 end
 

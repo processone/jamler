@@ -918,11 +918,12 @@ webadmin_user(Acc, _User, _Server, Lang) ->
   let name = RS.name
 
   let start host =
-    Hooks.add_fold roster_get host get_user_roster 50;
-    Hooks.add_fold SM.roster_in_subscription host in_subscription 50;
-    Hooks.add C2S.roster_out_subscription host out_subscription 50;
-    Hooks.add_fold C2S.roster_get_subscription_lists host
-      get_subscription_lists 50;
+    Lwt.return (
+      [Gen_mod.fold_hook roster_get host get_user_roster 50;
+       Gen_mod.fold_hook SM.roster_in_subscription host in_subscription 50;
+       Gen_mod.hook C2S.roster_out_subscription host out_subscription 50;
+       Gen_mod.fold_hook C2S.roster_get_subscription_lists host
+	 get_subscription_lists 50;
     (*ejabberd_hooks:add(roster_get_jid_info, Host,
 		       ?MODULE, get_jid_info, 50),
     ejabberd_hooks:add(remove_user, Host,
@@ -937,8 +938,9 @@ webadmin_user(Acc, _User, _Server, Lang) ->
 		       ?MODULE, webadmin_page, 50),
     ejabberd_hooks:add(webadmin_user, Host,
 		       ?MODULE, webadmin_user, 50),*)
-    GenIQHandler.add_iq_handler `SM host <:ns<ROSTER>> process_iq ();
-    Lwt.return ()
+       Gen_mod.iq_handler `SM host <:ns<ROSTER>> process_iq ();
+      ]
+    )
 
   let stop host =
     (* TODO *)

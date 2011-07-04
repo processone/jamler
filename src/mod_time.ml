@@ -44,13 +44,13 @@ struct
 			`Error (Jlib.err_service_unavailable, Some subel)})
 
   let start host =
-    GenIQHandler.add_iq_handler `Local host <:ns<TIME>> process_local_iq ();
-    GenIQHandler.add_iq_handler `Local host <:ns<TIME90>> process_local_iq ();
-    Lwt.return ()
+    Lwt.return (
+      [Gen_mod.iq_handler `Local host <:ns<TIME>> process_local_iq ();
+       Gen_mod.iq_handler `Local host <:ns<TIME90>> process_local_iq ();
+      ]
+    )
 
   let stop host =
-    GenIQHandler.remove_iq_handler `Local host <:ns<TIME90>>;
-    GenIQHandler.remove_iq_handler `Local host <:ns<TIME>>;
     Lwt.return ()
 
 end
