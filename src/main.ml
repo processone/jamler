@@ -60,8 +60,8 @@ let start_modules () =
     (fun host ->
        let modules = Jamler_config.modules host in
 	 Lwt_list.iter_s
-	   (fun (mod_name, opts) ->
-	      Gen_mod.start_module host mod_name opts
+	   (fun mod_name ->
+	      Gen_mod.start_module host mod_name
 	   ) modules
     ) (Jamler_config.myhosts ())
 

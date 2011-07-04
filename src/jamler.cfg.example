@@ -4,9 +4,12 @@
   "loglevel" : "notice"
 
   "modules": {
+    "mod_roster_sql": {},
     "mod_version": {
-      "show_os": false
-    }
+      "show_os": true
+    },
+    "mod_version": {},
+    "mod_last_sql": {}
   }
 }
 

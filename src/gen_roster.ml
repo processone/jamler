@@ -918,7 +918,7 @@ webadmin_user(Acc, _User, _Server, Lang) ->
   let name = RS.name
   let section = Jamler_log.new_section RS.name
 
-  let start host _opts =
+  let start host =
     Hooks.add_fold roster_get host get_user_roster 50;
     Hooks.add_fold SM.roster_in_subscription host in_subscription 50;
     Hooks.add C2S.roster_out_subscription host out_subscription 50;

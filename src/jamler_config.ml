@@ -79,6 +79,14 @@ let enum vals =
 			   (JSON.to_string json)))
     )
 
+let keys =
+  P (function
+       | `Assoc assoc -> List.map fst assoc
+       | json ->
+	   raise (Error (Printf.sprintf "expected JSON object, got %s"
+			   (JSON.to_string json)))
+    )
+
 let parse (P p) json =
   p json
 
@@ -234,12 +242,7 @@ let loglevel =
 let auth_modules _host =
   ["sql"]
 
-let modules _host =
-  [("mod_roster_sql", []);
-   ("mod_version", []);
-   ("mod_time", []);
-   ("mod_last_sql", [])
-  ]
+let modules = get_opt_with_default ["modules"] keys []
 
 let process_config cfg =
   let host_path_to_string host path =

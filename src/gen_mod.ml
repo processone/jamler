@@ -4,7 +4,7 @@ module type Module =
 sig
   val name : string
 
-  val start : Jlib.namepreped -> 'a list -> unit Lwt.t
+  val start : Jlib.namepreped -> unit Lwt.t
   val stop : Jlib.namepreped -> unit Lwt.t
 end
 
@@ -15,12 +15,12 @@ let register_mod mod' =
   let module M = (val mod' : Module) in
     Hashtbl.replace mods M.name mod'
 
-let start_module host mod_name opts =
+let start_module host mod_name =
   (* TODO *)
   try
     let m = Hashtbl.find mods mod_name in
     let module M = (val m : Module) in
-      M.start host opts
+      M.start host
   with
     | exn ->
 	Lwt_log.error_f ~exn ~section

@@ -48,7 +48,7 @@ struct
     in
       Lwt.return (`IQ iq_res)
 
-  let start host _opts =
+  let start host =
     GenIQHandler.add_iq_handler `Local host <:ns<VERSION>> process_local_iq ();
     lwt () = Lwt_log.notice ~section "started" in
       Lwt.return ()

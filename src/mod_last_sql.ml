@@ -30,7 +30,7 @@ struct
                            Jlib.iq_type =
                         `Error (Jlib.err_not_allowed, Some subel)})
 
-  let start host _opts =
+  let start host =
     GenIQHandler.add_iq_handler `Local host <:ns<LAST>> process_local_iq ();
     lwt () = Lwt_log.notice ~section "started" in
       Lwt.return ()

@@ -44,7 +44,7 @@ struct
 			   Jlib.iq_type =
 			`Error (Jlib.err_service_unavailable, Some subel)})
 
-  let start host _opts =
+  let start host =
     GenIQHandler.add_iq_handler `Local host <:ns<TIME>> process_local_iq ();
     GenIQHandler.add_iq_handler `Local host <:ns<TIME90>> process_local_iq ();
     lwt () = Lwt_log.notice ~section "started" in
