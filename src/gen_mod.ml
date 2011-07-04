@@ -20,7 +20,9 @@ let start_module host mod_name =
   try
     let m = Hashtbl.find mods mod_name in
     let module M = (val m : Module) in
-      M.start host
+    lwt () = M.start host in
+      Lwt_log.notice_f ~section
+	"started module %s on %s" mod_name (host :> string)
   with
     | exn ->
 	Lwt_log.error_f ~exn ~section
