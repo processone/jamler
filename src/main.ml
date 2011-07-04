@@ -68,25 +68,44 @@ let start_modules () =
 
 let (exit_waiter, exit_wakener) = Lwt.wait ()
 
-let main config_file =
-  lwt () = Jamler_config.read_config config_file in
+let config_file_path = ref ""
+let pid_file_path = ref ""
+
+let main () =
+  lwt () = Jamler_config.read_config !config_file_path in
   Jamler_local.start ();
   List.iter Sql.add_pool (Jamler_config.myhosts ());
   lwt () = start_modules () in
   let _ = Listener.start_listeners () in
-  lwt () = Lwt_log.notice ~section "jamler started" in
+  lwt () = Lwt_log.notice_f ~section
+    "jamler %s started using ocaml-%s @ %s/%s/%s"
+    Cfg.version Cfg.ocaml Cfg.arch Cfg.system Cfg.os in
     exit_waiter
 
-let config_file_path = ref None
-
-let usage = Printf.sprintf "Usage: %s -f config.cfg" Sys.argv.(0)
+let usage = Printf.sprintf "Usage: %s -c file [-p file]" Sys.argv.(0)
 
 let () = 
-  let speclist = [("-f", Arg.String (fun s -> config_file_path := Some s),
-		   "Path to configuation file")] in
-  let _ = Arg.parse speclist (fun _ -> ()) usage in
+  let speclist = [("-c", Arg.String (fun s -> config_file_path := s),
+		   "filename  Path to configuation file");
+		  ("-p", Arg.String (fun s -> pid_file_path := s),
+		   "filename  Path to PID file")] in
+    Arg.parse speclist (fun _ -> ()) usage;
     match !config_file_path with
-      | Some config_file ->
-	  Lwt_main.run (main config_file)
-      | _ ->
+      | "" ->
 	  Arg.usage speclist usage
+      | _ ->
+	  (try
+	     Lwt_main.run (main ())
+	   with
+	     | Yojson.Json_error err ->
+		 Lwt.ignore_result
+		   (Lwt_log.fatal_f ~section
+		      "%s: %s" !config_file_path err)
+	     | Unix.Unix_error (err, _,  _) ->
+		 Lwt.ignore_result
+		   (Lwt_log.fatal_f ~section
+		      "%s: %s" !config_file_path (Unix.error_message err))
+	     | Jamler_config.Error err ->
+		 Lwt.ignore_result
+		   (Lwt_log.fatal_f ~section
+		      "%s: %s" !config_file_path err))

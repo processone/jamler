@@ -1,5 +1,7 @@
 type 'a p
 
+exception Error of string
+
 val int : int p
 val bool : bool p
 val string : string p

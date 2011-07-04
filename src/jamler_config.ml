@@ -328,7 +328,7 @@ let read_config filename =
 	Lwt.return ()
     with
       | exn ->
-	  lwt () = Lwt_log.error_f ~exn ~section
-	    "Failed to process config"
+	  lwt () = Lwt_log.fatal ~section
+	    "failed to process config"
 	  in
 	    Lwt.fail exn
