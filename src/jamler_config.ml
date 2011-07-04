@@ -238,6 +238,7 @@ let modules _host =
   [("mod_roster_sql", []);
    ("mod_version", []);
    ("mod_time", []);
+   ("mod_last_sql", [])
   ]
 
 let process_config cfg =

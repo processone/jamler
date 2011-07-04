@@ -14,6 +14,8 @@ val nameprep_exn : string -> namepreped
 val nodeprep_exn : string -> nodepreped
 val resourceprep_exn : string -> resourcepreped
 
+val uptime : unit -> float
+
 val nameprep : string -> namepreped option
 val nodeprep : string -> nodepreped option
 val resourceprep : string -> resourcepreped option

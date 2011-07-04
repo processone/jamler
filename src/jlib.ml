@@ -14,6 +14,8 @@ let nameprep_exn = Stringprep.nameprep
 let nodeprep_exn = Stringprep.nodeprep
 let resourceprep_exn = Stringprep.resourceprep
 
+let start_time = Unix.time ()
+
 let nameprep s =
   try
     Some (nameprep_exn s)
@@ -514,6 +516,8 @@ let timestamp_to_iso' tfloat =
   let sign = if sec_diff >= 0 then "" else "-" in
   let tzo = sign ^ (Printf.sprintf "%02d:%02d" div rem) in
     (utc, tzo)
+
+let uptime () = (Unix.time ()) -. start_time
 
 module LJID :
 sig
