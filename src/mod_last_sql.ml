@@ -31,16 +31,6 @@ struct
     in
       Sql.query lserver query
 
-  (* @spec (LUser::string(), LServer::string()) ->
-     {ok, TimeStamp::integer(), Status::string()} | not_found
-   get_last_info(LUser, LServer) ->
-    case get_last(LUser, LServer) of
-	{error, _Reason} ->
-	    not_found;
-	Res ->
-	    Res
-    end. *)
-
   let get_last_info luser lserver =
     try_lwt
       lwt res = get_last luser lserver in
