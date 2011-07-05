@@ -84,6 +84,32 @@ let create_parser ?(encoding = "UTF-8") ~depth
 
 let parse = Expat.parse
 
+let parse_element s =
+  let res = ref None in
+  let element_callback el =
+    res := Some el
+  in
+  let p =
+    create_parser
+      ~depth:0
+      ~element_callback
+      ~start_callback:(fun _ _ -> assert false)
+      ~end_callback:(fun _ -> assert false)
+      ()
+  in
+    try
+      parse p s true;
+      Expat.parser_free p;
+      (match !res with
+	 | Some res -> res
+	 | None -> assert false
+      )
+    with
+      | exn ->
+	  Expat.parser_free p;
+	  raise exn
+
+
 let crypt' b s =
   let l = String.length s in
     for i = 0 to l - 1 do
