@@ -35,18 +35,12 @@ let start_module host mod_name =
 
 let hook hook host f seq =
   ((fun () -> Jamler_hooks.add hook host f seq),
-   (fun () ->
-      (* TODO *)
-      ()
-   )
+   (fun () -> Jamler_hooks.delete hook host f seq)
   )
 
 let fold_hook hook host f seq =
   ((fun () -> Jamler_hooks.add_fold hook host f seq),
-   (fun () ->
-      (* TODO *)
-      ()
-   )
+   (fun () -> Jamler_hooks.delete_fold hook host f seq)
   )
 
 let iq_handler component host ns f type' =
