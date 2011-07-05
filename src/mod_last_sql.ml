@@ -164,19 +164,15 @@ struct
       store_last_info luser lserver timestamp status
 
   let start host =
-    Hooks.add remove_user host remove_user_h 50;
-    Hooks.add unset_presence_hook host on_presence_update_h 50;
     Lwt.return (
-      [Gen_mod.iq_handler `Local host <:ns<LAST>> process_local_iq ();
+      [Gen_mod.hook remove_user host remove_user_h 50;
+       Gen_mod.hook unset_presence_hook host on_presence_update_h 50;
+       Gen_mod.iq_handler `Local host <:ns<LAST>> process_local_iq ();
        Gen_mod.iq_handler `SM host <:ns<LAST>> process_sm_iq ();
       ]
     )
 
   let stop _host =
-    (* ejabberd_hooks:delete(remove_user, Host,
-			  ?MODULE, remove_user, 50),
-    ejabberd_hooks:delete(unset_presence_hook, Host,
-			  ?MODULE, on_presence_update, 50), *)
     Lwt.return ()
 
 end
