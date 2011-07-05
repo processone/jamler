@@ -100,12 +100,12 @@ let () =
 	     | Yojson.Json_error err ->
 		 Lwt.ignore_result
 		   (Lwt_log.fatal_f ~section
-		      "%s: %s" !config_file_path err)
+		      "\"%s\": %s" !config_file_path err)
 	     | Unix.Unix_error (err, _,  _) ->
 		 Lwt.ignore_result
 		   (Lwt_log.fatal_f ~section
-		      "%s: %s" !config_file_path (Unix.error_message err))
+		      "\"%s\": %s" !config_file_path (Unix.error_message err))
 	     | Jamler_config.Error err ->
 		 Lwt.ignore_result
 		   (Lwt_log.fatal_f ~section
-		      "%s: %s" !config_file_path err))
+		      "\"%s\": %s" !config_file_path err))

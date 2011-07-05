@@ -251,7 +251,7 @@ let process_config cfg =
 	| Some h -> h :: path
 	| None -> path
     in
-      String.concat "/" path
+      String.concat "->" (List.map (fun p -> "\"" ^ p ^ "\"") path)
   in
   let rec traverse path json host =
     match json with
@@ -331,7 +331,4 @@ let read_config filename =
 	Lwt.return ()
     with
       | exn ->
-	  lwt () = Lwt_log.fatal ~section
-	    "failed to process config"
-	  in
-	    Lwt.fail exn
+	  Lwt.fail exn
