@@ -45,21 +45,26 @@ let run hook host x =
     with
       | Not_found -> Lwt.return ()
 
+let delete hook host f seq =
+  try
+    let h = Hashtbl.find hook host in
+    let h =
+      List.filter
+	(fun (seq', f') ->
+	   not (seq = seq' && f == f')
+	) h
+    in
+      Hashtbl.replace hook host h
+  with
+    | Not_found -> ()
+
 
 type ('a, 'b) fold_hook =
     (Jlib.namepreped, (int * ('b -> 'a -> (result * 'b) Lwt.t)) list) Hashtbl.t
 
 let create_fold () = Hashtbl.create 1
 
-let add_fold hook host f seq =
-  let h =
-    try
-      Hashtbl.find hook host
-    with
-      | Not_found -> []
-  in
-  let h = sort_hooks ((seq, f) :: h) in
-    Hashtbl.replace hook host h
+let add_fold = add
 
 let run_fold hook host v x =
   let rec aux v x =
@@ -84,19 +89,13 @@ let run_fold hook host v x =
     with
       | Not_found -> Lwt.return v
 
+let delete_fold = delete
+
 type 'a plain_hook = (Jlib.namepreped, (int * ('a -> result)) list) Hashtbl.t
 
 let create_plain () = Hashtbl.create 1
 
-let add_plain hook host f seq =
-  let h =
-    try
-      Hashtbl.find hook host
-    with
-      | Not_found -> []
-  in
-  let h = sort_hooks ((seq, f) :: h) in
-    Hashtbl.replace hook host h
+let add_plain = add
 
 let run_plain hook host x =
   let rec aux x =
@@ -127,15 +126,7 @@ type ('a, 'b) fold_plain_hook =
 
 let create_fold_plain () = Hashtbl.create 1
 
-let add_fold_plain hook host f seq =
-  let h =
-    try
-      Hashtbl.find hook host
-    with
-      | Not_found -> []
-  in
-  let h = sort_hooks ((seq, f) :: h) in
-    Hashtbl.replace hook host h
+let add_fold_plain = add
 
 let run_fold_plain hook host v x =
   let rec aux v x =

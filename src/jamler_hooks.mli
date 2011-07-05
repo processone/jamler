@@ -7,6 +7,7 @@ type 'a hook
 val create : unit -> 'a hook
 val add : 'a hook -> Jlib.namepreped -> ('a -> result Lwt.t) -> int -> unit
 val run : 'a hook -> Jlib.namepreped -> 'a -> unit Lwt.t
+val delete : 'a hook -> Jlib.namepreped -> ('a -> result Lwt.t) -> int -> unit
 
 type ('a, 'b) fold_hook
 
@@ -15,6 +16,9 @@ val add_fold :
   ('a, 'b) fold_hook -> Jlib.namepreped -> ('b -> 'a -> (result * 'b) Lwt.t) ->
   int -> unit
 val run_fold : ('a, 'b) fold_hook -> Jlib.namepreped -> 'b -> 'a -> 'b Lwt.t
+val delete_fold :
+  ('a, 'b) fold_hook -> Jlib.namepreped -> ('b -> 'a -> (result * 'b) Lwt.t) ->
+  int -> unit
 
 type 'a plain_hook
 
