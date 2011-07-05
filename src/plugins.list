@@ -6,3 +6,4 @@ mod_roster_sql
 mod_version
 mod_time
 mod_last_sql
+mod_private_sql
