@@ -155,9 +155,27 @@ struct
     lwt _ = Sql.query lserver delete_last in
       Lwt.return (Hooks.OK)
 
-  let store_last_info _luser _lserver _timestamp _status =
-    (* odbc_queries:set_last_t(LServer, Username, Seconds, State). *)
-    Lwt.return (Hooks.OK)
+  let store_last_info luser lserver timestamp status =
+    let username = (luser : Jlib.nodepreped :> string) in
+    let insert_last =
+      <:sql<
+	insert into last(username, seconds, state)
+	values (%(username)s, %(timestamp)d, %(status)s)
+      >>
+    in
+    let update_last =
+      <:sql<
+	update last
+	set seconds = %(timestamp)d,
+            state = %(status)s
+	where username = %(username)s
+      >>
+    in
+      (* TODO: get rid of transaction *)
+    lwt () =
+      Sql.transaction lserver
+	(fun () -> Sql.update_t insert_last update_last) in
+      Lwt.return (Hooks.OK)
 
   let on_presence_update_h (luser, lserver, _resrouce, status) =
     let timestamp = int_of_float (Unix.time ()) in
