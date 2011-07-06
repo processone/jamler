@@ -9,6 +9,7 @@ val string : string p
 val namepreped : Jlib.namepreped p
 val list : 'a p -> 'a list p
 val enum : (string * 'a) list -> 'a p
+val keys : string list p
 
 type path = string list
 
