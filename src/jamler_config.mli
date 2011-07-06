@@ -1,4 +1,5 @@
-type 'a p
+type json = Yojson.Safe.json
+type 'a p = P of (json -> 'a)
 
 exception Error of string
 
@@ -22,6 +23,7 @@ val get_module_opt_with_default :
 
 
 val myhosts : unit -> Jlib.namepreped list
+val is_my_host : Jlib.namepreped -> bool
 val auth_modules : Jlib.namepreped -> string list
 val modules : Jlib.namepreped -> string list
 val read_config : string -> unit Lwt.t

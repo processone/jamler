@@ -1,14 +1,50 @@
 {
   "hosts" : ["localhost", "e.localhost",
 	     "hoi.jabber.ru", "zinid.ru"],
-  "loglevel" : "notice"
+  "loglevel" : "notice",
+
+  "acl": {
+    "admin": [
+      {"user": "test"},
+      {"user": "aleksey@jabber.ru"}
+    ],
+    "blocked": [
+      {"user": "test2"}
+    ],
+    "local": [
+      {"user_regexp": ""}
+    ]
+  },
+
+  "access": {
+    "register": [
+      {"all": "allow"}
+    ],
+    "announce": [
+      {"admin": "allow"}
+    ],
+    "c2s": [
+      {"blocked": "deny"},
+      {"all": "allow"}
+    ],
+    "c2s_shaper": [
+      {"admin": "none"},
+      {"all": "normal"}
+    ],
+    "s2s_shaper": [
+      {"all": "s2s"}
+    ],
+    "max_user_sessions": [
+      {"all": 10}
+    ]
+  },
 
   "modules": {
     "mod_roster_sql": {},
     "mod_version": {
       "show_os": true
     },
-    "mod_version": {},
+    "mod_time": {},
     "mod_last_sql": {}
   }
 }

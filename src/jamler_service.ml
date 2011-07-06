@@ -42,7 +42,8 @@ struct
        password : string;
        check_from : bool;
        hosts : Jlib.namepreped list;
-       access: string;}
+       access: bool Jamler_acl.access_rule;
+      }
 
   type init_data = Lwt_unix.file_descr
 
@@ -55,13 +56,54 @@ struct
     lwt () = Lwt_log.notice ~section "External service connected" in
     let socket = Tcp.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
+      (* TODO *)
+    let access = Jamler_acl.all in
+      (*
+    Access = case lists:keysearch(access, 1, Opts) of
+		 {value, {_, A}} -> A;
+		 _ -> all
+	     end,
+    {Hosts, Password} =
+	case lists:keysearch(hosts, 1, Opts) of
+	    {value, {_, Hs, HOpts}} ->
+		case lists:keysearch(password, 1, HOpts) of
+		    {value, {_, P}} ->
+			{Hs, P};
+		    _ ->
+			% TODO: generate error
+			false
+		end;
+	    _ ->
+		case lists:keysearch(host, 1, Opts) of
+		    {value, {_, H, HOpts}} ->
+			case lists:keysearch(password, 1, HOpts) of
+			    {value, {_, P}} ->
+				{[H], P};
+			    _ ->
+				% TODO: generate error
+				false
+			end;
+		    _ ->
+			% TODO: generate error
+			false
+		end
+	end,
+    Shaper = case lists:keysearch(shaper_rule, 1, Opts) of
+		 {value, {_, S}} -> S;
+		 _ -> none
+	     end,
+    CheckFrom = case lists:keysearch(service_check_from, 1, Opts) of
+		 {value, {_, CF}} -> CF;
+		 _ -> true
+	     end,
+    SockMod:change_shaper(Socket, Shaper),
+      *)
     let state = {pid = self;
                  socket;
                  xml_receiver;
                  state = Wait_for_stream;
                  streamid = new_id ();
-		 (* TODO *)
-		 access = "";
+		 access;
 		 check_from = true;
 		 password = "password";
 		 hosts = [Jlib.nameprep_exn "service.localhost"];}
@@ -205,7 +247,7 @@ struct
 	  
 
   let handle_route (`Route (from, to', packet)) state =
-    let _ = match ACL.match_global_rule state.access from with
+    let _ = match ACL.match_global_rule state.access from false with
       | true ->
 	let `XmlElement (name, attrs, els) = packet in
 	let attrs' = Jlib.replace_from_to_attrs

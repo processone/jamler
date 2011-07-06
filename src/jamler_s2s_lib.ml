@@ -29,21 +29,23 @@ let find_s2s_list from_to =
 let new_key () =
   Jlib.get_random_string ()
 
+let max_s2s_connections_access =
+  Jamler_acl.get_rule "max_s2s_connections" Jamler_config.int
+
 let max_s2s_connections_number (from, to') =
-    (* case acl:match_rule(
-           From, max_s2s_connections, jlib:make_jid("", To, "")) of
-        Max when is_integer(Max) -> Max;
-        _ -> ?DEFAULT_MAX_S2S_CONNECTIONS_NUMBER
-    end. *)
-  default_max_s2s_connections_number
+  Jamler_acl.match_rule
+    from max_s2s_connections_access
+    (Jlib.make_jid' (Jlib.nodeprep_exn "") to' (Jlib.resourceprep_exn ""))
+    default_max_s2s_connections_number
+
+let max_s2s_connections_per_node_access =
+  Jamler_acl.get_rule "max_s2s_connections_per_node" Jamler_config.int
 
 let max_s2s_connections_number_per_node (from, to') =
-    (* case acl:match_rule(
-           From, max_s2s_connections_per_node, jlib:make_jid("", To, "")) of
-        Max when is_integer(Max) -> Max;
-        _ -> ?DEFAULT_MAX_S2S_CONNECTIONS_NUMBER_PER_NODE
-    end. *)
-  default_max_s2s_connections_number_per_node
+  Jamler_acl.match_rule
+    from max_s2s_connections_per_node_access
+    (Jlib.make_jid' (Jlib.nodeprep_exn "") to' (Jlib.resourceprep_exn ""))
+    default_max_s2s_connections_number_per_node
 
 let needed_connections_number
     (s2s_list : s2s list)

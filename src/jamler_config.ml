@@ -231,6 +231,9 @@ let get_module_opt mod_name path p =
   get_module_opt_common mod_name path p None (fun x -> Some x)
 
 let myhosts = get_global_opt_with_default ["hosts"] (list namepreped) []
+
+let is_my_host host = List.mem host (myhosts ())
+
 let loglevel =
   get_global_opt_with_default ["loglevel"]
     (enum [("notice", `Notice);
