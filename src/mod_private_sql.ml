@@ -47,23 +47,34 @@ struct
       | _ :: els ->
 	  get_data_rec luser lserver els res
 
-  (* set_data(LUser, LServer, El) ->
-    case El of
-	{xmlelement, _Name, Attrs, _Els} ->
-	    XMLNS = xml:get_attr_s("xmlns", Attrs),
-	    case XMLNS of
-		"" ->
-		    ignore;
-		_ ->
-		    Username = ejabberd_odbc:escape(LUser),
-		    LXMLNS = ejabberd_odbc:escape(XMLNS),
-		    SData = ejabberd_odbc:escape(
-			      xml:element_to_binary(El)),
-			odbc_queries:set_private_data(LServer, Username, LXMLNS, SData)
-	    end;
-	_ ->
-	    ignore
-    end. *)
+  let set_data luser lserver el =
+    match el with
+      | `XmlElement (_name, attrs, _els) -> (
+	  match Xml.get_attr_s "xmlns" attrs with
+	    | "" ->
+		Lwt.return ()
+	    | xmlns ->
+		let username = (luser : Jlib.nodepreped :> string) in
+		let sdata = Xml.element_to_string el in
+		let insert_private_data =
+		  <:sql<
+		    insert into private_storage(username, namespace, data)
+		    values (%(username)s, %(xmlns)s, %(sdata)s)
+		  >>
+		in
+		let update_private_data =
+		  <:sql<
+		    update private_storage
+		    set data = %(sdata)s
+		    where username = %(username)s and
+		          namespace = %(xmlns)s
+		  >>
+		in
+		lwt () = Sql.update_t insert_private_data update_private_data in
+		  Lwt.return ()
+	)
+      | _ ->
+	  Lwt.return ()
 
   let get_data luser lserver els =
     get_data_rec luser lserver els []
@@ -75,19 +86,15 @@ struct
 	| true -> (
 	    match iq.Jlib.iq_type with
 	      | `Set (`XmlElement (name, attrs, els)) ->
-		  (* F = fun() ->
-				lists:foreach(
-				  fun(El) ->
-					  set_data(LUser, LServer, El)
-				  end, Els)
-			end,
-		    odbc_queries:sql_transaction(LServer, F),
-		  *)
-		  Lwt.return
-		    (`IQ {iq with
-			    Jlib.iq_type =
-			 `Result
-			   (Some (`XmlElement (name, attrs, [])))})
+		  lwt () = Sql.transaction lserver
+		    (fun() ->
+		       Lwt_list.iter_s
+			 (fun el -> set_data luser lserver el) els) in
+		    Lwt.return
+		      (`IQ {iq with
+			      Jlib.iq_type =
+			   `Result
+			     (Some (`XmlElement (name, attrs, [])))})
 	      | `Get subel ->
 		  let `XmlElement (name, attrs, els) = subel in
 		    try_lwt
