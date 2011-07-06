@@ -71,7 +71,36 @@ let (exit_waiter, exit_wakener) = Lwt.wait ()
 let config_file_path = ref ""
 let pid_file_path = ref ""
 
+let make_abs_path filename =
+  match Filename.is_relative filename with
+    | true ->
+	let cwd = Sys.getcwd () in
+	  Filename.concat cwd filename
+      | false ->
+	  filename
+
+let process_pid_file () =
+  match !pid_file_path with
+    | "" ->
+	Lwt.return ()
+    | _ ->
+	pid_file_path := make_abs_path !pid_file_path;
+	try_lwt
+	  lwt () = Lwt_log.notice_f ~section
+	    "using pid file \"%s\"" !pid_file_path in
+	  lwt fd = Lwt_unix.openfile !pid_file_path
+	    [Unix.O_WRONLY; Unix.O_TRUNC; Unix.O_CREAT] 0o640 in
+	  let ch = Lwt_io.of_fd ~mode:Lwt_io.output fd in
+	  lwt () = Lwt_io.write ch (string_of_int (Unix.getpid ())) in
+	  lwt () = Lwt_io.close ch in
+	    Lwt.return ()
+	with
+	  | Unix.Unix_error (err, _,  _) ->
+	      Lwt_log.error_f ~section
+		"\"%s\": %s" !pid_file_path (Unix.error_message err)
+
 let main () =
+  lwt () = process_pid_file () in
   lwt () = Jamler_config.read_config !config_file_path in
   Jamler_local.start ();
   List.iter Sql.add_pool (Jamler_config.myhosts ());
@@ -84,15 +113,6 @@ let main () =
 
 let usage = Printf.sprintf "Usage: %s -c file [-p file]" Sys.argv.(0)
 
-let make_abs_path () =
-  config_file_path :=
-    match Filename.is_relative !config_file_path with
-      | true ->
-	  let cwd = Sys.getcwd () in
-	    Filename.concat cwd !config_file_path
-      | false ->
-	  !config_file_path
-
 let () = 
   let speclist = [("-c", Arg.String (fun s -> config_file_path := s),
 		   "filename  Path to configuation file");
@@ -103,7 +123,7 @@ let () =
       | "" ->
 	  Arg.usage speclist usage
       | _ ->
-	  make_abs_path ();
+	  config_file_path := make_abs_path !config_file_path;
 	  (try
 	     Lwt_main.run (main ())
 	   with
