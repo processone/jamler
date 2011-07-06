@@ -84,6 +84,15 @@ let main () =
 
 let usage = Printf.sprintf "Usage: %s -c file [-p file]" Sys.argv.(0)
 
+let make_abs_path () =
+  config_file_path :=
+    match Filename.is_relative !config_file_path with
+      | true ->
+	  let cwd = Sys.getcwd () in
+	    Filename.concat cwd !config_file_path
+      | false ->
+	  !config_file_path
+
 let () = 
   let speclist = [("-c", Arg.String (fun s -> config_file_path := s),
 		   "filename  Path to configuation file");
@@ -94,6 +103,7 @@ let () =
       | "" ->
 	  Arg.usage speclist usage
       | _ ->
+	  make_abs_path ();
 	  (try
 	     Lwt_main.run (main ())
 	   with
