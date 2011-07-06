@@ -1,6 +1,10 @@
-type rule = string				(* TODO *)
-type acl = string				(* TODO *)
+type 'a access_rule
 
-val match_rule : Jlib.namepreped -> rule -> Jlib.jid -> bool
-val match_global_rule : rule -> Jlib.jid -> bool
-val match_acl : acl -> Jlib.jid -> Jlib.namepreped -> bool
+val get_rule : string -> 'a Jamler_config.p -> 'a access_rule
+val match_rule : Jlib.namepreped -> 'a access_rule -> Jlib.jid -> 'a -> 'a
+val match_global_rule : 'a access_rule -> Jlib.jid -> 'a -> 'a
+
+val access : bool Jamler_config.p
+val all : bool access_rule
+val none : bool access_rule
+

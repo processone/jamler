@@ -215,19 +215,22 @@ let check_existing_resources user server resource =
       	   )
       	) sids
 
+
+let max_user_sessions_access =
+  Jamler_acl.get_rule "max_user_sessions" Jamler_config.int
+
+(* default value for the maximum number of user connections *)
+let max_user_sessions = max_int
+
 (* Get the user_max_session setting
    This option defines the max number of time a given users are allowed to
    log in
    Defaults to infinity *)
 let get_max_user_sessions user host =
-  (* TODO *)
-  max_int
-  (*case acl:match_rule(
-         Host, max_user_sessions, jlib:make_jid(LUser, Host, "")) of
-      Max when is_integer(Max) -> Max;
-      infinity -> infinity;
-      _ -> ?MAX_USER_SESSIONS
-  end.*)
+  Jamler_acl.match_rule
+    host max_user_sessions_access
+    (Jlib.make_jid' user host (Jlib.resourceprep_exn ""))
+    max_user_sessions
 
 
 let check_max_sessions user server =

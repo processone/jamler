@@ -49,8 +49,8 @@ struct
        xml_receiver : XMLReceiver.t;
        state : c2s_state;
        streamid : string;
-       (*sasl_state : int;	(* TODO *)
-       access,
+       access : bool Jamler_acl.access_rule;
+       (*	(* TODO *)
        shaper,
        zlib = false,
        tls = false,
@@ -88,11 +88,24 @@ struct
   let init socket self =
     let socket = Tcp.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
+      (* TODO *)
+    let access = Jamler_acl.all in
+      (*
+    Access = case lists:keysearch(access, 1, Opts) of
+		 {value, {_, A}} -> A;
+		 _ -> all
+	     end,
+    Shaper = case lists:keysearch(shaper, 1, Opts) of
+		 {value, {_, S}} -> S;
+		 _ -> none
+	     end,
+      *)
     let state = {pid = self;
 		 socket;
 		 xml_receiver;
 		 state = Wait_for_stream;
 		 streamid = "";
+		 access;
 		 authenticated = false;
 		 user = Jlib.nodeprep_exn "";
 		 server = Jlib.nameprep_exn "";
@@ -114,7 +127,6 @@ struct
       Lwt.return state
 
   let myname = "localhost"		(* TODO *)
-  let is_my_host _server = true		(* TODO *)
   let invalid_ns_err = Jlib.serr_invalid_namespace
   let invalid_xml_err = Jlib.serr_xml_not_well_formed
   let host_unknown_err = Jlib.serr_host_unknown
@@ -633,7 +645,7 @@ struct
 	      | <:ns<STREAM>> -> (
 		  let server = Jlib.nameprep (Xml.get_attr_s "to" attrs) in
 		    match server with
-		      | Some server when is_my_host server -> (
+		      | Some server when Jamler_config.is_my_host server -> (
 			  let lang =
 			    let lang = Xml.get_attr_s "xml:lang" attrs in
 			      if String.length lang <= 35 then (
@@ -888,9 +900,8 @@ wait_for_stream(timeout, StateData) ->
 		       {state with state = Wait_for_auth})
 	    | Some (_id, `Set, (u, _p, _d, r)) -> (
 		match Jlib.make_jid u (state.server :> string) r with
-		  | Some jid (*when 
-			       (acl:match_rule(StateData#state.server,
-			       StateData#state.access, JID) == allow) *) (* TODO *) -> (
+		  | Some jid when (Jamler_acl.match_rule
+				     state.server state.access jid false) -> (
 		      (*let dgen = fun pw ->
                         Jlib.sha1 (state.streamid ^ pw)
 		      in*)
@@ -1379,8 +1390,8 @@ wait_for_bind(timeout, StateData) ->
 		    Jlib.iq_xmlns = <:ns<SESSION>>; _} as iq) -> (
 		let u = state.user in
 		let jid = state.jid in
-		  match (*acl:match_rule(StateData#state.server,
-				       StateData#state.access, JID)*)true (* TODO *) with
+		  match (Jamler_acl.match_rule
+			   state.server state.access jid false) with
 		    | true ->
 			(*?INFO_MSG("(~w) Opened session for ~s",
 			      [StateData#state.socket,
