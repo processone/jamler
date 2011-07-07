@@ -495,27 +495,59 @@ let encode_base64 s =
 let get_random_string () =		(* TODO *)
   string_of_int (Random.int 1000000000)
 
-let timestamp_to_iso tm =
-  Printf.sprintf "%04d%02d%02dT%02d:%02d:%02d"
-    (tm.Unix.tm_year + 1900) (tm.Unix.tm_mon + 1) tm.Unix.tm_mday
-    tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec
+type timezone = | UTC
+		| Shift of char * int * int
 
-let timestamp_to_iso' tfloat =
+let get_tzo () =
+  let tfloat = Unix.time () in
   let tm_local = Unix.localtime tfloat in
   let tm_utc = Unix.gmtime tfloat in
-  let utc = Printf.sprintf
-    "%04d-%02d-%02dT%02d:%02d:%02dZ"
-    (tm_utc.Unix.tm_year + 1900) (tm_utc.Unix.tm_mon + 1)
-    tm_utc.Unix.tm_mday tm_utc.Unix.tm_hour
-    tm_utc.Unix.tm_min tm_utc.Unix.tm_sec in
   let time_f_utc, _ = Unix.mktime tm_utc in
   let time_f_local, _ = Unix.mktime tm_local in
   let sec_diff = int_of_float (time_f_local -. time_f_utc) in
   let div = abs(sec_diff) / 3600 in
   let rem = abs(sec_diff) mod 3600 in
-  let sign = if sec_diff >= 0 then "" else "-" in
-  let tzo = sign ^ (Printf.sprintf "%02d:%02d" div rem) in
+  let sign = if sec_diff >= 0 then '+' else '-' in
+    Shift (sign, div, rem)
+
+let timestamp_to_iso' tm =
+  Printf.sprintf "%04d%02d%02dT%02d:%02d:%02d"
+    (tm.Unix.tm_year + 1900) (tm.Unix.tm_mon + 1) tm.Unix.tm_mday
+    tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec
+
+let timestamp_to_iso tfloat timezone =
+  let tm_utc = Unix.gmtime tfloat in
+  let utc = Printf.sprintf
+    "%04d-%02d-%02dT%02d:%02d:%02d"
+    (tm_utc.Unix.tm_year + 1900) (tm_utc.Unix.tm_mon + 1)
+    tm_utc.Unix.tm_mday tm_utc.Unix.tm_hour
+    tm_utc.Unix.tm_min tm_utc.Unix.tm_sec in
+  let tzo = match timezone with
+    | UTC ->
+	"Z"
+    | Shift (sign, tzh, tzm) ->
+	Printf.sprintf "%c%02d:%02d" sign tzh tzm
+  in
     (utc, tzo)
+
+let timestamp_to_xml tfloat tz from_jid desc =
+  let (t_string, tz_string) = timestamp_to_iso tfloat tz in
+  let text = [`XmlCdata desc] in
+  let from = jid_to_string from_jid in
+    `XmlElement ("delay", [("xmlns", <:ns<DELAY>>);
+			   ("from", from);
+			   ("stamp", t_string ^ tz_string)],
+		 text)
+
+(* TODO: Remove this function once XEP-0091 is Obsolete *)
+let timestamp_to_xml' tm =
+  let stamp = Printf.sprintf
+    "%04d%02d%02dT%02d:%02d:%02d"
+    (tm.Unix.tm_year + 1900) (tm.Unix.tm_mon + 1)
+    tm.Unix.tm_mday tm.Unix.tm_hour
+    tm.Unix.tm_min tm.Unix.tm_sec in
+    `XmlElement ("x", [("xmlns", <:ns<DELAY91>>);
+		       ("stamp", stamp)], [])
 
 let uptime () = (Unix.time ()) -. start_time
 
