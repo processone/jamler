@@ -69,7 +69,8 @@
     },
     "mod_time": {},
     "mod_last_sql": {},
-    "mod_offline_sql": {}
+    "mod_offline_sql": {},
+    "mod_disco": {}
   }
 }
 

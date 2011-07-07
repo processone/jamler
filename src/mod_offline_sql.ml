@@ -28,17 +28,16 @@ struct
 
   let count_offline_messages luser lserver =
     let username = (luser : Jlib.nodepreped :> string) in
-      (* TODO: count() doesn't work *)
     let query =
       <:sql<
-	select @(xml)s from spool
+	select @()d count(*) from spool
 	where username=%(username)s
       >>
     in
       try_lwt
 	(match_lwt Sql.query lserver query with
 	   | [] -> Lwt.return 0
-	   | _ -> Lwt.return 1)
+	   | count :: _ -> Lwt.return count)
       with
 	| _ ->
 	    Lwt.return 0

@@ -11,5 +11,6 @@ val register_route :
 val unregister_route : Jlib.namepreped -> msg pid -> unit
 
 val dirty_get_all_domains: unit -> Jlib.namepreped list
+val dirty_get_all_routes: unit -> Jlib.namepreped list
 
 val register_s2s_route : t -> unit
