@@ -197,3 +197,12 @@ let route from to' packet =
 
 let dirty_get_all_domains () =
   Hashtbl.fold (fun route _ acc -> route :: acc) route_table []
+
+let dirty_get_all_routes () =
+  let myhosts = Jamler_config.myhosts () in
+    Hashtbl.fold
+      (fun route _ acc ->
+	 match List.mem route myhosts with
+	   | true -> acc
+	   | false -> route :: acc)
+      route_table []
