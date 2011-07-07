@@ -56,11 +56,21 @@ let parse_acl =
 			   (JSON.to_string json)))
     )
 
-let get_acl name =
-  Jamler_config.get_opt_with_default ["acl"; name] (list parse_acl) []
+let get_acl =
+  function
+    | "all" -> fun _ -> [fun _ _ -> true]
+    | "none" -> fun _ -> [fun _ _ -> false]
+    | name ->
+	Jamler_config.get_opt_with_default
+	  ["acl"; name] (list parse_acl) []
 
-let get_global_acl name =
-  Jamler_config.get_global_opt_with_default ["acl"; name] (list parse_acl) []
+let get_global_acl =
+  function
+    | "all" -> fun _ -> [fun _ _ -> true]
+    | "none" -> fun _ -> [fun _ _ -> false]
+    | name ->
+	Jamler_config.get_global_opt_with_default
+	  ["acl"; name] (list parse_acl) []
 
 let parse_access (P p) =
   P (function
