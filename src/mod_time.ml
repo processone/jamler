@@ -14,7 +14,7 @@ struct
 			   Jlib.iq_type =
 			`Error (Jlib.err_not_allowed, Some subel)})
     | {Jlib.iq_type = `Get _subel; iq_xmlns = <:ns<TIME90>>; _} as iq ->
-	let utc = Jlib.timestamp_to_iso (Unix.gmtime (Unix.time ())) in
+	let utc = Jlib.timestamp_to_iso' (Unix.gmtime (Unix.time ())) in
 	  Lwt.return (
 	    `IQ {iq with
 		   Jlib.iq_type =
@@ -25,7 +25,7 @@ struct
 			    [`XmlElement ("utc", [],
 					  [`XmlCdata utc])])))})
     | {Jlib.iq_type = `Get _subel; iq_xmlns = <:ns<TIME>>; _} as iq ->
-	let utc, tzo = Jlib.timestamp_to_iso' (Unix.time ()) in
+	let utc, tzo = Jlib.timestamp_to_iso (Unix.time ()) (Jlib.get_tzo ()) in
 	  Lwt.return (
 	    `IQ {iq with
 		   Jlib.iq_type =

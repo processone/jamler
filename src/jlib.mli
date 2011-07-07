@@ -10,6 +10,9 @@ type jid = {user : string;
 	    lresource : resourcepreped;
 	   }
 
+type timezone = | UTC
+		| Shift of char * int * int
+
 val nameprep_exn : string -> namepreped
 val nodeprep_exn : string -> nodepreped
 val resourceprep_exn : string -> resourcepreped
@@ -150,8 +153,12 @@ val encode_base64 : string -> string
 
 val get_random_string : unit -> string
 
-val timestamp_to_iso: Unix.tm -> string
-val timestamp_to_iso': float -> (string * string)
+val get_tzo : unit -> timezone
+val timestamp_to_iso': Unix.tm -> string
+val timestamp_to_iso: float -> timezone -> (string * string)
+
+val timestamp_to_xml: float -> timezone -> jid -> string -> Xml.element
+val timestamp_to_xml': Unix.tm -> Xml.element
 
 val uptime : unit -> float
 
