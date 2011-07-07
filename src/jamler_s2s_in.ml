@@ -517,3 +517,17 @@ stream_established(closed, StateData) ->
 end
 
 module S2SInServer = GenServer.Make(S2SIn)
+
+module S2SInListen : Jamler_listener.ListenModule =
+struct
+  let name = "s2s"
+  let listen_parser =
+    Jamler_config.P
+      (function _json ->
+	 (fun socket -> ignore (S2SInServer.start socket))
+      )
+end
+
+let () =
+  Jamler_listener.register_mod
+    (module S2SInListen : Jamler_listener.ListenModule)

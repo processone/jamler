@@ -39,6 +39,29 @@
     ]
   },
 
+  "listen": {
+    "c2s": {
+      "family": "ipv4",
+      "port": 5222,
+      "module": "c2s",
+      "access": "c2s",
+      "shaper": "c2s_shaper",
+      "max_stanza_size": 65536
+    },
+    "s2s": {
+      "family": "ipv4",
+      "port": 5269,
+      "module": "s2s",
+      "shaper": "s2s_shaper",
+      "max_stanza_size": 65536
+    },
+    "service": {
+      "family": "ipv4",
+      "port": 5270,
+      "module": "service"
+    }
+  },
+
   "modules": {
     "mod_roster_sql": {},
     "mod_version": {

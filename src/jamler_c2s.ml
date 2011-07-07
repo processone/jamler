@@ -15,7 +15,7 @@ sig
   type msg =
       [ Tcp.msg | XMLReceiver.msg | GenServer.msg
       | SM.msg | `Zxc of string * int ]
-  type init_data = Lwt_unix.file_descr
+  type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
   type state
   val init : init_data -> msg pid -> state Lwt.t
   val handle : msg -> state -> state GenServer.result
@@ -81,20 +81,15 @@ struct
        lang : string;
       }
 
-  type init_data = Lwt_unix.file_descr
+  type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
 
   let section = Jamler_log.new_section "c2s"
 
-  let init socket self =
+  let init (socket, access) self =
     let socket = Tcp.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
       (* TODO *)
-    let access = Jamler_acl.all in
       (*
-    Access = case lists:keysearch(access, 1, Opts) of
-		 {value, {_, A}} -> A;
-		 _ -> all
-	     end,
     Shaper = case lists:keysearch(shaper, 1, Opts) of
 		 {value, {_, S}} -> S;
 		 _ -> none
@@ -1914,3 +1909,38 @@ session_established(timeout, StateData) ->
 end
 
 module C2SServer = GenServer.Make(C2S)
+
+module C2SListen : Jamler_listener.ListenModule =
+struct
+  let name = "c2s"
+  module JSON = Yojson.Safe
+  let listen_parser =
+    Jamler_config.(
+      P (function
+	   | `Assoc assoc ->
+	       let access_name =
+		 try
+		   match List.assoc "access" assoc with
+		     | `String access -> access
+		     | json ->
+			 raise (Error
+				  (Printf.sprintf
+				     "access value must be a string, got %s"
+				     (JSON.to_string json)))
+		 with
+		   | Not_found ->
+		       raise (Error "port number must be present")
+	       in
+	       let access = Jamler_acl.(get_rule access_name access) in
+		 (fun socket -> ignore (C2SServer.start (socket, access)))
+	   | json ->
+	       raise (Error
+			(Printf.sprintf "expected JSON object value, got %s"
+			   (JSON.to_string json)))
+	)
+    )
+end
+
+let () =
+  Jamler_listener.register_mod
+    (module C2SListen : Jamler_listener.ListenModule)

@@ -12,7 +12,6 @@ module GenIQHandler = Jamler_gen_iq_handler
 module SM = Jamler_sm
 module Local = Jamler_local
 module C2S = Jamler_c2s.C2S
-module C2SServer = Jamler_c2s.C2SServer
 module Listener = Jamler_listener
 
 
@@ -50,6 +49,10 @@ let _ =
 	  Lwt_log.error ~exn:exn "sql query"
 *)
 
+(* Dependencies *)
+module C2SServer = Jamler_c2s.C2SServer
+module Service = Jamler_service.Service
+module S2SInServer = Jamler_s2s_in.S2SInServer
 module Plugins = Plugins
 
 let section = Jamler_log.new_section "main"

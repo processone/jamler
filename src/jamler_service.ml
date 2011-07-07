@@ -323,3 +323,17 @@ struct
 end
 
 module Service = GenServer.Make(ExtService)
+
+module ServiceListen : Jamler_listener.ListenModule =
+struct
+  let name = "service"
+  let listen_parser =
+    Jamler_config.P
+      (function _json ->
+	 (fun socket -> ignore (Service.start socket))
+      )
+end
+
+let () =
+  Jamler_listener.register_mod
+    (module ServiceListen : Jamler_listener.ListenModule)

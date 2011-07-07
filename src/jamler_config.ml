@@ -43,7 +43,7 @@ let namepreped =
 	     | Some s -> s
 	     | None ->
 		 raise (Error (Printf.sprintf
-				 "the value \"%s\" is not nameprep-compatible"
+				 "the value %S is not nameprep-compatible"
 				 x))
 	 )
        | json ->
@@ -71,7 +71,7 @@ let enum vals =
 		   raise
 		     (Error
 			(Printf.sprintf
-			   "got \"%s\", but only the following values are allowed: %s"
+			   "got %S, but only the following values are allowed: %s"
 			   x vs))
 	 )
        | json ->
@@ -82,6 +82,19 @@ let enum vals =
 let keys =
   P (function
        | `Assoc assoc -> List.map fst assoc
+       | json ->
+	   raise (Error (Printf.sprintf "expected JSON object, got %s"
+			   (JSON.to_string json)))
+    )
+
+let assoc f =
+  P (function
+       | `Assoc assoc ->
+	   List.map
+	     (fun (name, json) ->
+		let P p = f name in
+		  p json
+	     ) assoc
        | json ->
 	   raise (Error (Printf.sprintf "expected JSON object, got %s"
 			   (JSON.to_string json)))
