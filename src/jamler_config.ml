@@ -267,7 +267,7 @@ let process_config cfg =
 	| Some h -> h :: path
 	| None -> path
     in
-      String.concat "/" path
+      String.concat "->" (List.map (fun p -> "\"" ^ p ^ "\"") path)
   in
   let rec traverse path json host =
     match json with
@@ -331,8 +331,7 @@ let process_config cfg =
     traverse [] cfg None;
     config := cfg;
     config_timestamp := Unix.gettimeofday ();
-    lwt () = Lwt_log.notice_f ~section "config syntax is fine" in
-      Lwt.return ()
+    Lwt.return ()
 
 let read_config filename =
   lwt () = Lwt_log.notice_f ~section
@@ -348,7 +347,4 @@ let read_config filename =
 	Lwt.return ()
     with
       | exn ->
-	  lwt () = Lwt_log.fatal ~section
-	    "failed to process config"
-	  in
-	    Lwt.fail exn
+	  Lwt.fail exn

@@ -26,11 +26,11 @@ let start_module host mod_name =
       (* TODO: store mod_info *)
       List.iter (fun (f, _) -> f ()) mod_info;
       Lwt_log.notice_f ~section
-	"started module %s on %s" mod_name (host :> string)
+	"started module %s for \"%s\"" mod_name (host :> string)
   with
     | exn ->
 	Lwt_log.error_f ~exn ~section
-	  "Problem starting the module %s for host %s"
+	  "problem starting the module %s for host %s"
 	  mod_name (host :> string)
 
 let hook hook host f seq =
