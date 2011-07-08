@@ -4,28 +4,25 @@ module Router = Jamler_router
 module Translate = Jamler_translate
 module Config = Jamler_config
 
+open Mod_disco
+
 module ModVCardSQL :
 sig
   include Gen_mod.Module
-  type hook_acc
 
 end
   =
 struct
-  type hook_acc = | Result of (string list)
-                  | Error of Xml.element
-                  | Empty
-
   let name = "mod_vcard_sql"
   let remove_user = Hooks.create ()
   let disco_sm_features = Hooks.create_fold ()
 
   let get_sm_features acc (_from, _to, node, _lang) =
     match acc with
-      | Result features when node = "" ->
-	  Lwt.return (Hooks.OK, Result (<:ns<VCARD>> :: features))
-      | Empty when node = "" ->
-	  Lwt.return (Hooks.OK, Result [ <:ns<VCARD>>])
+      | Features features when node = "" ->
+	  Lwt.return (Hooks.OK, Features (<:ns<VCARD>> :: features))
+      | FEmpty when node = "" ->
+	  Lwt.return (Hooks.OK, Features [ <:ns<VCARD>>])
       | _ ->
 	  Lwt.return (Hooks.OK, acc)
 

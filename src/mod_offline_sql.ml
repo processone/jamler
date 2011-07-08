@@ -2,6 +2,10 @@ module GenIQHandler = Jamler_gen_iq_handler
 module Hooks = Jamler_hooks
 module Router = Jamler_router
 
+let section = Jamler_log.new_section "mod_offline_sql"
+
+open Mod_disco
+
 module ModOfflineSQL :
 sig
   include Gen_mod.Module
@@ -237,13 +241,13 @@ struct
       | "" ->
 	  let feats =
 	    match acc with
-	      | `Result i -> i
+	      | Features i -> i
 	      | _ -> []
 	  in
-	    Lwt.return (Hooks.OK, `Result (feats @ [ <:ns<FEATURE_MSGOFFLINE>>]))
+	    Lwt.return (Hooks.OK, Features (feats @ [ <:ns<FEATURE_MSGOFFLINE>>]))
       | <:ns<FEATURE_MSGOFFLINE>> ->
 	(* override all lesser features... *)
-	Lwt.return (Hooks.OK, `Result [])
+	Lwt.return (Hooks.OK, Features [])
       | _ ->
 	  Lwt.return (Hooks.OK, acc)
 

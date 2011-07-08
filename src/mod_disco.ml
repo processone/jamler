@@ -5,6 +5,8 @@ module Router = Jamler_router
 module SM = Jamler_sm
 module Auth = Jamler_auth
 
+let section = Jamler_log.new_section "mod_disco"
+
 let rec dropwhile pred = function
   | [] ->
       []
@@ -20,10 +22,19 @@ let suffix suff string =
     with
       | _ -> false
 
+type items_t = | Items of (Xml.element list)
+	       | IError of Xml.element
+	       | IEmpty
+		   
+type features_t = | Features of (string list)
+		  | FError of Xml.element
+		  | FEmpty
+
 module ModDisco :
 sig
   include Gen_mod.Module
-  type hook_acc
+  type items_t
+  type features_t
 
   val register_feature : Jlib.namepreped -> string -> unit
   val unregister_feature : Jlib.namepreped -> string -> unit
@@ -31,7 +42,7 @@ sig
   val unregister_extra_domain : Jlib.namepreped -> Jlib.namepreped -> unit
 
   val disco_local_items :
-    (Jlib.jid * Jlib.jid * string * string, hook_acc)
+    (Jlib.jid * Jlib.jid * string * string, items_t)
     Hooks.fold_hook
   val disco_local_identity :
     (Jlib.jid * Jlib.jid * string * string, Xml.element list)
@@ -40,23 +51,40 @@ sig
     (Jlib.namepreped * string option * string * string, Xml.element list)
     Hooks.fold_hook
   val disco_local_features :
-    (Jlib.jid * Jlib.jid * string * string, hook_acc)
+    (Jlib.jid * Jlib.jid * string * string, features_t)
     Hooks.fold_hook
   val disco_sm_items :
-    (Jlib.jid * Jlib.jid * string * string, hook_acc)
+    (Jlib.jid * Jlib.jid * string * string, items_t)
     Hooks.fold_hook
   val disco_sm_identity :
     (Jlib.jid * Jlib.jid * string * string, Xml.element list)
     Hooks.fold_hook
   val disco_sm_features :
-    (Jlib.jid * Jlib.jid * string * string, hook_acc)
+    (Jlib.jid * Jlib.jid * string * string, features_t)
     Hooks.fold_hook
 end
   =
 struct
-  type hook_acc = | Result of (Xml.element list)
-		  | Error of Xml.element
-		  | Empty
+
+  module DFTable = Set.Make(
+    struct
+      let compare = Pervasives.compare
+      type t = string * Jlib.namepreped
+    end)
+
+  module EDTable = Set.Make(
+    struct
+      let compare = Pervasives.compare
+      type t = Jlib.namepreped * Jlib.namepreped
+    end)
+
+  type items_t = | Items of (Xml.element list)
+		 | IError of Xml.element
+		 | IEmpty
+
+  type features_t = | Features of (string list)
+		    | FError of Xml.element
+		    | FEmpty
 
   let name = "mod_disco"
 
@@ -68,30 +96,25 @@ struct
   let disco_sm_identity = Hooks.create_fold ()
   let disco_sm_features = Hooks.create_fold ()
 
-  type disco_features_table = (string, Jlib.namepreped) Hashtbl.t
-  type disco_extra_domains_table = (Jlib.namepreped, Jlib.namepreped) Hashtbl.t
-
-  let disco_features_table = Hashtbl.create 10
-  let disco_extra_domains_table = Hashtbl.create 10
-  let disco_sm_features_table = Hashtbl.create 10
-  let disco_sm_nodes_table = Hashtbl.create 10
-
   let extra_domains = Config.(get_module_opt_with_default
 				name ["extra_domains"] (list namepreped) [])
   let server_info = Config.(get_module_opt_with_default
 			      name ["server_info"] (list string) [])
 
+  let disco_features = ref DFTable.empty
+  let disco_extra_domains = ref EDTable.empty
+
   let register_feature host feature =
-    Hashtbl.replace disco_features_table feature host
+    disco_features := DFTable.add (feature, host) !disco_features
 
   let unregister_feature host feature =
-    Hashtbl.remove disco_features_table feature
+    disco_features := DFTable.remove (feature, host) !disco_features
 
   let register_extra_domain host domain =
-    Hashtbl.replace disco_extra_domains_table domain host
+    disco_extra_domains := EDTable.add (domain, host) !disco_extra_domains
 
   let unregister_extra_domain host domain =
-    Hashtbl.remove disco_extra_domains_table domain
+    disco_extra_domains := EDTable.remove (domain, host) !disco_extra_domains
 
   let is_presence_subscribed from to' =
     (* TODO
@@ -118,7 +141,7 @@ struct
 			 ("name", user)], []))
 	(List.sort compare rs)
 
-  let features_to_xml feature_list =
+  let features_to_xml (feature_list:string list) =
     (* Avoid duplicating features
     [{xmlelement, "feature", [{"var", Feat}], []} ||
 	Feat <- lists:usort(
@@ -128,7 +151,9 @@ struct
 		       (Feature) when is_list(Feature) ->
 			    Feature
 		    end, FeatureList))]. *)
-    feature_list
+    List.map
+      (fun feat -> `XmlElement ("feature", [("var", feat)], []))
+      feature_list
 
   let domain_to_xml domain =
     Lwt.return (`XmlElement ("item", [("jid", domain)], []))
@@ -151,40 +176,36 @@ struct
 		 vh = host
 	) ((Router.dirty_get_all_routes ()) :> string list)
 
-  (* let select_disco_extra_domains host =
-    Hashtbl.fold (fun d h acc ->
+  let select_disco_extra_domains host =
+    EDTable.fold (fun (d, h) acc ->
 		    if h = host then (d :> string) :: acc
 		    else acc)
-      disco_extra_domains_table []
+      !disco_extra_domains []
 
   let select_disco_features host =
-    Hashtbl.fold (fun f h acc ->
+    DFTable.fold (fun (f, h) acc ->
 		    if h = host then f :: acc
 		    else acc)
-      disco_features_table [] *)
-
-  (* TODO *)
-  let select_disco_extra_domains host = []
-  let select_disco_features host = []
+      !disco_features []
 
   let get_local_services acc (from, to', node, lang) =
     match acc with
-      | Error _ ->
+      | IError _ ->
 	  Lwt.return (Hooks.OK, acc)
       | _ when node = "" ->
 	  let items = match acc with
-	    | Result its -> its
-	    | Empty -> []
+	    | Items its -> its
+	    | IEmpty -> []
 	  in
 	  let host = to'.Jlib.lserver in
 	  lwt res = (* TODO lists:usort( *)
 	    Lwt_list.map_s domain_to_xml
 	      ((get_vh_services (host :> string)) @ (select_disco_extra_domains host)) in
-	    Lwt.return (Hooks.OK, Result (res @ items))
-      | Result _ ->
+	    Lwt.return (Hooks.OK, Items (res @ items))
+      | Items _ ->
 	  Lwt.return (Hooks.OK, acc)
-      | Empty ->
-	  Lwt.return (Hooks.OK, Error Jlib.err_item_not_found)
+      | IEmpty ->
+	  Lwt.return (Hooks.OK, IError Jlib.err_item_not_found)
 
   let get_local_identity acc (_from, _to, node, _lang) =
     match node with
@@ -202,29 +223,29 @@ struct
 
   let get_local_features acc (_from, to', node, _lang) =
     match acc with
-      | Error _ ->
+      | FError _ ->
 	  Lwt.return (Hooks.OK, acc)
       | _ when node = "" ->
 	  let feats = match acc with
-	    | Result features -> features
-	    | Empty -> []
+	    | Features features -> features
+	    | FEmpty -> []
 	  in
 	  let host = to'.Jlib.lserver in
 	    Lwt.return
-	      (Hooks.OK, Result ((select_disco_features host) @ feats))
-      | Result _ ->
+	      (Hooks.OK, Features ((select_disco_features host) @ feats))
+      | Features _ ->
 	  Lwt.return (Hooks.OK, acc)
-      | Empty ->
-	  Lwt.return (Hooks.OK, Error Jlib.err_item_not_found)
+      | FEmpty ->
+	  Lwt.return (Hooks.OK, FError Jlib.err_item_not_found)
 
   let get_sm_items acc (from, to', node, _lang) =
     match acc with
-      | Error _ ->
+      | IError _ ->
 	  Lwt.return (Hooks.OK, acc)
       | _ when node = "" ->
 	  let items = match acc with
-	    | Result its -> its
-	    | Empty -> []
+	    | Items its -> its
+	    | IEmpty -> []
 	  in
 	  lwt items1 =
 	    match_lwt is_presence_subscribed from to' with
@@ -233,26 +254,26 @@ struct
 	      | false ->
 		  Lwt.return []
 	  in
-	    Lwt.return (Hooks.OK, Result (items @ items1))
-      | Result _ ->
+	    Lwt.return (Hooks.OK, Items (items @ items1))
+      | Items _ ->
 	  Lwt.return (Hooks.OK, acc)
-      | Empty ->
+      | IEmpty ->
 	  let {Jlib.luser = lfrom; Jlib.lserver = lsfrom; _} = from in
 	  let {Jlib.luser = lto; Jlib.lserver = lsto; _} = to' in
 	    if (lfrom = lto && lsfrom = lsto) then
-	      Lwt.return (Hooks.OK, Error Jlib.err_item_not_found)
+	      Lwt.return (Hooks.OK, IError Jlib.err_item_not_found)
 	    else
-	      Lwt.return (Hooks.OK, Error Jlib.err_not_allowed)
+	      Lwt.return (Hooks.OK, IError Jlib.err_not_allowed)
 
   let get_sm_features acc (from, to', _node, _lang) =
     match acc with
-      | Empty ->
+      | FEmpty ->
 	  let {Jlib.luser = lfrom; Jlib.lserver = lsfrom; _} = from in
 	  let {Jlib.luser = lto; Jlib.lserver = lsto; _} = to' in
 	    if (lfrom = lto && lsfrom = lsto) then
-	      Lwt.return (Hooks.OK, Error Jlib.err_item_not_found)
+	      Lwt.return (Hooks.OK, FError Jlib.err_item_not_found)
 	    else
-	      Lwt.return (Hooks.OK, Error Jlib.err_not_allowed)
+	      Lwt.return (Hooks.OK, FError Jlib.err_not_allowed)
       | _ ->
 	  Lwt.return (Hooks.OK, acc)
 
@@ -334,8 +355,8 @@ struct
 	  let host = to'.Jlib.lserver in
 	  let lang = iq.Jlib.iq_lang in
 	    match_lwt Hooks.run_fold disco_local_items
-	      host Empty (from, to', node, lang) with
-		| Result items ->
+	      host IEmpty (from, to', node, lang) with
+		| Items items ->
 		    let anode = match node with
 		      | "" -> []
 		      | _ -> [("node", node)]
@@ -348,7 +369,7 @@ struct
 					("query",
 					 ("xmlns", <:ns<DISCO_ITEMS>>) :: anode,
 					 (items :> Xml.element_cdata list))))})
-		| Error error ->
+		| IError error ->
 		    Lwt.return (`IQ {iq with
 				       Jlib.iq_type =
 				    `Error (error, Some subel)})
@@ -368,8 +389,8 @@ struct
 	  lwt info = Hooks.run_fold disco_info
 	    host [] (host, Some name, node, lang) in
 	    match_lwt Hooks.run_fold disco_local_features
-	      host Empty (from, to', node, lang) with
-		| Result features ->
+	      host FEmpty (from, to', node, lang) with
+		| Features features ->
 		    let anode = match node with
 		      | "" -> []
 		      | _ -> [("node", node)]
@@ -383,7 +404,7 @@ struct
 					("query",
 					 ("xmlns", <:ns<DISCO_INFO>>) :: anode,
 					 (res_els :> Xml.element_cdata list))))})
-		| Error error ->
+		| FError error ->
 		    Lwt.return (`IQ {iq with
 				       Jlib.iq_type =
 				    `Error (error, Some subel)})
@@ -401,8 +422,8 @@ struct
 		let node = Xml.get_tag_attr_s "node" subel in
 		let lang = iq.Jlib.iq_lang in
 		  match_lwt Hooks.run_fold disco_sm_items
-		    host Empty (from, to', node, lang) with
-		      | Result items ->
+		    host IEmpty (from, to', node, lang) with
+		      | Items items ->
 			  let anode = match node with
 			    | "" -> []
 			    | _ -> [("node", node)]
@@ -417,7 +438,7 @@ struct
 					       :: anode,
 					       (items :> Xml.element_cdata list)
 					      )))})
-		      | Error error ->
+		      | IError error ->
 			  Lwt.return (`IQ {iq with
 					     Jlib.iq_type =
 					  `Error (error, Some subel)}))
@@ -442,8 +463,8 @@ struct
 		lwt identity = Hooks.run_fold disco_sm_identity
 		  host [] (from, to', node, lang) in
 		  match_lwt Hooks.run_fold disco_sm_features
-		    host Empty (from, to', node, lang) with
-		      | Result features ->
+		    host FEmpty (from, to', node, lang) with
+		      | Features features ->
 			  let anode = match node with
 			    | "" -> []
 			    | _ -> [("node", node)]
@@ -458,7 +479,7 @@ struct
 					       ("xmlns", <:ns<DISCO_INFO>>)
 					       :: anode,
 					       (res_els :> Xml.element_cdata list))))})
-		      | Error error ->
+		      | FError error ->
 			  Lwt.return (`IQ {iq with
 					     Jlib.iq_type =
 					  `Error (error, Some subel)}))
