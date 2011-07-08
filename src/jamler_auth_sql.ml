@@ -44,6 +44,14 @@ struct
     match_lwt get_password user server with
       | Some passwd -> Lwt.return true
       | None -> Lwt.return false
+
+  let remove_user _user _server =
+    (* TODO *)
+    Lwt.return ()
+
+  let remove_user' _user _server _password =
+    Lwt.return ()
+
 end
 
 let () =

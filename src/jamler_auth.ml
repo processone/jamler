@@ -13,6 +13,8 @@ sig
     Jlib.nodepreped -> Jlib.namepreped -> string option Lwt.t
 
   val does_user_exist : Jlib.nodepreped -> Jlib.namepreped -> bool Lwt.t
+  val remove_user : Jlib.nodepreped -> Jlib.namepreped -> unit Lwt.t
+  val remove_user' : Jlib.nodepreped -> Jlib.namepreped -> string -> unit Lwt.t
 end
 
 let mods : (string, (module Auth)) Hashtbl.t =
@@ -102,6 +104,13 @@ let does_user_exist user server =
   in
     aux user server (auth_modules server)
 
+let remove_user _user _server =
+  (* TODO *)
+  Lwt.return ()
+
+let remove_user' _user _server _password =
+  (* TODO *)
+  Lwt.return ()
 
 module BenignAuth : Auth =
 struct
@@ -120,6 +129,13 @@ struct
 
   let does_user_exist _user _server =
     Lwt.return true
+
+  let remove_user _user _server =
+    Lwt.return ()
+
+  let remove_user' _user _server _password =
+    Lwt.return ()
+
 end
 
 let () =

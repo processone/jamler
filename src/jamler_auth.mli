@@ -11,6 +11,8 @@ sig
     Jlib.nodepreped -> Jlib.namepreped -> string option Lwt.t
 
   val does_user_exist : Jlib.nodepreped -> Jlib.namepreped -> bool Lwt.t
+  val remove_user : Jlib.nodepreped -> Jlib.namepreped -> unit Lwt.t
+  val remove_user' : Jlib.nodepreped -> Jlib.namepreped -> string -> unit Lwt.t
 end
 
 val register_mod : (module Auth) -> unit
@@ -24,3 +26,5 @@ val get_password_with_authmodule :
   Jlib.nodepreped -> Jlib.namepreped -> (string * string) option Lwt.t
 
 val does_user_exist : Jlib.nodepreped -> Jlib.namepreped -> bool Lwt.t
+val remove_user : Jlib.nodepreped -> Jlib.namepreped -> unit Lwt.t
+val remove_user' : Jlib.nodepreped -> Jlib.namepreped -> string -> unit Lwt.t
