@@ -25,6 +25,11 @@ sig
   include Gen_mod.Module
   type hook_acc
 
+  val register_feature : Jlib.namepreped -> string -> unit
+  val unregister_feature : Jlib.namepreped -> string -> unit
+  val register_extra_domain : Jlib.namepreped -> Jlib.namepreped -> unit
+  val unregister_extra_domain : Jlib.namepreped -> Jlib.namepreped -> unit
+
   val disco_local_items :
     (Jlib.jid * Jlib.jid * string * string, hook_acc)
     Hooks.fold_hook
@@ -79,8 +84,14 @@ struct
   let register_feature host feature =
     Hashtbl.replace disco_features_table feature host
 
+  let unregister_feature host feature =
+    Hashtbl.remove disco_features_table feature
+
   let register_extra_domain host domain =
     Hashtbl.replace disco_extra_domains_table domain host
+
+  let unregister_extra_domain host domain =
+    Hashtbl.remove disco_extra_domains_table domain
 
   let is_presence_subscribed from to' =
     (* TODO
@@ -484,3 +495,8 @@ struct
 end
 
 let () = Gen_mod.register_mod (module ModDisco : Gen_mod.Module)
+
+let register_feature = ModDisco.register_feature
+let unregister_feature = ModDisco.unregister_feature
+let register_extra_domain = ModDisco.register_extra_domain
+let unregister_extra_domain = ModDisco.unregister_extra_domain
