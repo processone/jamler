@@ -9,3 +9,4 @@ mod_last_sql
 mod_private_sql
 mod_offline_sql
 mod_disco
+mod_vcard_sql
