@@ -7,16 +7,11 @@ sig
   include Gen_mod.Module
 
   val get_last_info : Jlib.nodepreped -> Jlib.namepreped -> (int * string) Lwt.t
-  val roster_get_jid_info :
-    (Jlib.nodepreped * Jlib.namepreped * Jlib.jid,
-     Gen_roster.subscription * string list)
-    Hooks.fold_hook
 end
   =
 struct
   let name = "mod_last_sql"
   let section = Jamler_log.new_section name
-  let roster_get_jid_info = Hooks.create_fold ()
   let remove_user = Hooks.create ()
   let unset_presence_hook = Hooks.create ()
 
@@ -111,10 +106,10 @@ struct
 	let user = to'.Jlib.luser in
 	let server = to'.Jlib.lserver in
 	lwt (subscription, _groups) =
-	  Hooks.run_fold roster_get_jid_info server
-	    (`None `None, []) (user, server, from) in (
+	  Hooks.run_fold Gen_roster.roster_get_jid_info server
+	    (`None, []) (user, server, from) in (
 	    match subscription with
-	      | `Both | `From _ -> (
+	      | `Both | `From -> (
 		  (* TODO: privacy required
 		    UserListRecord = ejabberd_hooks:run_fold(
 				       privacy_get_user_list, Server,

@@ -9,6 +9,8 @@ module Auth = Jamler_auth
 module SASL = Jamler_sasl
 module Router = Jamler_router
 module SM = Jamler_sm
+module Roster = Gen_roster
+module Privacy = Mod_privacy_sql
 
 module C2S :
 sig
@@ -20,14 +22,6 @@ sig
   val init : init_data -> msg pid -> state Lwt.t
   val handle : msg -> state -> state GenServer.result
   val terminate : state -> unit Lwt.t
-
-  val roster_get_subscription_lists :
-    (Jlib.nodepreped * Jlib.namepreped, LJID.t list * LJID.t list)
-    Hooks.fold_hook
-  val roster_out_subscription :
-    (Jlib.nodepreped * Jlib.namepreped * Jlib.jid *
-       [ `Subscribe | `Subscribed | `Unsubscribe | `Unsubscribed ])
-    Hooks.hook
 end =
 struct
   type msg =
@@ -71,8 +65,8 @@ struct
        (*pres_pri,*)
        pres_timestamp : float;
        pres_invis : bool;
-       (*privacy_list = #userlist{},
-       conn = unknown,
+       privacy_list : Privacy.userlist;
+       (*conn = unknown,
        auth_module = unknown,*)
        ip : Unix.inet_addr;
        (*redirect = false,
@@ -114,6 +108,7 @@ struct
 		 pres_timestamp = 0.0;
 		 pres_invis = false;
 		 pres_last = None;
+		 privacy_list = Privacy.new_userlist ();
 		 ip = Unix.inet_addr_any;	(* TODO *)
 		 lang = "";
 		}
@@ -529,8 +524,6 @@ struct
 		state
 
 
-  let roster_out_subscription = Hooks.create ()
-
   (* User sends a directed presence packet *)
   let presence_track from to' packet state =
     let `XmlElement (_name, attrs, _els) = packet in
@@ -549,25 +542,25 @@ struct
 	    let pres_a = LJIDSet.remove lto state.pres_a in
 	      {state with pres_i; pres_a}
 	| "subscribe" ->
-	    Hooks.run roster_out_subscription server
+	    Hooks.run Roster.roster_out_subscription server
 	      (user, server, to', `Subscribe);
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
 	    state
 	| "subscribed" ->
-	    Hooks.run roster_out_subscription server
+	    Hooks.run Roster.roster_out_subscription server
 	      (user, server, to', `Subscribed);
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
 	    state
 	| "unsubscribe" ->
-	    Hooks.run roster_out_subscription server
+	    Hooks.run Roster.roster_out_subscription server
 	      (user, server, to', `Unsubscribe);
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
 	    state
 	| "unsubscribed" ->
-	    Hooks.run roster_out_subscription server
+	    Hooks.run Roster.roster_out_subscription server
 	      (user, server, to', `Unsubscribed);
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
@@ -582,7 +575,39 @@ struct
 	    let pres_a = LJIDSet.add lto state.pres_a in
 	      {state with pres_i; pres_a}
 
-  let roster_get_subscription_lists = Hooks.create_fold ()
+  let process_privacy_iq from to' iq state =
+    lwt res, subel, state =
+      match iq with
+	| {Jlib.iq_type = `Get subel} as iq ->
+	    lwt res =
+	      Hooks.run_fold
+		Privacy.privacy_iq_get
+		state.server
+		(`Error Jlib.err_feature_not_implemented)
+		(from, to', iq, state.privacy_list)
+	    in
+	      Lwt.return (res, subel, state)
+	| {Jlib.iq_type = `Set subel} as iq -> (
+	    match_lwt (Hooks.run_fold Privacy.privacy_iq_set state.server
+			 (`Error Jlib.err_feature_not_implemented)
+			 (from, to', iq)) with
+	      | `ResultList (res, newprivlist) ->
+		  Lwt.return (`Result res, subel,
+			      {state with privacy_list = newprivlist})
+	      | (`Result _ | `Error _) as res ->
+		  Lwt.return (res, subel, state)
+	  )
+    in
+    let iqres =
+      match res with
+	| `Result result ->
+	    {iq with Jlib.iq_type = `Result result}
+	| `Error error ->
+	    {iq with Jlib.iq_type = `Error (error, Some subel)}
+    in
+      Router.route to' from (Jlib.iq_to_xml iqres);
+      Lwt.return state
+
 
   (* Check from attributes
      returns invalid-from|NewElement *)
@@ -936,7 +961,7 @@ wait_for_stream(timeout, StateData) ->
 					(*change_shaper(StateData, JID),*)
 					lwt (fs, ts) =
 					  Hooks.run_fold
-					    roster_get_subscription_lists
+					    Roster.roster_get_subscription_lists
 					    state.server
 					    ([], [])
 					    (jid.Jlib.luser, state.server)
@@ -1397,7 +1422,7 @@ wait_for_bind(timeout, StateData) ->
 		    (*change_shaper(StateData, JID),*)
 			lwt (fs, ts) =
 			  Hooks.run_fold
-			    roster_get_subscription_lists
+			    Roster.roster_get_subscription_lists
 			    state.server
 			    ([], [])
 			    (u, state.server)
@@ -1497,16 +1522,16 @@ wait_for_session(timeout, StateData) ->
 	  )
 	| _ -> el
     in
-    let state =
+    lwt state =
       match to_jid with
 	| None -> (
 	    match Xml.get_attr_s "type" attrs with
 	      | "error"
-	      | "result" -> state
+	      | "result" -> Lwt.return state
 	      | _ ->
 		  let err = Jlib.make_error_reply el Jlib.err_jid_malformed in
 	  	    send_element state err;
-		    state
+		    Lwt.return state
 	  )
 	| Some to_jid -> (
 	    match name with
@@ -1526,27 +1551,26 @@ wait_for_session(timeout, StateData) ->
 		  then (
 		    (*?DEBUG("presence_update(~p,~n\t~p,~n\t~p)",
 		      [FromJID, PresenceEl, StateData]),*)
-		    presence_update from_jid el state
+		    Lwt.return (presence_update from_jid el state)
 		  ) else (
-		    presence_track from_jid to_jid el state
+		    Lwt.return (presence_track from_jid to_jid el state)
 		  )
 		)
 	      | "iq" -> (
 		  match Jlib.iq_query_info el with
-		    (*| #iq{xmlns = ?NS_PRIVACY} = IQ ->
-				ejabberd_hooks:run(
+		    | `IQ ({Jlib.iq_xmlns = <:ns<PRIVACY>>} as iq) ->
+				(*ejabberd_hooks:run(
 				  user_send_packet,
 				  Server,
-				  [StateData#state.debug, FromJID, ToJID, NewEl]),
-				process_privacy_iq(
-				  FromJID, ToJID, IQ, StateData);*)
+				  [StateData#state.debug, FromJID, ToJID, NewEl]),*)
+			process_privacy_iq from_jid to_jid iq state
 		    | _ ->
 				(*ejabberd_hooks:run(
 				  user_send_packet,
 				  Server,
                                   [StateData#state.debug, FromJID, ToJID, NewEl]),*)
 			check_privacy_route from_jid state from_jid to_jid el;
-			state
+			Lwt.return state
 		)
 	      | "message" ->
 			(*ejabberd_hooks:run(user_send_packet,
@@ -1554,9 +1578,9 @@ wait_for_session(timeout, StateData) ->
 					   [StateData#state.debug, FromJID, ToJID, NewEl]),
 			*)
 		  check_privacy_route from_jid state from_jid to_jid el;
-		  state
+		  Lwt.return state
 	      | _ ->
-		  state
+		  Lwt.return state
 	  )
     in
       (*ejabberd_hooks:run(c2s_loop_debug, [{xmlstreamelement, El}]),*)

@@ -3,7 +3,6 @@ module Hooks = Jamler_hooks
 module Router = Jamler_router
 module GenIQHandler = Jamler_gen_iq_handler
 module SM = Jamler_sm
-module C2S = Jamler_c2s.C2S
 
 type subscription =
     [ `None of [ `None | `Out | `In | `Both ]
@@ -165,6 +164,24 @@ let in_auto_reply subscription t =
     | `Both,       `Unsubscribe -> Some `Unsubscribed
     | _,           _            -> None
 
+let roster_get_jid_info :
+    (Jlib.nodepreped * Jlib.namepreped * Jlib.jid,
+     [ `None | `From | `To | `Both ] * string list)
+    Hooks.fold_hook
+    = Hooks.create_fold ()
+
+  (*val roster_get_subscription_lists :
+    (Jlib.nodepreped * Jlib.namepreped, LJID.t list * LJID.t list)
+    Hooks.fold_hook
+  val roster_out_subscription :
+    (Jlib.nodepreped * Jlib.namepreped * Jlib.jid *
+       [ `Subscribe | `Subscribed | `Unsubscribe | `Unsubscribed ])
+    Hooks.hook
+  *)
+
+let roster_get_subscription_lists = Hooks.create_fold ()
+
+let roster_out_subscription = Hooks.create ()
 
 
 module type RosterStorage =
@@ -921,8 +938,8 @@ webadmin_user(Acc, _User, _Server, Lang) ->
     Lwt.return (
       [Gen_mod.fold_hook roster_get host get_user_roster 50;
        Gen_mod.fold_hook SM.roster_in_subscription host in_subscription 50;
-       Gen_mod.hook C2S.roster_out_subscription host out_subscription 50;
-       Gen_mod.fold_hook C2S.roster_get_subscription_lists host
+       Gen_mod.hook roster_out_subscription host out_subscription 50;
+       Gen_mod.fold_hook roster_get_subscription_lists host
 	 get_subscription_lists 50;
     (*ejabberd_hooks:add(roster_get_jid_info, Host,
 		       ?MODULE, get_jid_info, 50),
