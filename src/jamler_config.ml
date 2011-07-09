@@ -364,7 +364,7 @@ let process_config cfg =
 				  raise
 				    (Error
 				       (Printf.sprintf
-					  "Error processing option %s: %s"
+					  "error processing option %s: %s"
 					  (host_path_to_string host path) err
 				       ))
 			  )
