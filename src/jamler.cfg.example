@@ -74,7 +74,8 @@
     "mod_disco": {},
     "mod_vcard_sql": {},
     "mod_ping": {},
-    "mod_register": {}
+    "mod_register": {},
+    "mod_privacy_sql": {}
   }
 }
 
