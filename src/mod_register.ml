@@ -281,28 +281,6 @@ struct
 				      Lwt.return
 					(`IQ {iq with Jlib.iq_type =
 					     `Result (Some subel)})
-				    (* ok ->
-					    IQ#iq{type = result,
-						  sub_el = [SubEl]};
-					%% TODO FIXME: This piece of
-					%% code does not work since
-					%% the code have been changed
-					%% to allow several auth
-					%% modules.  lists:foreach can
-					%% only return ok:
-					not_allowed ->
-					    IQ#iq{type = error,
-						  sub_el =
-						  [SubEl, ?ERR_NOT_ALLOWED]};
-					not_exists ->
-					    IQ#iq{type = error,
-						  sub_el =
-						  [SubEl, ?ERR_ITEM_NOT_FOUND]};
-					_ ->
-					    IQ#iq{type = error,
-						  sub_el =
-						  [SubEl,
-						   ?ERR_INTERNAL_SERVER_ERROR]} *)
 				| _ ->
 				    Lwt.return
 				      (`IQ {iq with
