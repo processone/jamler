@@ -120,6 +120,8 @@ let run_plain hook host x =
     with
       | Not_found -> ()
 
+let delete_plain = delete
+
 
 type ('a, 'b) fold_plain_hook =
     (Jlib.namepreped, (int * ('b -> 'a -> result * 'b)) list) Hashtbl.t
@@ -150,4 +152,6 @@ let run_fold_plain hook host v x =
 	aux v x h
     with
       | Not_found -> v
+
+let delete_fold_plain = delete
 

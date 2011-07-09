@@ -236,17 +236,14 @@ struct
 	    ()
 
   let privacy_check_packet state from to' packet dir =
-    (* TODO *)
-    true
-    (*ejabberd_hooks:run_fold(
-      privacy_check_packet, StateData#state.server,
-      allow,
-      [StateData#state.user,
-       StateData#state.server,
-       StateData#state.privacy_list,
-       {From, To, Packet},
-       Dir]).
-    *)
+    Hooks.run_fold_plain
+      Privacy.privacy_check_packet state.server
+      true
+      (state.user,
+       state.server,
+       state.privacy_list,
+       (from, to', packet),
+       dir)
 
 
   let presence_broadcast state from jidset packet =
@@ -316,6 +313,79 @@ struct
 	  with
 	    | Failure "int_of_string" -> 0
 	)
+
+  let roster_change ijid isubscription state =
+    let lijid = (*Jlib.jid_tolower*) ijid in
+    let isfrom =
+      match isubscription with
+	| `Both | `From -> true
+	| `To | `None | `Remove -> false
+    in
+    let isto =
+      match isubscription with
+	| `Both | `To -> true
+	| `From | `None | `Remove -> false
+    in
+    let oldisfrom = LJIDSet.mem lijid state.pres_f in
+    let fset =
+      if isfrom
+      then LJIDSet.add lijid state.pres_f
+      else LJIDSet.remove lijid state.pres_f
+    in
+    let tset =
+      if isto
+      then LJIDSet.add lijid state.pres_t
+      else LJIDSet.remove lijid state.pres_t
+    in
+      match state.pres_last with
+	| None ->
+	    {state with pres_f = fset; pres_t = tset}
+	| Some p ->
+	    (*?DEBUG("roster changed for ~p~n", [StateData#state.user]),*)
+	    let from = state.jid in
+	    let to' = Jlib.ljid_to_jid ijid in
+	    let cond1 = (not state.pres_invis) && isfrom && (not oldisfrom) in
+	    let cond2 = (not isfrom) && oldisfrom
+	      && (LJIDSet.mem lijid state.pres_a ||
+		    LJIDSet.mem lijid state.pres_i)
+	    in
+	      if cond1 then (
+		(* ?DEBUG("C1: ~p~n", [LIJID]), *)
+		let () =
+		  match privacy_check_packet state from to' p `Out with
+		    | false ->
+			()
+		    | true ->
+			Router.route from to' p
+		in
+		let a = LJIDSet.add lijid state.pres_a in
+		  {state with
+		     pres_a = a;
+		     pres_f = fset;
+		     pres_t = tset}
+	      ) else if cond2 then (
+		(*?DEBUG("C2: ~p~n", [LIJID]),*)
+		let pu =
+		  `XmlElement ("presence", [("type", "unavailable")], [])
+		in
+		let () =
+		  match privacy_check_packet state from to' pu `Out with
+		    | false ->
+			()
+		    | true ->
+			Router.route from to' pu
+		in
+		let i = LJIDSet.remove lijid state.pres_i in
+		let a = LJIDSet.remove lijid state.pres_a in
+		  {state with
+		     pres_i = i;
+		     pres_a = a;
+		     pres_f = fset;
+		     pres_t = tset}
+	      ) else
+		{state with
+		   pres_f = fset;
+		   pres_t = tset}
 
 
   let resend_offline_messages state =
@@ -412,27 +482,20 @@ struct
 	    if cond1 then (
 	      let packet = pres_last in
 	      let timestamp = state.pres_timestamp in
-		    (*Packet1 = maybe_add_delay(Packet, utc, To, "", Timestamp),
-		    case ejabberd_hooks:run_fold(
-			   privacy_check_packet, StateData#state.server,
-			   allow,
-			   [StateData#state.user,
-			    StateData#state.server,
-			    StateData#state.privacy_list,
-			    {To, From, Packet1},
-			    out]) of
-			deny ->
-			    ok;
-			allow ->
-			    Pid=element(2, StateData#state.sid),
-			    ejabberd_hooks:run(presence_probe_hook, StateData#state.server, [From, To, Pid]),*)
-			    (* Don't route a presence probe to oneself *)
-		if lfrom <> Jlib.jid_tolower to' then (
-		  Router.route to' from packet
-		)
+		    (*Packet1 = maybe_add_delay(Packet, utc, To, "", Timestamp),*)
+		match privacy_check_packet state to' from packet `Out with
+		  | false ->
+		      ()
+		  | true ->
+		      (*Pid=element(2, StateData#state.sid),
+			ejabberd_hooks:run(presence_probe_hook, StateData#state.server, [From, To, Pid]),*)
+		      (* Don't route a presence probe to oneself *)
+		      if lfrom <> Jlib.jid_tolower to' then (
+			Router.route to' from packet
+		      )
 	    ) else if cond2 then (
-		    Router.route to' from
-		      (`XmlElement ("presence", [], []));
+	      Router.route to' from
+		(`XmlElement ("presence", [], []));
 	    ) else ()
 
   (* User updates his presence (non-directed presence packet) *)
@@ -971,12 +1034,13 @@ wait_for_stream(timeout, StateData) ->
 					in
 					let fs = ljid :: fs in
 					let ts = ljid :: ts in
-					  (*PrivList =
-                                          ejabberd_hooks:run_fold(
-                                          privacy_get_user_list,
-                                          StateData#state.server,
-                                          #userlist{},
-                                          [U, StateData#state.server]),*)
+					lwt priv_list =
+                                          Hooks.run_fold
+                                            Privacy.privacy_get_user_list
+                                            state.server
+                                            (Privacy.new_userlist ())
+                                            (jid.Jlib.luser, state.server)
+					in
 					let state =
                                           {state with
                                              user = jid.Jlib.luser;
@@ -987,7 +1051,7 @@ wait_for_stream(timeout, StateData) ->
                                                auth_module = AuthModule,*)
 					     pres_f = LJIDSet.from_list fs;
 					     pres_t = LJIDSet.from_list ts;
-                                               (*privacy_list = PrivList*)}
+                                             privacy_list = priv_list}
 					in
 					  (*DebugFlag = ejabberd_hooks:run_fold(
                                             c2s_debug_start_hook,
@@ -1558,7 +1622,7 @@ wait_for_session(timeout, StateData) ->
 		)
 	      | "iq" -> (
 		  match Jlib.iq_query_info el with
-		    | `IQ ({Jlib.iq_xmlns = <:ns<PRIVACY>>} as iq) ->
+		    | `IQ ({Jlib.iq_xmlns = <:ns<PRIVACY>>; _} as iq) ->
 				(*ejabberd_hooks:run(
 				  user_send_packet,
 				  Server,
@@ -1711,44 +1775,6 @@ session_established(timeout, StateData) ->
 			(false, attrs, state)
 		)
 	  )
-	| "broadcast" -> (
-		(*?DEBUG("broadcast~n~p~n", [Els]),
-		case Els of
-		    [{item, IJID, ISubscription}] ->
-			{false, Attrs,
-			 roster_change(IJID, ISubscription,
-				       StateData)};
-		    [{exit, Reason}] ->
-			{exit, Attrs, Reason};
-		    [{privacy_list, PrivList, PrivListName}] ->
-			case ejabberd_hooks:run_fold(
-			       privacy_updated_list, StateData#state.server,
-			       false,
-			       [StateData#state.privacy_list,
-				PrivList]) of
-			    false ->
-				{false, Attrs, StateData};
-			    NewPL ->
-				PrivPushIQ =
-				    #iq{type = set, xmlns = ?NS_PRIVACY,
-					id = "push" ++ randoms:get_string(),
-					sub_el = [{xmlelement, "query",
-						   [{"xmlns", ?NS_PRIVACY}],
-						   [{xmlelement, "list",
-						     [{"name", PrivListName}],
-						     []}]}]},
-				PrivPushEl =
-				    jlib:replace_from_to(
-				      jlib:jid_remove_resource(
-					StateData#state.jid),
-				      StateData#state.jid,
-				      jlib:iq_to_xml(PrivPushIQ)),
-				send_element(StateData, PrivPushEl),
-				{false, Attrs, StateData#state{privacy_list = NewPL}}
-			end;
-		    _ ->*)
-	    (false, attrs, state)
-	  )
 	| "iq" -> (
 	    match Jlib.iq_query_info packet with
 	      (*| `IQ {Jlib.iq_xmlns = <:ns<LAST>>} ->
@@ -1811,15 +1837,6 @@ session_established(timeout, StateData) ->
 	| _ ->
 	    (true, attrs, state)
     in
-      (*if
-	Pass == exit ->
-	    catch send_trailer(StateData),
-	    case NewState of
-		rebind ->
-		    {stop, normal, StateData#state{authenticated = rebinded}};
-		_ ->
-		    {stop, normal, StateData}
-	    end;*)
       if pass then (
 	let attrs =
 	  Jlib.replace_from_to_attrs
@@ -1834,6 +1851,58 @@ session_established(timeout, StateData) ->
 			       [StateData#state.debug, StateData#state.jid, From, To, FixedPacket]),
 	  ejabberd_hooks:run(c2s_loop_debug, [{route, From, To, Packet}]),*)
 	  fsm_next_state state
+      ) else (
+	(*ejabberd_hooks:run(c2s_loop_debug, [{route, From, To, Packet}]),*)
+	fsm_next_state state
+      )
+
+  let handle_broadcast (`Broadcast data) state =
+    lwt (stop, state) =
+      match data with
+	| `RosterItem (ijid, isubscription) ->
+	    let state = roster_change ijid isubscription state in
+	      Lwt.return (false, state)
+	| _ -> (
+	    (*
+		    [{exit, Reason}] ->
+			{exit, Attrs, Reason};
+		    [{privacy_list, PrivList, PrivListName}] ->
+			case ejabberd_hooks:run_fold(
+			       privacy_updated_list, StateData#state.server,
+			       false,
+			       [StateData#state.privacy_list,
+				PrivList]) of
+			    false ->
+				{false, Attrs, StateData};
+			    NewPL ->
+				PrivPushIQ =
+				    #iq{type = set, xmlns = ?NS_PRIVACY,
+					id = "push" ++ randoms:get_string(),
+					sub_el = [{xmlelement, "query",
+						   [{"xmlns", ?NS_PRIVACY}],
+						   [{xmlelement, "list",
+						     [{"name", PrivListName}],
+						     []}]}]},
+				PrivPushEl =
+				    jlib:replace_from_to(
+				      jlib:jid_remove_resource(
+					StateData#state.jid),
+				      StateData#state.jid,
+				      jlib:iq_to_xml(PrivPushIQ)),
+				send_element(StateData, PrivPushEl),
+				{false, Attrs, StateData#state{privacy_list = NewPL}}
+			end;
+		    _ ->*)
+	    Lwt.return (false, state)
+	  )
+    in
+      if stop then (
+	send_trailer state;
+	(*case NewState of
+		rebind ->
+		    {stop, normal, StateData#state{authenticated = rebinded}};
+		_ ->*)
+	Lwt.return (`Stop state)
       ) else (
 	(*ejabberd_hooks:run(c2s_loop_debug, [{route, From, To, Packet}]),*)
 	fsm_next_state state
@@ -1860,8 +1929,10 @@ session_established(timeout, StateData) ->
       | `Tcp_close _socket -> assert false
       | #XMLReceiver.msg as m ->
 	  handle_xml m state
-      | #SM.msg as m ->
+      | #Router.msg as m ->
 	  handle_route m state
+      | `Broadcast _ as m ->
+	  handle_broadcast m state
       | `Zxc (s, n) ->
           if n <= 1000000 then (
             Tcp.send_async state.socket (string_of_int n ^ s);
@@ -1942,10 +2013,11 @@ struct
     Jamler_config.(
       P (function
 	   | `Assoc assoc ->
-	       let access_name =
+	       let access =
 		 try
 		   match List.assoc "access" assoc with
-		     | `String access -> access
+		     | `String access_name ->
+			 Jamler_acl.(get_rule access_name access)
 		     | json ->
 			 raise (Error
 				  (Printf.sprintf
@@ -1953,9 +2025,8 @@ struct
 				     (JSON.to_string json)))
 		 with
 		   | Not_found ->
-		       raise (Error "port number must be present")
+		       Jamler_acl.all
 	       in
-	       let access = Jamler_acl.(get_rule access_name access) in
 		 (fun socket -> ignore (C2SServer.start (socket, access)))
 	   | json ->
 	       raise (Error

@@ -16,6 +16,12 @@ val hook :
 val fold_hook :
   ('a, 'b) Jamler_hooks.fold_hook -> Jlib.namepreped ->
   ('b -> 'a -> (Jamler_hooks.result * 'b) Lwt.t) -> int -> mod_info
+val plain_hook :
+  'a Jamler_hooks.plain_hook -> Jlib.namepreped ->
+  ('a -> Jamler_hooks.result) -> int -> mod_info
+val fold_plain_hook :
+  ('a, 'b) Jamler_hooks.fold_plain_hook -> Jlib.namepreped ->
+  ('b -> 'a -> Jamler_hooks.result * 'b) -> int -> mod_info
 val iq_handler :
   Jamler_gen_iq_handler.component -> Jlib.namepreped -> string ->
   (Jlib.jid -> Jlib.jid -> Jlib.iq_query Jlib.iq ->

@@ -15,7 +15,7 @@ module ExtService :
 sig
   type msg =
       [ Tcp.msg | XMLReceiver.msg | GenServer.msg
-      | SM.msg | `Zxc of string * int ]
+      | Router.msg | `Zxc of string * int ]
   type init_data = Lwt_unix.file_descr
   type state
   val init : init_data -> msg pid -> state Lwt.t
@@ -26,7 +26,7 @@ end =
 struct
   type msg =
       [ Tcp.msg | XMLReceiver.msg | GenServer.msg
-      | SM.msg | `Zxc of string * int ]
+      | Router.msg | `Zxc of string * int ]
 
   type service_state =
     | Wait_for_stream
@@ -285,7 +285,7 @@ struct
       | `Tcp_close _socket -> assert false
       | #XMLReceiver.msg as m ->
           handle_xml m state
-      | #SM.msg as m ->
+      | #Router.msg as m ->
           handle_route m state
       | `Zxc (s, n) ->
           if n <= 1000000 then (

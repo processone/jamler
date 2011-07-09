@@ -183,6 +183,8 @@ let roster_get_subscription_lists = Hooks.create_fold ()
 
 let roster_out_subscription = Hooks.create ()
 
+let roster_get = Hooks.create_fold ()
+
 
 module type RosterStorage =
 sig
@@ -301,8 +303,6 @@ struct
 
   let item_to_xml' (_jid, item) = item_to_xml item
 
-  let roster_get = Hooks.create_fold ()
-
 (*
  Load roster from DB only if neccesary. 
  It is neccesary if
@@ -409,18 +409,19 @@ struct
   let push_item' user server resource from item =
     push_item'' user server resource from item None
 
+  let simplify_subscription =
+    function
+      | `None _ -> `None
+      | `From _ -> `From
+      | `To _ -> `To
+      | `Both -> `Both
+      | `Remove -> `Remove
 
-  let push_item user server from item =
-(* TODO *)
-    (*SM.route
-      (Jlib.make_jid "" "" "")
-      (jlib:make_jid' user server (Jlib.resourceprep_exn ""))
-      (`XmlElement
-	 ("broadcast", [],
-	  [{item,
-	    Item#roster.jid,
-	    Item#roster.subscription}])),*)
-(* TODO *)
+  let push_item user server from item ljid =
+    SM.broadcast
+      (Jlib.make_jid' user server (Jlib.resourceprep_exn ""))
+      (`RosterItem (ljid, simplify_subscription item.subscription));
+    (* TODO *)
   (*
     case roster_versioning_enabled(Server) of
 	true ->
@@ -483,7 +484,7 @@ push_item_version(Server, User, From, Item, RosterVersion)  ->
 	      | Some jid1 -> (
 		  match_lwt RS.item_set_transaction luser lserver jid1 attrs els with
 		    | (old_item, item, ljid) -> (
-			push_item luser lserver to' item;
+			push_item luser lserver to' item ljid;
 			(match item.subscription with
 			   | `Remove ->
 			       send_unsubscribing_presence from ljid old_item
@@ -574,7 +575,7 @@ push_item_version(Server, User, From, Item, RosterVersion)  ->
 		  push_item luser lserver
 		    (Jlib.make_jid'
 		       luser lserver (Jlib.resourceprep_exn ""))
-		    item
+		    item (Jlib.jid_tolower jid1)
 		);
 		Lwt.return true;
 	      )

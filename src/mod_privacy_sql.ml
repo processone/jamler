@@ -26,20 +26,37 @@ type listitem =
      match_presence_out : bool;
     }
 
+module LJIDGroup : Set.OrderedType with type t = Jlib.LJID.t * string =
+struct
+  type t = Jlib.LJID.t * string
+  let compare = compare
+end
+
+module LJIDGroupSet = Set.Make(LJIDGroup)
+
+module LJIDMap = Map.Make(Jlib.LJID)
+
+type subscription = [ `None | `From | `To | `Both ]
+
 type userlist =
     {name : string option;
      list : listitem list;
+     subscriptions : subscription LJIDMap.t;
+     groups : LJIDGroupSet.t;
     }
 
 let new_userlist () =
-  {name = None; list = []}
+  {name = None;
+   list = [];
+   subscriptions = LJIDMap.empty;
+   groups = LJIDGroupSet.empty}
 
 let privacy_check_packet :
     (Jlib.nodepreped * Jlib.namepreped * userlist *
        (Jlib.jid * Jlib.jid * Xml.element) *
        [ `In | `Out ], action)
-    Jamler_hooks.fold_hook
-    = Jamler_hooks.create_fold ()
+    Jamler_hooks.fold_plain_hook
+    = Jamler_hooks.create_fold_plain ()
 
 let privacy_iq_get :
     (Jlib.jid * Jlib.jid * [ `Get of Xml.element ] Jlib.iq * userlist,
@@ -54,6 +71,9 @@ let privacy_iq_set :
      | `Result of Xml.element option
      | `ResultList of Xml.element option * userlist ])
     Jamler_hooks.fold_hook
+    = Jamler_hooks.create_fold ()
+
+let privacy_get_user_list
     = Jamler_hooks.create_fold ()
 
 module ModPrivacySql :
@@ -124,12 +144,21 @@ struct
     in
       Sql.query_t query
 
-(*
-sql_get_privacy_list_data(LUser, LServer, Name) ->
-    Username = ejabberd_odbc:escape(LUser),
-    SName = ejabberd_odbc:escape(Name),
-    odbc_queries:get_privacy_list_data(LServer, Username, SName).
-*)
+  let sql_get_privacy_list_data luser lserver name =
+    let username = (luser : Jlib.nodepreped :> string) in
+    let query =
+      <:sql<
+	select @(t)s, @(value)s, @(action)s, @(ord)d,
+               @(match_all)b, @(match_iq)b,
+               @(match_message)b, @(match_presence_in)b, @(match_presence_out)b
+        from privacy_list_data
+        where id = (select id from privacy_list where
+                    username=%(username)s and name=%(name)s)
+        order by ord
+      >>
+    in
+      Sql.query lserver query
+
   let sql_get_privacy_list_data_by_id id lserver =
     let query =
       <:sql<
@@ -339,7 +368,7 @@ sql_del_privacy_lists(LUser, LServer) ->
     let attrs =
       match item.li_type with
 	| No -> attrs
-	| li_type ->
+	| (JID _ | Subscription _ | Group _) as li_type ->
 	    ("type", type_to_list li_type) ::
 	      ("value", value_to_list li_type) ::
 	      attrs
@@ -385,61 +414,63 @@ sql_del_privacy_lists(LUser, LServer) ->
 	| Presence_out -> item.match_presence_out
 	| Other -> false
 
-  let is_type_match li_type jid sg =
+  let is_type_match li_type jid userlist =
     match li_type with
-      | No -> Lwt.return true
+      | No -> true
       | JID vjid -> (
 	  let (luser, lserver, lresource) = vjid in
 	    match (luser :> string), (lresource :> string) with
 	      | "", "" -> (
 		  match jid with
 		    | (_, lserver', _) when lserver = lserver' ->
-			Lwt.return true
+			true
 		    | _ ->
-			Lwt.return false
+			false
 		)
 	      | _, "" -> (
 		  match jid with
 		    | (luser', lserver', _) when
 			luser = luser' &&
 			lserver = lserver' ->
-			Lwt.return true
+			true
 		    | _ ->
-			Lwt.return false
+			false
 		)
 	      | _, _ ->
-		  Lwt.return (vjid = jid)
+		  vjid = jid
 	)
-      | Subscription value ->
-	  lwt (subscription, _groups) = Lazy.force sg in
-	    Lwt.return (value = subscription)
+      | Subscription value -> (
+	  let subscriptions = userlist.subscriptions in
+	    try
+	      LJIDMap.find jid subscriptions = value
+	    with
+	      | Not_found ->
+		  false
+	)
       | Group value ->
-	  lwt (_subscription, groups) = Lazy.force sg in
-	    Lwt.return (List.mem value groups)
+	  LJIDGroupSet.mem (jid, value) userlist.groups
 
 
-  let rec check_packet_aux list ptype jid sg =
+  let rec check_packet_aux list ptype jid userlist =
     match list with
-      | [] -> Lwt.return true
+      | [] -> true
       | item :: list -> (
 	  let {li_type = li_type; action; _} = item in
-	    if is_ptype_match item ptype then (
-	      lwt itm = is_type_match li_type jid sg in
-		if itm
-		then Lwt.return action
-		else check_packet_aux list ptype jid sg
-	    ) else check_packet_aux list ptype jid sg
+	    if is_ptype_match item ptype &&
+	      is_type_match li_type jid userlist
+	    then action
+	    else check_packet_aux list ptype jid userlist
 	)
 
 
 (* From is the sender, To is the destination.
    If Dir = out, User@Server is the sender account (From).
    If Dir = in, User@Server is the destination account (To). *)
-  let check_packet _ (user, server, {list; _},
+  let check_packet _ (user, server, ({list; _} as userlist),
 		      (from, to', `XmlElement (pname, attrs, _)), dir) =
     match list with
       | [] ->
-	  Lwt.return (Jamler_hooks.OK, true)
+	  (Jamler_hooks.OK, true)
       | _ ->
 	  let ptype =
 	    match pname with
@@ -470,16 +501,8 @@ sql_del_privacy_lists(LUser, LServer) ->
 	      | `Out -> to'
 	  in
 	  let ljid = Jlib.jid_tolower jid in
-	  let sg =
-	    lazy (Jamler_hooks.run_fold
-		    Gen_roster.roster_get_jid_info
-		    server
-		    (`None, [])
-		    (user, server, jid)
-		 )
-	  in
-	  lwt res = check_packet_aux list ptype ljid sg in
-	    Lwt.return (Jamler_hooks.OK, res)
+	  let res = check_packet_aux list ptype ljid userlist in
+	    (Jamler_hooks.OK, res)
 
 
   let process_local_iq _from _to = function
@@ -587,7 +610,7 @@ sql_del_privacy_lists(LUser, LServer) ->
       | None ->
 	  Lwt.return (`Error Jlib.err_bad_request)
 
-  let process_iq_get _ (from, _to, {Jlib.iq_type = `Get subel},
+  let process_iq_get _ (from, _to, {Jlib.iq_type = `Get subel; _},
 			{name = active; _}) =
     let {Jlib.luser = luser; Jlib.lserver = lserver; _} = from in
     let `XmlElement (_, _, els) = subel in
@@ -809,6 +832,54 @@ let parse_items =
       | None ->
 	  Lwt.return (`Error Jlib.err_bad_request)
 
+  let is_list_needdb items =
+    List.exists
+      (fun item ->
+	 match item.li_type with
+	   | Subscription _
+	   | Group _ -> true;
+	   | JID _ | No -> false
+      ) items
+
+  let get_roster_data luser lserver =
+    lwt roster_items =
+      Jamler_hooks.run_fold Gen_roster.roster_get lserver [] (luser, lserver)
+    in
+    let subscriptions, groups =
+      List.fold_left
+	(fun (s, g) (ljid, item) ->
+	   let sub =
+	     match item.Gen_roster.subscription with
+	       | `None _ -> `None
+	       | `From _ -> `From
+	       | `To _ -> `To
+	       | `Both -> `Both
+	   in
+	   let s = LJIDMap.add ljid sub s in
+	   let g =
+	     List.fold_left
+	       (fun g gr ->
+		  LJIDGroupSet.add (ljid, gr) g
+	       ) g item.Gen_roster.groups
+	   in
+	     (s, g)
+	) (LJIDMap.empty, LJIDGroupSet.empty) roster_items
+    in
+      Lwt.return (subscriptions, groups)
+
+  let make_userlist luser lserver name items =
+    lwt subscriptions, groups =
+      if is_list_needdb items
+      then get_roster_data luser lserver
+      else Lwt.return (LJIDMap.empty, LJIDGroupSet.empty)
+    in
+      Lwt.return (
+	{name = Some name;
+	 list = items;
+	 subscriptions;
+	 groups}
+      )
+
   let process_active_set luser lserver =
     function
       | Some name -> (
@@ -818,13 +889,13 @@ let parse_items =
 	    | [id] -> (
 		lwt ritems = sql_get_privacy_list_data_by_id id lserver in
 		let items = List.map raw_to_item ritems in
-		  Lwt.return (
-		    `ResultList (None, {name = Some name; list = items}))
+		lwt userlist = make_userlist luser lserver name items in
+		  Lwt.return (`ResultList (None, userlist))
 	      )
 	    | _ -> assert false
 	)
       | None ->
-	  Lwt.return (`ResultList (None, {name = None; list = []}))
+	  Lwt.return (`ResultList (None, new_userlist ()))
 
   let process_default_set luser lserver =
     function
@@ -848,8 +919,8 @@ let parse_items =
 	    Lwt.return (`Result None)
 	)
 
-  let process_iq_set _ (from, _to', {Jlib.iq_type = `Set subel}) =
-    let {Jlib.luser = luser; Jlib.lserver = lserver} = from in
+  let process_iq_set _ (from, _to', {Jlib.iq_type = `Set subel; _}) =
+    let {Jlib.luser = luser; Jlib.lserver = lserver; _} = from in
     let `XmlElement (_, _, els) = subel in
     lwt res =
       match Xml.remove_cdata els with
@@ -872,14 +943,26 @@ let parse_items =
       Lwt.return (Jamler_hooks.OK, res)
 
 
+  let get_user_list _ (luser, lserver) =
+    match_lwt sql_get_default_privacy_list luser lserver with
+      | [] ->
+	  Lwt.return (Jamler_hooks.OK, new_userlist ())
+      | [default] -> (
+	  lwt ritems = sql_get_privacy_list_data luser lserver default in
+	  let items = List.map raw_to_item ritems in
+	  lwt userlist = make_userlist luser lserver default items in
+	    Lwt.return (Jamler_hooks.OK, userlist)
+	)
+      | _ ->
+	  Lwt.return (Jamler_hooks.OK, new_userlist ())
+
+
   let start host =
     Lwt.return (
       [Gen_mod.fold_hook privacy_iq_get host process_iq_get 50;
        Gen_mod.fold_hook privacy_iq_set host process_iq_set 50;
-(*
-    ejabberd_hooks:add(privacy_get_user_list, Host,
-		       ?MODULE, get_user_list, 50),*)
-       Gen_mod.fold_hook privacy_check_packet host check_packet 50;
+       Gen_mod.fold_hook privacy_get_user_list host get_user_list 50;
+       Gen_mod.fold_plain_hook privacy_check_packet host check_packet 50;
 (*    ejabberd_hooks:add(privacy_updated_list, Host,
 		       ?MODULE, updated_list, 50),
     ejabberd_hooks:add(remove_user, Host,
@@ -893,47 +976,6 @@ let parse_items =
     Lwt.return ()
 
 (*
--record(privacy, {us,
-		  default = none,
-		  lists = []}).
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-get_user_list(_, User, Server) ->
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
-
-    case catch sql_get_default_privacy_list(LUser, LServer) of
-	{selected, ["name"], []} ->
-	    #userlist{};
-	{selected, ["name"], [{Default}]} ->
-	    case catch sql_get_privacy_list_data(LUser, LServer, Default) of
-		{selected, ["t", "value", "action", "ord", "match_all",
-			    "match_iq", "match_message",
-			    "match_presence_in", "match_presence_out"],
-		 RItems} ->
-		    Items = lists:map(fun raw_to_item/1, RItems),
-		    NeedDb = is_list_needdb(Items),
-		    #userlist{name = Default, list = Items, needdb = NeedDb};
-		_ ->
-		    #userlist{}
-	    end;
-	_ ->
-	    #userlist{}
-    end.
-
 
 
 remove_user(User, Server) ->

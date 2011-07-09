@@ -1,6 +1,8 @@
 open Process
 
-type msg = Jamler_router.msg
+type broadcast =
+    [ `RosterItem of Jlib.LJID.t * [ `None | `From | `To | `Both | `Remove ] ]
+type msg = [ Jamler_router.msg | `Broadcast of broadcast ]
 type info = [ `TODO ] list
 type sid = float * msg pid
 
@@ -28,3 +30,5 @@ val roster_in_subscription :
      [ `Subscribe | `Subscribed | `Unsubscribe | `Unsubscribed ] *
      string, bool)
   Jamler_hooks.fold_hook
+
+val broadcast : Jlib.jid -> broadcast -> unit

@@ -8,7 +8,9 @@ module Auth = Jamler_auth
 module Router = Jamler_router
 module GenIQHandler = Jamler_gen_iq_handler
 
-type msg = Router.msg
+type broadcast =
+    [ `RosterItem of LJID.t * [ `None | `From | `To | `Both | `Remove ] ]
+type msg = [ Router.msg | `Broadcast of broadcast ]
 type info = [ `TODO ] list
 
 module Session :
@@ -571,4 +573,19 @@ let route from to' packet =
             (Jlib.jid_to_string to')
             (Xml.element_to_string packet)
 	)
+
+let broadcast to' data =
+  let {Jlib.luser = luser;
+       Jlib.lserver = lserver; _} = to' in
+    List.iter
+      (fun r ->
+	 let to' = Jlib.jid_replace_resource' to' r in
+	 let packet = `Broadcast data in
+	   match find_sids_by_usr luser lserver r with
+	    | [] -> ()
+	    | s :: sids ->
+		let sid = List.fold_left max s sids in
+		let (_, pid) = sid in
+		  pid $! packet
+      ) (get_user_resources luser lserver)
 

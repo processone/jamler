@@ -43,6 +43,16 @@ let fold_hook hook host f seq =
    (fun () -> Jamler_hooks.delete_fold hook host f seq)
   )
 
+let plain_hook hook host f seq =
+  ((fun () -> Jamler_hooks.add_plain hook host f seq),
+   (fun () -> Jamler_hooks.delete_plain hook host f seq)
+  )
+
+let fold_plain_hook hook host f seq =
+  ((fun () -> Jamler_hooks.add_fold_plain hook host f seq),
+   (fun () -> Jamler_hooks.delete_fold_plain hook host f seq)
+  )
+
 let iq_handler component host ns f type' =
   ((fun () -> Jamler_gen_iq_handler.add_iq_handler component host ns f type'),
    (fun () -> Jamler_gen_iq_handler.remove_iq_handler component host ns)

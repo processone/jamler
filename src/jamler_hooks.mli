@@ -26,6 +26,8 @@ val create_plain : unit -> 'a plain_hook
 val add_plain :
   'a plain_hook -> Jlib.namepreped -> ('a -> result) -> int -> unit
 val run_plain : 'a plain_hook -> Jlib.namepreped -> 'a -> unit
+val delete_plain :
+  'a plain_hook -> Jlib.namepreped -> ('a -> result) -> int -> unit
 
 type ('a, 'b) fold_plain_hook
 
@@ -35,3 +37,6 @@ val add_fold_plain :
   int -> unit
 val run_fold_plain :
   ('a, 'b) fold_plain_hook -> Jlib.namepreped -> 'b -> 'a -> 'b
+val delete_fold_plain :
+  ('a, 'b) fold_plain_hook -> Jlib.namepreped -> ('b -> 'a -> result * 'b) ->
+  int -> unit
