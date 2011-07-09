@@ -53,7 +53,8 @@ struct
     Jlib.get_random_string ()
 
   let init socket self =
-    lwt () = Lwt_log.notice ~section "external service connected" in
+    lwt () = Lwt_log.notice_f ~section "external service connected from %s"
+      (Jamler_listener.sockaddr_to_string (Lwt_unix.getpeername socket)) in
     let socket = Tcp.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
       (* TODO *)

@@ -7,3 +7,4 @@ end
 val register_mod : (module ListenModule) -> unit
 
 val start_listeners : unit -> unit
+val sockaddr_to_string: Unix.sockaddr -> string

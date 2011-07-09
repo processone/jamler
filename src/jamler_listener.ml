@@ -86,14 +86,14 @@ let listener_p name =
 let listeners =
   Jamler_config.(get_global_opt_with_default ["listen"] (assoc listener_p) [])
 
+let sockaddr_to_string addr =
+  let nameinfo =
+    Unix.getnameinfo addr [Unix.NI_NUMERICHOST; Unix.NI_NUMERICSERV]
+  in
+    nameinfo.Unix.ni_hostname ^ ":" ^ nameinfo.Unix.ni_service
+
 let rec accept start listen_socket =
   lwt (socket, _) = Lwt_unix.accept listen_socket in
-  let sockaddr_to_string addr =
-    let nameinfo =
-      Unix.getnameinfo addr [Unix.NI_NUMERICHOST; Unix.NI_NUMERICSERV]
-    in
-      nameinfo.Unix.ni_hostname ^ ":" ^ nameinfo.Unix.ni_service
-  in
   lwt () =
     Lwt_log.notice_f
       ~section
