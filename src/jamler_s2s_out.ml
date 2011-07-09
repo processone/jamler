@@ -266,7 +266,7 @@ struct
     ) else (
       (* Log new outgoing connections: *)
       Lwt_log.notice_f ~section
-	"trying to open s2s connection: %s -> %s with TLS=%B"
+	"trying to open s2s connection: %s -> %s with tls=%B"
 	myname server tls
     )
 
@@ -520,7 +520,7 @@ struct
 		     | "valid", enabled, required when (enabled = true || required = false) ->
 			 send_queue state;
 			 lwt () = Lwt_log.notice_f ~section
-			   "connection established: %s -> %s with TLS=%B"
+			   "connection established: %s -> %s with tls=%B"
 			   (state.myname :> string)
 			   (state.server :> string) state.tls_enabled in
 			   (* ejabberd_hooks:run(s2s_connect_hook,
