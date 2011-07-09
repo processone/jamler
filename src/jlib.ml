@@ -117,6 +117,9 @@ let jid_to_string' user server resource =
 let jid_to_string {user; server; resource; _} =
   jid_to_string' user server resource
 
+let ljid_to_string (u, s, r) =
+  jid_to_string' u s r
+
 let jid_tolower {luser = u; lserver = s; lresource = r; _} =
   (u, s, r)
 
