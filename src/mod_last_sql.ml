@@ -1,6 +1,7 @@
 module GenIQHandler = Jamler_gen_iq_handler
 module SM = Jamler_sm
 module Hooks = Jamler_hooks
+module Auth = Jamler_auth
 
 module ModLastSQL :
 sig
@@ -139,7 +140,7 @@ struct
                            Jlib.iq_type =
                         `Error (Jlib.err_service_unavailable, Some subel)})
 
-  let remove_user_h (luser, lserver) =
+  let remove_user (luser, lserver) =
     let username = (luser : Jlib.nodepreped :> string) in
     let delete_last =
       <:sql<
@@ -177,15 +178,17 @@ struct
       store_last_info luser lserver timestamp status
 
   let start host =
+    Mod_disco.register_feature host <:ns<LAST>>;
     Lwt.return (
-      [Gen_mod.hook remove_user host remove_user_h 50;
+      [Gen_mod.hook Auth.remove_user host remove_user 50;
        Gen_mod.hook unset_presence_hook host on_presence_update_h 50;
        Gen_mod.iq_handler `Local host <:ns<LAST>> process_local_iq ();
        Gen_mod.iq_handler `SM host <:ns<LAST>> process_sm_iq ();
       ]
     )
 
-  let stop _host =
+  let stop host =
+    Mod_disco.unregister_feature host <:ns<LAST>>;
     Lwt.return ()
 
 end

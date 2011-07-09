@@ -266,7 +266,7 @@ struct
     ) else (
       (* Log new outgoing connections: *)
       Lwt_log.notice_f ~section
-	"Trying to open s2s connection: %s -> %s with TLS=%B"
+	"trying to open s2s connection: %s -> %s with tls=%B"
 	myname server tls
     )
 
@@ -470,7 +470,7 @@ struct
 	    | ns_provided, db, _ ->
 		send_element state Jlib.serr_invalid_namespace;
 		lwt () = Lwt_log.notice_f ~section
- 		  ("Closing s2s connection: %s -> %s (invalid namespace):"
+ 		  ("closing s2s connection: %s -> %s (invalid namespace):"
 		  ^^ "namespace provided = %s, "
 		  ^^ "namespace expected = \"jabber:server\", "
 		  ^^ "xmlns:db provided = %s")
@@ -484,23 +484,23 @@ struct
 	  send_element state Jlib.serr_xml_not_well_formed;
 	  send_trailer state;
 	  lwt () = Lwt_log.notice_f ~section
-            "Closing s2s connection: %s -> %s (invalid xml)"
+            "closing s2s connection: %s -> %s (invalid xml)"
 	    (state.myname :> string) (state.server :> string)
 	  in
             Lwt.return (`Stop state)
       | `XmlStreamEnd _ ->
 	  lwt () = Lwt_log.notice_f ~section
-	    "Closing s2s connection: %s -> %s (xmlstreamend)"
+	    "closing s2s connection: %s -> %s (xmlstreamend)"
 	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
       | `Timeout ->
 	  lwt () = Lwt_log.notice_f ~section
-	    "Closing s2s connection: %s -> %s (timeout in wait_for_stream)"
+	    "closing s2s connection: %s -> %s (timeout in wait_for_stream)"
 	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
       | `Closed ->
 	  lwt () = Lwt_log.notice_f ~section
-	    "Closing s2s connection: %s -> %s (close in wait_for_stream)"
+	    "closing s2s connection: %s -> %s (close in wait_for_stream)"
 	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
       | `Send_element el -> enqueue el state
@@ -520,7 +520,7 @@ struct
 		     | "valid", enabled, required when (enabled = true || required = false) ->
 			 send_queue state;
 			 lwt () = Lwt_log.notice_f ~section
-			   "Connection established: %s -> %s with TLS=%B"
+			   "connection established: %s -> %s with tls=%B"
 			   (state.myname :> string)
 			   (state.server :> string) state.tls_enabled in
 			   (* ejabberd_hooks:run(s2s_connect_hook,
@@ -534,7 +534,7 @@ struct
 		     | _ ->
 			 (* TODO: bounce packets *)
 			 lwt () = Lwt_log.notice_f ~section
-			   "Closing s2s connection: %s -> %s (invalid dialback key)"
+			   "closing s2s connection: %s -> %s (invalid dialback key)"
 			   (state.myname :> string)
 			   (state.server :> string)
 			 in
@@ -645,7 +645,7 @@ struct
 		  if (not sasl_ext) && (not start_tls) && state.authenticated then (
 		    send_queue state;
 		    lwt () = Lwt_log.notice_f ~section
-		      "Connection established: %s -> %s"
+		      "connection established: %s -> %s"
 		      (state.myname :> string) (state.server :> string)
 		    in
 		      (* ejabberd_hooks:run(s2s_connect_hook,
@@ -695,7 +695,7 @@ struct
 		send_element state Jlib.serr_bad_format;
 		send_trailer state;
 		lwt () = Lwt_log.notice_f ~section
-		  "Closing s2s connection: %s -> %s (bad format)"
+		  "closing s2s connection: %s -> %s (bad format)"
 		  (state.myname :> string) (state.server :> string)
 		in
 		  Lwt.return (`Stop state))
@@ -743,7 +743,7 @@ struct
 		send_element state Jlib.serr_bad_format;
 		send_trailer state;
 		lwt () = Lwt_log.notice_f ~section
-		  "Closing s2s connection: %s -> %s (bad format)"
+		  "closing s2s connection: %s -> %s (bad format)"
 		  (state.myname :> string) (state.server :> string)
 		in
 		  Lwt.return (`Stop state))
@@ -762,7 +762,7 @@ struct
 		send_element state Jlib.serr_bad_format;
 		send_trailer state;
 		lwt () = Lwt_log.notice_f ~section
-		  "Closing s2s connection: %s -> %s (bad format)"
+		  "closing s2s connection: %s -> %s (bad format)"
 		  (state.myname :> string) (state.server :> string)
 		in
 		  Lwt.return (`Stop state))
@@ -770,7 +770,7 @@ struct
 	  send_element state Jlib.serr_bad_format;
 	  send_trailer state;
 	  lwt () = Lwt_log.notice_f ~section
-	    "Closing s2s connection: %s -> %s (bad format)"
+	    "closing s2s connection: %s -> %s (bad format)"
 	    (state.myname :> string) (state.server :> string)
 	  in
 	    Lwt.return (`Stop state)
@@ -834,13 +834,13 @@ struct
 		send_element state Jlib.serr_bad_format;
 		send_trailer state;
 		lwt () = Lwt_log.notice_f ~section
-		  "Closing s2s connection: %s -> %s (bad format)"
+		  "closing s2s connection: %s -> %s (bad format)"
 		  (state.myname :> string) (state.server :> string)
 		in
 		  Lwt.return (`Stop state))
       | `XmlStreamElement _ ->
 	  lwt () = Lwt_log.notice_f ~section
-	    "Closing s2s connection: %s -> %s (bad format)"
+	    "closing s2s connection: %s -> %s (bad format)"
 	    (state.myname :> string) (state.server :> string)
 	  in
 	    Lwt.return (`Stop state)
@@ -934,7 +934,7 @@ struct
 		   Lwt.return (`Continue state))
       | `XmlStreamEnd _ ->
 	  lwt () = Lwt_log.notice_f ~section
-	    "Connection closed in stream established: %s -> %s (xmlstreamend)"
+	    "connection closed in stream established: %s -> %s (xmlstreamend)"
 	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
       | `XmlStreamError _ ->
@@ -976,14 +976,14 @@ struct
 	| wait_before_retry ->
 	    lwt () =
 	      Lwt_log.notice_f ~section
-		"Reconnect delay expired: Will now retry to connect to %s when needed"
+		"reconnect delay expired: will now retry to connect to %s when needed"
 		(state.server :> string)
 	    in
 	      Lwt.return (`Stop state)
 	| _ ->
 	    lwt () =
 	      Lwt_log.notice_f ~section
-		"Closing connection with %s: timeout"
+		"closing connection with %s: timeout"
 		(state.server :> string)
 	    in
 	      Lwt.return (`Stop state)

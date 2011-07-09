@@ -1,4 +1,16 @@
+module Hooks = Jamler_hooks
+
 let section = Jamler_log.new_section "auth"
+
+type result = | OK
+	      | Empty_password
+	      | Not_allowed
+	      | Invalid_jid
+	      | Exists
+	      | Server_error
+
+let remove_user = Hooks.create ()
+let register_user = Hooks.create ()
 
 module type Auth =
 sig
@@ -13,6 +25,11 @@ sig
     Jlib.nodepreped -> Jlib.namepreped -> string option Lwt.t
 
   val does_user_exist : Jlib.nodepreped -> Jlib.namepreped -> bool Lwt.t
+  val remove : Jlib.nodepreped -> Jlib.namepreped -> unit Lwt.t
+  val remove' : Jlib.nodepreped -> Jlib.namepreped -> string -> unit Lwt.t
+  val try_register : Jlib.nodepreped -> Jlib.namepreped -> string -> result Lwt.t
+  val set_password : Jlib.nodepreped -> Jlib.namepreped -> string -> result Lwt.t
+
 end
 
 let mods : (string, (module Auth)) Hashtbl.t =
@@ -34,7 +51,7 @@ let auth_modules server =
 		 Lwt_log.error_f
 		   ~section
 		   ~exn:exn
-		   "Auth module %s not found" m
+		   "auth module %s not found" m
 	       );
 	       raise exn
       ) methods
@@ -102,6 +119,92 @@ let does_user_exist user server =
   in
     aux user server (auth_modules server)
 
+let set_password user server password =
+  if password = "" then Lwt.return Empty_password
+  else
+    let rec aux user server password = function
+      | [] -> Lwt.return Not_allowed
+      | m :: mods -> (
+	  let module A = (val m : Auth) in
+	    match_lwt A.set_password user server password with
+	      | OK ->
+		  Lwt.return OK
+	      | _ ->
+		  aux user server password mods
+	)
+    in
+      aux user server password (auth_modules server)
+    
+let try_register user server password =
+  if password = "" then Lwt.return Empty_password
+  else
+    match_lwt does_user_exist user server with
+      | true ->
+	  Lwt.return Exists
+      | false ->
+	  if Jamler_config.is_my_host server then (
+	    let rec aux user server password = function
+	      | [] -> Lwt.return Not_allowed
+	      | m :: mods -> (
+		  let module A = (val m : Auth) in
+		    match_lwt A.try_register user server password with
+		      | OK ->
+			  Lwt.return OK
+		      | _ ->
+			  aux user server password mods
+		)
+	    in
+	      match_lwt aux user server password (auth_modules server) with
+		| OK ->
+		    lwt _ = Hooks.run register_user server (user, server) in
+		      Lwt.return OK
+		| res ->
+		    Lwt.return res
+	  ) else
+	    Lwt.return Not_allowed
+
+let remove user server =
+  lwt _ = Lwt_list.iter_s
+    (fun m ->
+       let module A = (val m : Auth) in
+	 A.remove user server)
+    (auth_modules server) in
+  lwt _ = Hooks.run remove_user server (user, server) in
+    Lwt.return ()
+
+let remove' user server password =
+  lwt _ = Lwt_list.iter_s
+    (fun m ->
+       let module A = (val m : Auth) in
+	 A.remove' user server password)
+    (auth_modules server) in
+  lwt _ = Hooks.run remove_user server (user, server) in
+    Lwt.return ()
+
+let entropy s =
+  match String.length s with
+    | 0 ->
+	0.0
+    | len ->
+	let digit = ref 0 in
+	let printable = ref 0 in
+	let lowletter = ref 0 in
+	let hiletter = ref 0 in
+	let other = ref 0 in
+	  String.iter
+	    (fun c ->
+	       if c >= 'a' && c <= 'z' then
+		 lowletter := !lowletter + 26
+               else if c >= '0' && c <= '9' then
+		 digit := !digit + 9
+	       else if c >= 'A' && c <= 'Z' then
+		 hiletter := !hiletter + 26
+	       else if (Char.code c) >= 0x21 && (Char.code c) <= 0x7e then
+		 printable := !printable + 33
+	       else
+		 other := !other + 128) s;
+	  let sum = !digit + !printable + !lowletter + !hiletter + !other in
+	    (float_of_int len) *. (log (float_of_int sum)) /. (log 2.0)
 
 module BenignAuth : Auth =
 struct
@@ -120,6 +223,19 @@ struct
 
   let does_user_exist _user _server =
     Lwt.return true
+
+  let remove _user _server =
+    Lwt.return ()
+
+  let remove' _user _server _password =
+    Lwt.return ()
+
+  let set_password _user _server _password =
+    Lwt.return OK
+
+  let try_register _user _server _password =
+    Lwt.return OK
+
 end
 
 let () =

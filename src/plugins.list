@@ -9,3 +9,7 @@ mod_last_sql
 mod_private_sql
 mod_offline_sql
 mod_privacy_sql
+mod_disco
+mod_vcard_sql
+mod_ping
+mod_register

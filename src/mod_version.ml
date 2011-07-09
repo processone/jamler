@@ -48,12 +48,14 @@ struct
       Lwt.return (`IQ iq_res)
 
   let start host =
+    Mod_disco.register_feature host <:ns<VERSION>>;
     Lwt.return (
       [Gen_mod.iq_handler `Local host <:ns<VERSION>> process_local_iq ();
       ]
     )
 
   let stop host =
+    Mod_disco.unregister_feature host <:ns<VERSION>>;
     Lwt.return ()
 
 end

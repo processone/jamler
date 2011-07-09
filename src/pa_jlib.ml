@@ -32,6 +32,7 @@ let namespaces =
    ("MUC_ADMIN", "http://jabber.org/protocol/muc#admin");
    ("MUC_OWNER", "http://jabber.org/protocol/muc#owner");
    ("MUC_UNIQUE", "http://jabber.org/protocol/muc#unique");
+   ("PING", "urn:xmpp:ping");
    ("PUBSUB", "http://jabber.org/protocol/pubsub");
    ("PUBSUB_EVENT", "http://jabber.org/protocol/pubsub#event");
    ("PUBSUB_OWNER", "http://jabber.org/protocol/pubsub#owner");

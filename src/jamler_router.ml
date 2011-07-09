@@ -90,7 +90,7 @@ let do_route orig_from orig_to orig_packet =
   ignore (
     Lwt_log.debug_f
       ~section
-      "Route\nfrom: %s\n to: %s\npacket: %s"
+      "route\nfrom: %s\n to: %s\npacket: %s"
       (Jlib.jid_to_string orig_from)
       (Jlib.jid_to_string orig_to)
       (Xml.element_to_string orig_packet)
@@ -189,7 +189,7 @@ let route from to' packet =
 	  Lwt_log.error_f
 	    ~section
 	    ~exn:exn
-	    "Exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
+	    "exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
             (Jlib.jid_to_string from)
             (Jlib.jid_to_string to')
             (Xml.element_to_string packet)
@@ -197,3 +197,12 @@ let route from to' packet =
 
 let dirty_get_all_domains () =
   Hashtbl.fold (fun route _ acc -> route :: acc) route_table []
+
+let dirty_get_all_routes () =
+  let myhosts = Jamler_config.myhosts () in
+    Hashtbl.fold
+      (fun route _ acc ->
+	 match List.mem route myhosts with
+	   | true -> acc
+	   | false -> route :: acc)
+      route_table []

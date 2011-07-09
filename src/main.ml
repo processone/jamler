@@ -94,7 +94,7 @@ let process_pid_file () =
 	  lwt fd = Lwt_unix.openfile !pid_file_path
 	    [Unix.O_WRONLY; Unix.O_TRUNC; Unix.O_CREAT] 0o640 in
 	  let ch = Lwt_io.of_fd ~mode:Lwt_io.output fd in
-	  lwt () = Lwt_io.write ch (string_of_int (Unix.getpid ())) in
+	  lwt () = Lwt_io.write_line ch (string_of_int (Unix.getpid ())) in
 	  lwt () = Lwt_io.close ch in
 	    Lwt.return ()
 	with
@@ -116,7 +116,12 @@ let main () =
 
 let usage = Printf.sprintf "Usage: %s -c file [-p file]" Sys.argv.(0)
 
+let remove_pid_file () =
+  try Sys.remove !pid_file_path
+  with | _ -> ()
+
 let () = 
+  at_exit remove_pid_file;
   let speclist = [("-c", Arg.String (fun s -> config_file_path := s),
 		   "filename  Path to configuation file");
 		  ("-p", Arg.String (fun s -> pid_file_path := s),

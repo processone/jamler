@@ -1,6 +1,11 @@
 module GenIQHandler = Jamler_gen_iq_handler
 module Hooks = Jamler_hooks
 module Router = Jamler_router
+module Auth = Jamler_auth
+
+let section = Jamler_log.new_section "mod_offline_sql"
+
+open Mod_disco
 
 module ModOfflineSQL :
 sig
@@ -19,26 +24,22 @@ struct
   let name = "mod_offline_sql"
   let offline_message_hook = Hooks.create ()
   let resend_offline_messages_hook = Hooks.create_fold ()
-  let remove_user = Hooks.create ()
   let anonymous_purge_hook = Hooks.create ()
-  let disco_sm_features = Hooks.create_fold ()
-  let disco_local_features = Hooks.create_fold ()
 
   let never = max_float
 
   let count_offline_messages luser lserver =
     let username = (luser : Jlib.nodepreped :> string) in
-      (* TODO: count() doesn't work *)
     let query =
       <:sql<
-	select @(xml)s from spool
+	select @()d count(*) from spool
 	where username=%(username)s
       >>
     in
       try_lwt
 	(match_lwt Sql.query lserver query with
 	   | [] -> Lwt.return 0
-	   | _ -> Lwt.return 1)
+	   | count :: _ -> Lwt.return count)
       with
 	| _ ->
 	    Lwt.return 0
@@ -223,7 +224,7 @@ struct
       | _ ->
 	  Lwt.return (Hooks.OK, ls)
 
-  let remove_user_h (luser, lserver) =
+  let remove_user (luser, lserver) =
     let username = (luser : Jlib.nodepreped :> string) in
     let delete_query =
       <:sql<
@@ -238,13 +239,13 @@ struct
       | "" ->
 	  let feats =
 	    match acc with
-	      | `Result i -> i
+	      | Features i -> i
 	      | _ -> []
 	  in
-	    Lwt.return (Hooks.OK, `Result (feats @ [ <:ns<FEATURE_MSGOFFLINE>>]))
+	    Lwt.return (Hooks.OK, Features (feats @ [ <:ns<FEATURE_MSGOFFLINE>>]))
       | <:ns<FEATURE_MSGOFFLINE>> ->
 	(* override all lesser features... *)
-	Lwt.return (Hooks.OK, `Result [])
+	Lwt.return (Hooks.OK, Features [])
       | _ ->
 	  Lwt.return (Hooks.OK, acc)
 
@@ -259,8 +260,8 @@ struct
     Lwt.return (
       [Gen_mod.hook offline_message_hook host store_packet 50;
        Gen_mod.fold_hook resend_offline_messages_hook host pop_offline_messages 50;
-       Gen_mod.hook remove_user host remove_user_h 50;
-       Gen_mod.hook anonymous_purge_hook host remove_user_h 50;
+       Gen_mod.hook Auth.remove_user host remove_user 50;
+       Gen_mod.hook anonymous_purge_hook host remove_user 50;
        Gen_mod.fold_hook disco_sm_features host get_sm_features 50;
        Gen_mod.fold_hook disco_local_features host get_sm_features 50;
       ]

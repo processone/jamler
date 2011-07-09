@@ -2,6 +2,7 @@ module GenIQHandler = Jamler_gen_iq_handler
 module SM = Jamler_sm
 module Hooks = Jamler_hooks
 module Config = Jamler_config
+module Auth = Jamler_auth
 
 module ModPrivateSQL :
 sig
@@ -11,7 +12,6 @@ end
 struct
   let name = "mod_private_sql"
   let section = Jamler_log.new_section name
-  let remove_user = Hooks.create ()
 
   let rec get_data_rec luser lserver els' res =
     match els' with
@@ -119,7 +119,7 @@ struct
 				     Jlib.iq_type =
 				  `Error (Jlib.err_not_allowed, Some subel)}))
 
-  let remove_user_h (luser, lserver) =
+  let remove_user (luser, lserver) =
     let username = (luser : Jlib.nodepreped :> string) in
     let delete_private_storage =
       <:sql<
@@ -131,13 +131,15 @@ struct
       Lwt.return (Hooks.OK)
 
   let start host =
+    Mod_disco.register_feature host <:ns<PRIVATE>>;
     Lwt.return (
-      [Gen_mod.hook remove_user host remove_user_h 50;
+      [Gen_mod.hook Auth.remove_user host remove_user 50;
        Gen_mod.iq_handler `SM host <:ns<PRIVATE>> process_sm_iq ();
       ]
     )
 
-  let stop _host =
+  let stop host =
+    Mod_disco.unregister_feature host <:ns<PRIVATE>>;
     Lwt.return ()
 
 end

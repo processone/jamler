@@ -88,7 +88,7 @@ struct
     let max_s2s_connections_number_per_node =
       max_s2s_connections_number_per_node from_to in
     (* lwt () = Lwt_log.debug_f ~section
-	  "Finding connection for %s -> %s"
+	  "finding connection for %s -> %s"
 	  (myserver:>string) (server:>string) in Lwt.return (); *)
     match find_s2s_list from_to with
       | [] ->
@@ -150,7 +150,7 @@ struct
           Lwt_log.error_f
             ~section
             ~exn:exn
-            "Exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
+            "exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
             (Jlib.jid_to_string from)
             (Jlib.jid_to_string to')
             (Xml.element_to_string packet)

@@ -53,7 +53,8 @@ struct
     Jlib.get_random_string ()
 
   let init socket self =
-    lwt () = Lwt_log.notice ~section "External service connected" in
+    lwt () = Lwt_log.notice_f ~section "external service connected from %s"
+      (Jamler_listener.sockaddr_to_string (Lwt_unix.getpeername socket)) in
     let socket = Tcp.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
       (* TODO *)
@@ -182,7 +183,7 @@ struct
 		    (fun (h : Jlib.namepreped) ->
 		       Router.register_route h (state.pid :> Router.msg pid);
 		       Lwt_log.notice_f ~section
-			 "Route registered for service %s\n" (h :> string)
+			 "route registered for service %s\n" (h :> string)
 		    )
 		  state.hosts
 		in
@@ -310,7 +311,7 @@ struct
 		 (fun (h : Jlib.namepreped) ->
 		    Router.unregister_route h (state.pid :> Router.msg pid);
 		    Lwt_log.notice_f ~section
-		      "Route unregistered for service %s\n" (h :> string)
+		      "route unregistered for service %s\n" (h :> string)
 		 )
 		 state.hosts
 	     in
