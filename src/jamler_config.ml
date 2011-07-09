@@ -51,6 +51,21 @@ let namepreped =
 			   (JSON.to_string json)))
     )
 
+let jid =
+  P (function
+       | `String x -> (
+	   match Jlib.string_to_jid x with
+	     | Some s -> s
+	     | None ->
+		 raise (Error (Printf.sprintf
+				 "the value %S is not a jid"
+				 x))
+	 )
+       | json ->
+	   raise (Error (Printf.sprintf "expected string value, got %s"
+			   (JSON.to_string json)))
+    )
+
 let list (P p) =
   P (function
        | `List xs -> List.map p xs
