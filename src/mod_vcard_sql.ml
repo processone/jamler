@@ -3,6 +3,7 @@ module Hooks = Jamler_hooks
 module Router = Jamler_router
 module Translate = Jamler_translate
 module Config = Jamler_config
+module Auth = Jamler_auth
 
 open Mod_disco
 
@@ -14,8 +15,6 @@ end
   =
 struct
   let name = "mod_vcard_sql"
-  let remove_user = Hooks.create ()
-  let disco_sm_features = Hooks.create_fold ()
 
   let get_sm_features acc (_from, _to, node, _lang) =
     match acc with
@@ -26,7 +25,7 @@ struct
       | _ ->
 	  Lwt.return (Hooks.OK, acc)
 
-  let remove_user_h (luser, lserver) =
+  let remove_user (luser, lserver) =
     let username = (luser : Jlib.nodepreped :> string) in
     lwt _ = Sql.transaction lserver
       (fun () ->
@@ -214,7 +213,7 @@ struct
     register(gen_mod:get_module_proc(Host, ?PROCNAME),
 	     spawn(?MODULE, init, [MyHost, Host, Search])). *)
     Lwt.return (
-      [Gen_mod.hook remove_user host remove_user_h 50;
+      [Gen_mod.hook Auth.remove_user host remove_user 50;
        Gen_mod.fold_hook disco_sm_features host get_sm_features 50;
        Gen_mod.iq_handler `Local host <:ns<VCARD>> process_local_iq ();
        Gen_mod.iq_handler `SM host <:ns<VCARD>> process_sm_iq ();

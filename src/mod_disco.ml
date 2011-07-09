@@ -53,35 +53,33 @@ type features_t = | Features of (string list)
 module ModDisco :
 sig
   include Gen_mod.Module
-  type items_t
-  type features_t
-
   val register_feature : Jlib.namepreped -> string -> unit
   val unregister_feature : Jlib.namepreped -> string -> unit
   val register_extra_domain : Jlib.namepreped -> Jlib.namepreped -> unit
   val unregister_extra_domain : Jlib.namepreped -> Jlib.namepreped -> unit
-
+    
   val disco_local_items :
     (Jlib.jid * Jlib.jid * string * string, items_t)
-    Hooks.fold_hook
+    Jamler_hooks.fold_hook
   val disco_local_identity :
     (Jlib.jid * Jlib.jid * string * string, Xml.element list)
-    Hooks.fold_hook
+    Jamler_hooks.fold_hook
   val disco_info :
     (Jlib.namepreped * string option * string * string, Xml.element list)
-    Hooks.fold_hook
+    Jamler_hooks.fold_hook
   val disco_local_features :
     (Jlib.jid * Jlib.jid * string * string, features_t)
-    Hooks.fold_hook
+    Jamler_hooks.fold_hook
   val disco_sm_items :
     (Jlib.jid * Jlib.jid * string * string, items_t)
-    Hooks.fold_hook
+    Jamler_hooks.fold_hook
   val disco_sm_identity :
     (Jlib.jid * Jlib.jid * string * string, Xml.element list)
-    Hooks.fold_hook
+    Jamler_hooks.fold_hook
   val disco_sm_features :
     (Jlib.jid * Jlib.jid * string * string, features_t)
-    Hooks.fold_hook
+    Jamler_hooks.fold_hook
+
 end
   =
 struct
@@ -98,23 +96,7 @@ struct
       type t = Jlib.namepreped * Jlib.namepreped
     end)
 
-  type items_t = | Items of (Xml.element list)
-		 | IError of Xml.element
-		 | IEmpty
-
-  type features_t = | Features of (string list)
-		    | FError of Xml.element
-		    | FEmpty
-
   let name = "mod_disco"
-
-  let disco_local_items = Hooks.create_fold ()
-  let disco_local_identity = Hooks.create_fold ()
-  let disco_info = Hooks.create_fold ()
-  let disco_local_features = Hooks.create_fold ()
-  let disco_sm_items = Hooks.create_fold ()
-  let disco_sm_identity = Hooks.create_fold ()
-  let disco_sm_features = Hooks.create_fold ()
 
   let extra_domains = Config.(get_module_opt_with_default
 				name ["extra_domains"] (list namepreped) [])
@@ -135,6 +117,14 @@ struct
 
   let unregister_extra_domain host domain =
     disco_extra_domains := EDTable.remove (domain, host) !disco_extra_domains
+
+  let disco_local_items = Hooks.create_fold ()
+  let disco_local_identity = Hooks.create_fold ()
+  let disco_info = Hooks.create_fold ()
+  let disco_local_features = Hooks.create_fold ()
+  let disco_sm_items = Hooks.create_fold ()
+  let disco_sm_identity = Hooks.create_fold ()
+  let disco_sm_features = Hooks.create_fold ()
 
   (* let is_presence_subscribed
       {Jlib.luser = user; Jlib.lserver = server; _}
@@ -536,3 +526,11 @@ let register_feature = ModDisco.register_feature
 let unregister_feature = ModDisco.unregister_feature
 let register_extra_domain = ModDisco.register_extra_domain
 let unregister_extra_domain = ModDisco.unregister_extra_domain
+
+let disco_local_items = ModDisco.disco_local_items
+let disco_local_identity = ModDisco.disco_local_identity
+let disco_info = ModDisco.disco_info
+let disco_local_features = ModDisco.disco_local_features
+let disco_sm_items = ModDisco.disco_sm_items
+let disco_sm_identity = ModDisco.disco_sm_identity
+let disco_sm_features = ModDisco.disco_sm_features

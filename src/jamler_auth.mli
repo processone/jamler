@@ -41,3 +41,6 @@ val remove' : Jlib.nodepreped -> Jlib.namepreped -> string -> unit Lwt.t
 val entropy : string -> float
 val try_register : Jlib.nodepreped -> Jlib.namepreped -> string -> result Lwt.t
 val set_password : Jlib.nodepreped -> Jlib.namepreped -> string -> result Lwt.t
+
+val remove_user : (Jlib.nodepreped * Jlib.namepreped) Jamler_hooks.hook
+val register_user : (Jlib.nodepreped * Jlib.namepreped) Jamler_hooks.hook
