@@ -516,7 +516,10 @@ struct
     )
 
   let stop host =
-    Lwt.return ()
+    let filter (_, h) = h <> host in
+      disco_features := DFTable.filter filter !disco_features;
+      disco_extra_domains := EDTable.filter filter !disco_extra_domains;
+      Lwt.return ()
 
 end
 
