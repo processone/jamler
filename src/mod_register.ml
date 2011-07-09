@@ -28,6 +28,18 @@ struct
     Config.(get_module_opt_with_default
 	      name ["ip_access"] (list string) [])
 
+  let registration_watchers =
+    Config.(get_module_opt_with_default
+	      name ["registration_watchers"] (list jid) [])
+
+  let welcome_message_subject =
+    Config.(get_module_opt_with_default
+	      name ["welcome_message"; "subject"] string "")
+
+  let welcome_message_body = 
+    Config.(get_module_opt_with_default
+	      name ["welcom_message"; "body"] string "")
+
   let check_ip_access _ _ =
     (* TODO *)
     true
@@ -113,9 +125,7 @@ struct
 
   let send_welcome_message jid =
     let host = jid.Jlib.lserver in
-      (* TODO clarify the type of this option
-	 case gen_mod:get_module_opt(Host, ?MODULE, welcome_message, {"", ""}) *)
-      match ("", "") with
+      match (welcome_message_subject host, welcome_message_body host) with
 	| "", "" ->
 	    ()
 	| subj, body ->
@@ -129,9 +139,7 @@ struct
 
   let send_registration_notifications ujid source =
     let host = ujid.Jlib.lserver in
-      (* TODO the format of this option should be (jid list)
-	 case gen_mod:get_module_opt(Host, ?MODULE, registration_watchers, []) of *)
-      match [] with
+      match registration_watchers host with
 	| [] ->
 	    ()
 	| jids ->
