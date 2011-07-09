@@ -22,6 +22,26 @@ let suffix suff string =
     with
       | _ -> false
 
+(* Eliminate consecutive duplicates of list elements.
+   Borrowed from:
+   http://www.christiankissig.de/cms/files/ocaml99/problem08.ml *)
+let compress l =
+  let rec compress_2 l e =
+    match l with
+      | [] -> [e]
+      | h::t ->
+          if ( h = e ) 
+          then ( compress_2 t e )
+          else e::( compress_2 t h )
+  in
+    match l with
+      | [] -> []
+      | h::t -> compress_2 t h
+
+(* Sort list with removing duplicates *)
+let usort l =
+  compress (List.sort compare l)
+
 type items_t = | Items of (Xml.element list)
 	       | IError of Xml.element
 	       | IEmpty
@@ -116,19 +136,22 @@ struct
   let unregister_extra_domain host domain =
     disco_extra_domains := EDTable.remove (domain, host) !disco_extra_domains
 
-  let is_presence_subscribed from to' =
-    (* TODO
-       lists:any(fun({roster, _, _, {TUser, TServer, _}, _, S, _, _, _, _}) -> 
-                            if 
-                                LUser == TUser, LServer == TServer, S/=none ->
-                                    true;
-                                true ->
-                                    false
-                            end
-                    end,
-                    ejabberd_hooks:run_fold(roster_get, Server, [], [{User, Server}]))
-                orelse User == LUser andalso Server == LServer. *)
-    Lwt.return false
+  (* let is_presence_subscribed
+      {Jlib.luser = user; Jlib.lserver = server; _}
+      {Jlib.luser = luser; Jlib.lserver = lserver; _} =
+    lwt roster_items =
+      Hooks.run_fold Gen_roster.roster_get server [] (user, server) in
+      Lwt.return (
+	(List.exists
+	   (function
+	      | _, {Gen_roster.jid = (tuser, tserver, _);
+		    Gen_roster.subscription = s; _} ->
+		  if (tuser = luser && lserver = tserver &&
+		      s <> (`None `None)) then true
+		  else false
+	   ) roster_items) || (user = luser && server = lserver)) *)
+
+  let is_presence_subscribed from to' = Lwt.return false
 
   let get_user_resources ({Jlib.user = user;
 			   Jlib.luser = luser;
@@ -142,21 +165,13 @@ struct
 	(List.sort compare rs)
 
   let features_to_xml (feature_list:string list) =
-    (* Avoid duplicating features
-    [{xmlelement, "feature", [{"var", Feat}], []} ||
-	Feat <- lists:usort(
-		  lists:map(
-		    fun({{Feature, _Host}}) ->
-			Feature;
-		       (Feature) when is_list(Feature) ->
-			    Feature
-		    end, FeatureList))]. *)
+    (* Avoid duplicating features *)
     List.map
       (fun feat -> `XmlElement ("feature", [("var", feat)], []))
-      feature_list
+      (usort feature_list)
 
   let domain_to_xml domain =
-    Lwt.return (`XmlElement ("item", [("jid", domain)], []))
+    `XmlElement ("item", [("jid", domain)], [])
 
   let get_vh_services host =
     let hosts = List.sort
@@ -198,9 +213,9 @@ struct
 	    | IEmpty -> []
 	  in
 	  let host = to'.Jlib.lserver in
-	  lwt res = (* TODO lists:usort( *)
-	    Lwt_list.map_s domain_to_xml
-	      ((get_vh_services (host :> string)) @ (select_disco_extra_domains host)) in
+	  let domains =
+	    (get_vh_services (host :> string)) @ (select_disco_extra_domains host) in
+	  let res = List.map domain_to_xml (usort domains) in
 	    Lwt.return (Hooks.OK, Items (res @ items))
       | Items _ ->
 	  Lwt.return (Hooks.OK, acc)
