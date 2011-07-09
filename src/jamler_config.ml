@@ -10,6 +10,25 @@ type 'a p = P of (json -> 'a)
 
 exception Error of string
 
+let parse_ip_netmask s =
+    match Str.bounded_split_delim (Str.regexp "/") s 2 with
+      | [ipstr] ->
+	  let ip = Unix.inet_addr_of_string ipstr in
+	    if String.contains ipstr ':' then (ip, 128)
+	    else (ip, 32)
+      | [ipstr; maskstr] -> (
+	  let mask = int_of_string maskstr in
+	  let ip = Unix.inet_addr_of_string ipstr in
+	    match String.contains ipstr ':' with
+	      | true when mask >= 0 && mask <= 128 ->
+		  (ip, mask)
+	      | false when mask >= 0 && mask <= 32 ->
+		  (ip, mask)
+	      | _ ->
+		  raise (Failure "bad IP or mask"))
+      | _ ->
+	  raise (Failure "bad IP or mask")
+
 let int =
   P (function
        | `Int x -> x
@@ -59,6 +78,21 @@ let jid =
 	     | None ->
 		 raise (Error (Printf.sprintf
 				 "the value %S is not a jid"
+				 x))
+	 )
+       | json ->
+	   raise (Error (Printf.sprintf "expected string value, got %s"
+			   (JSON.to_string json)))
+    )
+
+let ip =
+  P (function
+       | `String x -> (
+	   try parse_ip_netmask x
+	   with
+	     | _ ->
+		 raise (Error (Printf.sprintf
+				 "the value %S is not an IP/network"
 				 x))
 	 )
        | json ->

@@ -8,6 +8,7 @@ val bool : bool p
 val string : string p
 val namepreped : Jlib.namepreped p
 val jid : Jlib.jid p
+val ip : (Unix.inet_addr * int) p
 val list : 'a p -> 'a list p
 val enum : (string * 'a) list -> 'a p
 val keys : string list p

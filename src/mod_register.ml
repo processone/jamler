@@ -26,7 +26,7 @@ struct
 
   let ip_access =
     Config.(get_module_opt_with_default
-	      name ["ip_access"] (list string) [])
+	      name ["ip_access"] (list ip) [])
 
   let registration_watchers =
     Config.(get_module_opt_with_default
@@ -43,40 +43,6 @@ struct
   let check_ip_access _ _ =
     (* TODO *)
     true
-
-  let parse_ip_netmask s =
-    match Str.bounded_split_delim (Str.regexp "/") s 2 with
-      | [ipstr] ->
-	  let ip = Unix.inet_addr_of_string ipstr in
-	    if String.contains ipstr ':' then (ip, 128)
-	    else (ip, 32)
-      | [ipstr; maskstr] -> (
-	  let mask = int_of_string maskstr in
-	  let ip = Unix.inet_addr_of_string ipstr in
-	    match String.contains ipstr ':' with
-	      | true when mask >= 0 && mask <= 128 ->
-		  (ip, mask)
-	      | false when mask >= 0 && mask <= 32 ->
-		  (ip, mask)
-	      | _ ->
-		  raise (Failure "bad IP or mask"))
-      | _ ->
-	  raise (Failure "bad IP or mask")
-
-  let get_ip_access host =
-    let ipaccess = ip_access host in
-      List.fold_left
-	(fun acc s ->
-	   try
-	     let ip, mask = parse_ip_netmask s in
-	       (ip, mask) :: acc
-	   with
-	     | _ ->
-		 (* ?ERROR_MSG("mod_register: invalid "
-				 "network specification: ~p",
-				 [S]) *)
-		 acc
-	) [] ipaccess
 
   let is_strong_password lserver password =
     let entropy = float_of_int (password_strength lserver) in
