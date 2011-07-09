@@ -453,6 +453,7 @@ struct
 	      assert false
 
   let start host =
+    Mod_disco.register_feature host <:ns<REGISTER>>;
     Lwt.return (
       [Gen_mod.iq_handler `Local host <:ns<REGISTER>> process_iq ();
        Gen_mod.iq_handler `SM host <:ns<REGISTER>> process_iq ();
@@ -464,6 +465,7 @@ struct
     )
 
   let stop host =
+    Mod_disco.unregister_feature host <:ns<REGISTER>>;
     Lwt.return ()
 
 end

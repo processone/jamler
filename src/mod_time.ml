@@ -44,6 +44,8 @@ struct
 			`Error (Jlib.err_service_unavailable, Some subel)})
 
   let start host =
+    Mod_disco.register_feature host <:ns<TIME>>;
+    Mod_disco.register_feature host <:ns<TIME90>>;
     Lwt.return (
       [Gen_mod.iq_handler `Local host <:ns<TIME>> process_local_iq ();
        Gen_mod.iq_handler `Local host <:ns<TIME90>> process_local_iq ();
@@ -51,6 +53,8 @@ struct
     )
 
   let stop host =
+    Mod_disco.unregister_feature host <:ns<TIME>>;
+    Mod_disco.unregister_feature host <:ns<TIME90>>;
     Lwt.return ()
 
 end

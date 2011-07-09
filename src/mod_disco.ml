@@ -499,6 +499,8 @@ struct
     register_feature host "iq";
     register_feature host "presence";
     register_feature host "presence-invisible";
+    register_feature host <:ns<DISCO_ITEMS>>;
+    register_feature host <:ns<DISCO_INFO>>;
     List.iter (fun domain -> register_extra_domain host domain) (extra_domains host);
     Lwt.return (
       [Gen_mod.iq_handler `Local host <:ns<DISCO_ITEMS>> process_local_iq_items ();

@@ -182,6 +182,7 @@ struct
       store_last_info luser lserver timestamp status
 
   let start host =
+    Mod_disco.register_feature host <:ns<LAST>>;
     Lwt.return (
       [Gen_mod.hook Auth.remove_user host remove_user 50;
        Gen_mod.hook unset_presence_hook host on_presence_update_h 50;
@@ -190,7 +191,8 @@ struct
       ]
     )
 
-  let stop _host =
+  let stop host =
+    Mod_disco.unregister_feature host <:ns<LAST>>;
     Lwt.return ()
 
 end

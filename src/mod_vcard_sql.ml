@@ -212,6 +212,7 @@ struct
     Search = gen_mod:get_opt(search, Opts, true),
     register(gen_mod:get_module_proc(Host, ?PROCNAME),
 	     spawn(?MODULE, init, [MyHost, Host, Search])). *)
+    Mod_disco.register_feature host <:ns<VCARD>>;
     Lwt.return (
       [Gen_mod.hook Auth.remove_user host remove_user 50;
        Gen_mod.fold_hook disco_sm_features host get_sm_features 50;
@@ -220,7 +221,8 @@ struct
       ]
     )
 
-  let stop _host =
+  let stop host =
+    Mod_disco.unregister_feature host <:ns<VCARD>>;
     Lwt.return ()
 
 end
