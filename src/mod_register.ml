@@ -261,8 +261,8 @@ struct
 	  (* Access = gen_mod:get_module_opt(Server, ?MODULE, access, all),
 	     AllowRemove = (allow == acl:match_rule(Server, Access, From)), *)
 	  let allow_remove = true in
-	    match utag_opt, rtag_opt, allow_remove with
-	      | Some utag, Some rtag, true -> (
+	    match utag_opt, ptag_opt, rtag_opt, allow_remove with
+	      | Some utag, _, Some rtag, true -> (
 		  match Jlib.nodeprep (Xml.get_tag_cdata utag) with
 		    | Some luser -> (
 			match from with
@@ -314,7 +314,7 @@ struct
 			  (`IQ {iq with
 				  Jlib.iq_type =
 			       `Error (Jlib.err_jid_malformed, Some subel)}))
-	      | None, Some rtag, true -> (
+	      | None, _, Some rtag, true -> (
 		  match from with
 		    | {Jlib.luser = luser;
 		       Jlib.lserver = s;
@@ -332,7 +332,7 @@ struct
 				  Jlib.iq_type =
 			       `Error (Jlib.err_not_allowed,
 				       Some subel)}))
-	      | Some utag, Some ptag, _ -> (
+	      | Some utag, Some ptag, _, _ -> (
 		  match Jlib.nodeprep (Xml.get_tag_cdata utag) with
 		    | Some luser ->
 			let password = Xml.get_tag_cdata ptag in
