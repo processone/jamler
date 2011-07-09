@@ -181,14 +181,14 @@ let transaction host f =
 		      ) else (
 			lwt () =
 			  Lwt_log.error ~section ~exn
-			    "SQL transaction restarts exceeded"
+			    "sql transaction restarts exceeded"
 			in
-			  raise_lwt (Aborted "SQL transaction restarts exceeded")
+			  raise_lwt (Aborted "sql transaction restarts exceeded")
 		      )
 		| exn ->
 		    lwt () = PG.rollback st.dbh in
 		    lwt () =
-		      Lwt_log.error ~section ~exn "SQL transaction failed"
+		      Lwt_log.error ~section ~exn "sql transaction failed"
 		    in
 		      Lwt.fail exn
 	  in

@@ -566,7 +566,7 @@ let route from to' packet =
 	  Lwt_log.error_f
 	    ~section
 	    ~exn:exn
-	    "Exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
+	    "exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
             (Jlib.jid_to_string from)
             (Jlib.jid_to_string to')
             (Xml.element_to_string packet)

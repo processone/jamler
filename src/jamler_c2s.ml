@@ -909,7 +909,7 @@ wait_for_stream(timeout, StateData) ->
 				"(~w) Accepted legacy authentication for ~s by ~p",
 				[StateData#state.socket,
 				jlib:jid_to_string(JID), AuthModule]),*)
-			      lwt () = Lwt_log.notice_f ~section "Accepted legacy authentication for %s" (Jlib.jid_to_string jid) in
+			      lwt () = Lwt_log.notice_f ~section "accepted legacy authentication for %s" (Jlib.jid_to_string jid) in
 				match (*need_redirect(StateData#state{user = U})*) (* TODO *)
 				  None
 				with
@@ -917,7 +917,7 @@ wait_for_stream(timeout, StateData) ->
                                     (*?INFO_MSG("(~w) Redirecting ~s to ~s",
                                               [StateData#state.socket,
                                                jlib:jid_to_string(JID), Host]),*)
-				      lwt () = Lwt_log.notice_f ~section "Redirecting %s to %s" (Jlib.jid_to_string jid) host in
+				      lwt () = Lwt_log.notice_f ~section "redirecting %s to %s" (Jlib.jid_to_string jid) host in
                                         send_element state
 					  (Jlib.serr_see_other_host host);
                                         send_trailer state;
@@ -978,7 +978,7 @@ wait_for_stream(timeout, StateData) ->
 			       "(~w) Failed legacy authentication for ~s",
 			       [StateData#state.socket,
 				jlib:jid_to_string(JID)]),*)
-			      lwt () = Lwt_log.notice_f ~section "Failed legacy authentication for %s" (Jlib.jid_to_string jid) in
+			      lwt () = Lwt_log.notice_f ~section "failed legacy authentication for %s" (Jlib.jid_to_string jid) in
 		              let err =
 				Jlib.make_error_reply el Jlib.err_not_authorized
 			      in
@@ -992,7 +992,7 @@ wait_for_stream(timeout, StateData) ->
 			"(~w) Forbidden legacy authentication for "
 			"username '~s' with resource '~s'",
 			[StateData#state.socket, U, R]),*)
-		      lwt () = Lwt_log.notice_f ~section "Forbidden legacy authentication for %s with resource '%s'" u r in
+		      lwt () = Lwt_log.notice_f ~section "forbidden legacy authentication for %s with resource '%s'" u r in
 		      let err = Jlib.make_error_reply el Jlib.err_jid_malformed
 		      in
 			send_element state err;
@@ -1004,7 +1004,7 @@ wait_for_stream(timeout, StateData) ->
 			"(~w) Forbidden legacy authentication for ~s",
 			[StateData#state.socket,
 			jlib:jid_to_string(JID)]),*)
-		      lwt () = Lwt_log.notice_f ~section "Forbidden legacy authentication for %s" (Jlib.jid_to_string jid) in
+		      lwt () = Lwt_log.notice_f ~section "forbidden legacy authentication for %s" (Jlib.jid_to_string jid) in
 		      let err = Jlib.make_error_reply el Jlib.err_not_allowed
 		      in
 			send_element state err;
@@ -1078,7 +1078,7 @@ wait_for_auth(timeout, StateData) ->
 			    (*AuthModule = xml:get_attr_s(auth_module, Props),*)
 			    (*?INFO_MSG("(~w) Accepted authentication for ~s by ~p",
                               [StateData#state.socket, U, AuthModule]),*)
-			  lwt () = Lwt_log.notice_f ~section "Accepted authentication for %s" (u :> string) in
+			  lwt () = Lwt_log.notice_f ~section "accepted authentication for %s" (u :> string) in
                             send_element state
                               (`XmlElement ("success",
                                             [("xmlns", <:ns<SASL>>)], []));
@@ -1106,7 +1106,7 @@ wait_for_auth(timeout, StateData) ->
 			    "(~w) Failed authentication for ~s@~s",
 			    [StateData#state.socket,
 			    Username, StateData#state.server]),*)
-			  lwt () = Lwt_log.notice_f ~section "Failed authentication for %s@%s" username (state.server :> string) in
+			  lwt () = Lwt_log.notice_f ~section "failed authentication for %s@%s" username (state.server :> string) in
 			    send_element state
 			      (`XmlElement
 				 ("failure",
@@ -1235,7 +1235,7 @@ wait_for_feature_request(timeout, StateData) ->
 			    (*AuthModule = xml:get_attr_s(auth_module, Props),
 			      ?INFO_MSG("(~w) Accepted authentication for ~s by ~p",
 			      [StateData#state.socket, U, AuthModule]),*)
-			  lwt () = Lwt_log.notice_f ~section "Accepted authentication for %s" (u :> string) in
+			  lwt () = Lwt_log.notice_f ~section "accepted authentication for %s" (u :> string) in
                             send_element state
                               (`XmlElement ("success",
                                             [("xmlns", <:ns<SASL>>)], []));
@@ -1263,7 +1263,7 @@ wait_for_feature_request(timeout, StateData) ->
 			    "(~w) Failed authentication for ~s@~s",
 			    [StateData#state.socket,
 			    Username, StateData#state.server]),*)
-			  lwt () = Lwt_log.notice_f ~section "Failed authentication for %s@%s" username (state.server :> string) in
+			  lwt () = Lwt_log.notice_f ~section "failed authentication for %s@%s" username (state.server :> string) in
 			    send_element state
 			      (`XmlElement
 				 ("failure",
@@ -1391,7 +1391,7 @@ wait_for_bind(timeout, StateData) ->
 			(*?INFO_MSG("(~w) Opened session for ~s",
 			      [StateData#state.socket,
 			       jlib:jid_to_string(JID)]),*)
-		      lwt () = Lwt_log.notice_f ~section "Opened session for %s" (Jlib.jid_to_string jid) in
+		      lwt () = Lwt_log.notice_f ~section "opened session for %s" (Jlib.jid_to_string jid) in
 		      let res = Jlib.make_result_iq_reply el in
 			send_element state res;
 		    (*change_shaper(StateData, JID),*)
@@ -1441,7 +1441,7 @@ wait_for_bind(timeout, StateData) ->
 		    ?INFO_MSG("(~w) Forbidden session for ~s",
 			      [StateData#state.socket,
 			       jlib:jid_to_string(JID)]),*)
-			lwt () = Lwt_log.notice_f ~section "Forbidden session for %s" (Jlib.jid_to_string jid) in
+			lwt () = Lwt_log.notice_f ~section "forbidden session for %s" (Jlib.jid_to_string jid) in
 			let err = Jlib.make_error_reply el Jlib.err_not_allowed
 			in
 			  send_element state err;
@@ -1880,7 +1880,7 @@ session_established(timeout, StateData) ->
 		    (*?INFO_MSG("(~w) Close session for ~s",
 			      [StateData#state.socket,
 			       jlib:jid_to_string(StateData#state.jid)]),*)
-	     lwt () = Lwt_log.notice_f ~section "Close session for %s" (Jlib.jid_to_string state.jid) in
+	     lwt () = Lwt_log.notice_f ~section "close session for %s" (Jlib.jid_to_string state.jid) in
 	       (match state with
 		  | {pres_last = None;
 		     pres_a;

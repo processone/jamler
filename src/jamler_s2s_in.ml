@@ -240,7 +240,7 @@ struct
 	(match is_key_packet el with
 	  | Key (to', from, id, key) ->
 	    lwt () = Lwt_log.debug_f ~section
-		       "GET KEY: to = %s, from = %s, id = %s, key = %s"
+		       "get key: to = %s, from = %s, id = %s, key = %s"
 		       to' from id key
 	    in
 	    (match (Jlib.nameprep to', Jlib.nameprep from) with
@@ -272,7 +272,7 @@ struct
 		Lwt.return (`Stop state))
 	  | Verify (to', from, id, key) ->
 	    lwt () = Lwt_log.debug_f ~section
-		       "VERIFY KEY: to = %s, from = %s, id = %s, key =%s"
+		       "verify key: to = %s, from = %s, id = %s, key =%s"
 		       to' from id key in
 	    let type' = match (Jlib.nameprep to', Jlib.nameprep from) with
 	      | Some lto, Some lfrom -> (

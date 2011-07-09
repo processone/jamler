@@ -33,7 +33,7 @@ let run hook host x =
 	   with
 	     | exn ->
 		 lwt () =
-		   Lwt_log.error_f ~section ~exn:exn "Exception running hook"
+		   Lwt_log.error_f ~section ~exn:exn "exception running hook"
 		 in
 		   aux x h
 	  )
@@ -77,7 +77,7 @@ let run_fold hook host v x =
 	   with
 	     | exn ->
 		 lwt () =
-		   Lwt_log.error_f ~section ~exn:exn "Exception running hook"
+		   Lwt_log.error_f ~section ~exn:exn "exception running hook"
 		 in
 		   aux v x h
 	  )
@@ -108,7 +108,7 @@ let run_plain hook host x =
 	   with
 	     | exn ->
 		 ignore (
-		   Lwt_log.error_f ~section ~exn:exn "Exception running hook"
+		   Lwt_log.error_f ~section ~exn:exn "exception running hook"
 		 );
 		 aux x h
 	  )
@@ -139,7 +139,7 @@ let run_fold_plain hook host v x =
 	   with
 	     | exn ->
 		 ignore (
-		   Lwt_log.error_f ~section ~exn:exn "Exception running hook"
+		   Lwt_log.error_f ~section ~exn:exn "exception running hook"
 		 );
 		 aux v x h
 	  )

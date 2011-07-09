@@ -97,7 +97,7 @@ let rec accept start listen_socket =
   lwt () =
     Lwt_log.notice_f
       ~section
-      "Accepted connection %s -> %s"
+      "accepted connection %s -> %s"
       (sockaddr_to_string (Lwt_unix.getpeername socket))
       (sockaddr_to_string (Lwt_unix.getsockname socket))
   in

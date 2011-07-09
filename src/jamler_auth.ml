@@ -51,7 +51,7 @@ let auth_modules server =
 		 Lwt_log.error_f
 		   ~section
 		   ~exn:exn
-		   "Auth module %s not found" m
+		   "auth module %s not found" m
 	       );
 	       raise exn
       ) methods
