@@ -958,6 +958,7 @@ let parse_items =
 
 
   let start host =
+    Mod_disco.register_feature host <:ns<PRIVACY>>;
     Lwt.return (
       [Gen_mod.fold_hook privacy_iq_get host process_iq_get 50;
        Gen_mod.fold_hook privacy_iq_set host process_iq_set 50;
@@ -972,7 +973,8 @@ let parse_items =
       ]
     )
 
-  let stop _host =
+  let stop host =
+    Mod_disco.register_feature host <:ns<PRIVACY>>;
     Lwt.return ()
 
 (*
