@@ -294,23 +294,20 @@ struct
       then Tcp.close state.socket
       else Lwt.return ()
     in
-      (match state.state with
-	 | Stream_established ->
-	     lwt () =
-	       Lwt_list.iter_s
-		 (fun (h : Jlib.namepreped) ->
-		    Router.unregister_route h (state.pid :> Router.msg pid);
-		    Lwt_log.notice_f ~section
-		      "route unregistered for service %s\n" (h :> string)
-		 )
-		 state.hosts
-	     in
-	       Lwt.return ()
-	 | _ ->
-	     Lwt.return ()
-      );
-      Lwt.return ()
-
+      match state.state with
+	| Stream_established ->
+	    lwt () =
+	      Lwt_list.iter_s
+		(fun (h : Jlib.namepreped) ->
+		   Router.unregister_route h (state.pid :> Router.msg pid);
+		   Lwt_log.notice_f ~section
+		     "route unregistered for service %s\n" (h :> string)
+		)
+		state.hosts
+	    in
+	      Lwt.return ()
+	| _ ->
+	    Lwt.return ()
 end
 
 module Service = GenServer.Make(ExtService)
