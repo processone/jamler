@@ -13,7 +13,6 @@ end
 struct
   let name = "mod_last_sql"
   let section = Jamler_log.new_section name
-  let remove_user = Hooks.create ()
   let unset_presence_hook = Hooks.create ()
 
   let get_last luser lserver = 
