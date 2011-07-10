@@ -14,8 +14,7 @@ module ACL = Jamler_acl
 module ExtService :
 sig
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg
-      | Router.msg | `Zxc of string * int ]
+      [ Tcp.msg | XMLReceiver.msg | GenServer.msg | Router.msg ]
   type init_data = Lwt_unix.file_descr
   type state
   val init : init_data -> msg pid -> state Lwt.t
@@ -25,8 +24,7 @@ sig
 end =
 struct
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg
-      | Router.msg | `Zxc of string * int ]
+      [ Tcp.msg | XMLReceiver.msg | GenServer.msg | Router.msg ]
 
   type service_state =
     | Wait_for_stream
@@ -274,7 +272,6 @@ struct
 	  in
             XMLReceiver.parse state.xml_receiver data;
             Tcp.activate state.socket state.pid;
-            (*state.pid $! `Zxc (data, 1);*)
             Lwt.return (`Continue state)
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
@@ -288,13 +285,6 @@ struct
           handle_xml m state
       | #Router.msg as m ->
           handle_route m state
-      | `Zxc (s, n) ->
-          if n <= 1000000 then (
-            Tcp.send_async state.socket (string_of_int n ^ s);
-            state.pid $! `Zxc (s, n + 1)
-          );
-          Lwt_main.yield () >>
-          Lwt.return (`Continue state)
       | #GenServer.msg -> assert false
 
   let terminate state =
