@@ -11,7 +11,7 @@ type jid = {user : string;
 	   }
 
 type timezone = | UTC
-		| Shift of char * int * int
+		| Shift of int * int
 
 val nameprep_exn : string -> namepreped
 val nodeprep_exn : string -> nodepreped

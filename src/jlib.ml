@@ -499,7 +499,7 @@ let get_random_string () =		(* TODO *)
   string_of_int (Random.int 1000000000)
 
 type timezone = | UTC
-		| Shift of char * int * int
+		| Shift of int * int
 
 let get_tzo () =
   let tfloat = Unix.time () in
@@ -508,10 +508,9 @@ let get_tzo () =
   let time_f_utc, _ = Unix.mktime tm_utc in
   let time_f_local, _ = Unix.mktime tm_local in
   let sec_diff = int_of_float (time_f_local -. time_f_utc) in
-  let div = abs(sec_diff) / 3600 in
+  let div = sec_diff / 3600 in
   let rem = abs(sec_diff) mod 3600 in
-  let sign = if sec_diff >= 0 then '+' else '-' in
-    Shift (sign, div, rem)
+    Shift (div, rem)
 
 let timestamp_to_iso' tm =
   Printf.sprintf "%04d%02d%02dT%02d:%02d:%02d"
@@ -528,8 +527,8 @@ let timestamp_to_iso tfloat timezone =
   let tzo = match timezone with
     | UTC ->
 	"Z"
-    | Shift (sign, tzh, tzm) ->
-	Printf.sprintf "%c%02d:%02d" sign tzh tzm
+    | Shift (tzh, tzm) ->
+	Printf.sprintf "%+02d:%02d" tzh tzm
   in
     (utc, tzo)
 
