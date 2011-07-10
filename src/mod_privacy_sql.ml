@@ -1,4 +1,5 @@
 module GenIQHandler = Jamler_gen_iq_handler
+module Auth = Jamler_auth
 
 type li_type =
   | No
@@ -248,12 +249,20 @@ struct
 	     Lwt.return ()
 	) ritems
 
-(*
-sql_del_privacy_lists(LUser, LServer) ->
-    Username = ejabberd_odbc:escape(LUser),
-    Server = ejabberd_odbc:escape(LServer),
-    odbc_queries:del_privacy_lists(LServer, Server, Username).
-*)
+  let sql_del_privacy_lists luser lserver =
+    let user = (luser : Jlib.nodepreped :> string) in
+    let server = (lserver : Jlib.namepreped :> string) in
+    let us = user ^ "@" ^ server in
+    let del_privacy_list_query =
+      <:sql<delete from privacy_list where username=%(user)s>> in
+    let del_privacy_list_data_query =
+      <:sql<delete from privacy_list_data where value=%(us)s>> in
+    let del_privacy_default_list_query =
+      <:sql<delete from privacy_default_list where username=%(user)s>> in
+    lwt _ = Sql.query lserver del_privacy_list_query in
+    lwt _ = Sql.query lserver del_privacy_list_data_query in
+    lwt _ = Sql.query lserver del_privacy_default_list_query in
+      Lwt.return ()
 
   let raw_to_item (stype, svalue, saction, order, match_all, match_iq,
 		   match_message, match_presence_in, match_presence_out) =
@@ -956,6 +965,9 @@ let parse_items =
       | _ ->
 	  Lwt.return (Jamler_hooks.OK, new_userlist ())
 
+  let remove_user (user, server) =
+    lwt _ = sql_del_privacy_lists user server in
+      Lwt.return Jamler_hooks.OK
 
   let start host =
     Mod_disco.register_feature host <:ns<PRIVACY>>;
@@ -964,10 +976,9 @@ let parse_items =
        Gen_mod.fold_hook privacy_iq_set host process_iq_set 50;
        Gen_mod.fold_hook privacy_get_user_list host get_user_list 50;
        Gen_mod.fold_plain_hook privacy_check_packet host check_packet 50;
+       Gen_mod.hook Auth.remove_user host remove_user 50;
 (*    ejabberd_hooks:add(privacy_updated_list, Host,
 		       ?MODULE, updated_list, 50),
-    ejabberd_hooks:add(remove_user, Host,
-		       ?MODULE, remove_user, 50),
 *)
        Gen_mod.iq_handler `SM host <:ns<PRIVACY>> process_iq ();
       ]
@@ -978,13 +989,6 @@ let parse_items =
     Lwt.return ()
 
 (*
-
-
-remove_user(User, Server) ->
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
-    sql_del_privacy_lists(LUser, LServer).
-
 
 updated_list(_,
 	     #userlist{name = OldName} = Old,
