@@ -79,7 +79,7 @@ let remove_connection from_to pid key =
   let s2s_list =
     List.filter
       (function
-	 | (k, p) when (k = key && p = pid) -> false
+	 | (k, p) when (k = key && p == pid) -> false
 	 | _ -> true)
       (find_s2s_list from_to)
   in match s2s_list with
