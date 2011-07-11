@@ -67,7 +67,7 @@ struct
 
   let check_from jid _server =
     match jid with
-      | {Jlib.user = ""; Jlib.server = ""} ->
+      | {Jlib.user = ""; Jlib.server = ""; _} ->
 	  true
       | _ ->
 	  (* TODO
@@ -75,16 +75,16 @@ struct
 	     acl:match_rule(Server, Access, JID) *)
 	  false
 
-  let check_timeout source =
+  let check_timeout _source =
     (* TODO *)
     true
 
-  let remove_timeout source =
+  let remove_timeout _source =
     (* TODO *)
     ()
 
   let may_remove_resource = function
-    | `JID (u, s, r) ->
+    | `JID (u, s, _r) ->
 	`JID (u, s, Jlib.resourceprep_exn "")
     | `IP ip ->
 	`IP ip
@@ -196,7 +196,7 @@ struct
       luser lserver password from iq
       subel source lang is_captcha_succeed =
     match from with
-      | {Jlib.luser = u; Jlib.lserver = s} when u = luser && s = lserver ->
+      | {Jlib.luser = u; Jlib.lserver = s; _} when u = luser && s = lserver ->
 	  try_set_password luser lserver password iq subel lang
       | _ when is_captcha_succeed -> (
 	  match check_from from lserver with
@@ -236,7 +236,7 @@ struct
 	     AllowRemove = (allow == acl:match_rule(Server, Access, From)), *)
 	  let allow_remove = true in
 	    match utag_opt, ptag_opt, rtag_opt, allow_remove with
-	      | Some utag, _, Some rtag, true -> (
+	      | Some utag, _, Some _rtag, true -> (
 		  match Jlib.nodeprep (Xml.get_tag_cdata utag) with
 		    | Some luser -> (
 			match from with
@@ -266,11 +266,10 @@ struct
 			  (`IQ {iq with
 				  Jlib.iq_type =
 			       `Error (Jlib.err_jid_malformed, Some subel)}))
-	      | None, _, Some rtag, true -> (
+	      | None, _, Some _rtag, true -> (
 		  match from with
 		    | {Jlib.luser = luser;
-		       Jlib.lserver = s;
-		       Jlib.lresource = lresource; _} when s = lserver ->
+		       Jlib.lserver = s; _} when s = lserver ->
 			let res_iq = {Jlib.iq_xmlns = <:ns<REGISTER>>;
 				      Jlib.iq_id = id;
 				      Jlib.iq_lang = "";
@@ -331,18 +330,15 @@ struct
 			   `Error (Jlib.err_bad_request, Some subel)})))
       | `Get subel ->
 	  lwt is_registered, username_subels, query_subels =
-	    match from with
-	      | {Jlib.user = user;
+	    let {Jlib.user = user;
 		 Jlib.luser = luser;
-		 Jlib.lserver = lserver; _} ->
-		  match_lwt Auth.does_user_exist luser lserver with
-		    | true ->
-			Lwt.return (true, [`XmlCdata user],
-				    [`XmlElement ("registered", [], [])])
-		    | false ->
-			Lwt.return (false, [`XmlCdata user], [])
-	      | _ ->
-		  Lwt.return (false, [], [])
+		 Jlib.lserver = lserver; _} = from in
+	      match_lwt Auth.does_user_exist luser lserver with
+		| true ->
+		    Lwt.return (true, [`XmlCdata user],
+				[`XmlElement ("registered", [], [])])
+		| false ->
+		    Lwt.return (false, [`XmlCdata user], [])
 	  in
 	    if (is_captcha_enabled to'.Jlib.lserver) && is_registered then (
 	      (* TopInstrEl = {xmlelement, "instructions", [],
@@ -409,7 +405,7 @@ struct
   let process_iq from to' iq =
     process_iq' from to' iq (`JID (Jlib.jid_tolower from))
 
-  let stream_feature_register acc host =
+  let stream_feature_register acc _host =
     Lwt.return
       (Hooks.OK, (`XmlElement ("register",
 			       [("xmlns", <:ns<FEATURE_IQREGISTER>>)],
