@@ -1,7 +1,10 @@
+let section = Jamler_log.new_section "process"
+
 type -'a pid
 
 type 'a proc = {id : int;
 		queue : 'a Queue.t;
+		mutable t : unit Lwt.t;
 		mutable wakener : 'a Lwt.u option}
 
 external pid_to_proc : 'a pid -> 'a proc = "%identity"
@@ -12,20 +15,21 @@ let id_seq = ref 0
 let spawn f =
   let proc = {id = (incr id_seq; !id_seq);
 	      queue = Queue.create ();
+	      t = Lwt.return ();
 	      wakener = None}
   in
   let pid = proc_to_pid proc in
-  let _ =
+  let t =
     try_lwt
       f pid
     with
       | exn ->
 	  lwt () =
-            Lwt_io.eprintf "Process raised an exception: %s\n"
-	      (Printexc.to_string exn)
+            Lwt_log.error ~exn ~section "process raised an exception:"
 	  in
             Lwt.fail exn
   in
+    proc.t <- t;
     pid
 
 exception Queue_limit
@@ -35,8 +39,8 @@ let send pid msg =
     (match proc.wakener with
        | None ->
 	   if Queue.length proc.queue > 10000
-	   then raise Queue_limit;
-	   Queue.add msg proc.queue
+	   then Lwt.cancel proc.t
+	   else Queue.add msg proc.queue
        | Some wakener ->
 	   Lwt.wakeup wakener msg
     )
