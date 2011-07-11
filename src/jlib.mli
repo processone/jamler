@@ -31,7 +31,6 @@ val string_to_jid_exn : string -> jid
 val string_to_jid : string -> jid option
 val jid_to_string : jid -> string
 val jid_to_string' : string -> string -> string -> string
-val ljid_to_string : nodepreped * namepreped * resourcepreped -> string
 val jid_tolower : jid -> nodepreped * namepreped * resourcepreped
 val jid_remove_resource : jid -> jid
 val jid_replace_resource' : jid -> resourcepreped -> jid

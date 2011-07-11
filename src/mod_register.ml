@@ -63,7 +63,7 @@ struct
     | `IP ip ->
 	Unix.string_of_inet_addr ip
     | `JID ljid ->
-	Jlib.ljid_to_string ljid
+	Jlib.LJID.to_string ljid
 
   let check_from jid _server =
     match jid with
