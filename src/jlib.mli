@@ -145,6 +145,7 @@ val remove_attr : string -> Xml.element -> Xml.element
 
 val iq_to_xml : iq_query_response iq -> Xml.element
 
+val parse_xdata_submit : Xml.element -> (string * (string list)) list
 val sha1 : string -> string
 val md5 : string -> string
 
