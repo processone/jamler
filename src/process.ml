@@ -67,6 +67,11 @@ let send_after timeout pid msg =
     (pid $! msg;
      Lwt.return ())
 
+let apply_after timeout f =
+  Lwt_unix.sleep timeout >>
+    (lwt () = f () in
+       Lwt.return ())
+
 let start_timer timeout pid msg =
   let t0 = Lwt.return () in
   let timer = ref t0 in
