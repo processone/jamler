@@ -36,27 +36,35 @@ struct
   type init_data = T.init_data
   let start init_data =
     let rec loop self state =
-      lwt msg = receive self in
-        match msg with
-	  | #msg ->
-	      loop self state
-	  | m ->
-	      lwt result =
-	        try_lwt
-		  T.handle m state
-		with
-		  | exn ->
-		      lwt () =
-                        Lwt_log.error ~exn ~section
-			  "GenServer raised an exception"
-                      in
-                        Lwt.return (`Stop state)
-              in
-		match result with
-		  | `Continue state ->
-		      loop self state
-		  | `Stop state ->
-		      T.terminate state
+      if is_overloaded self then (
+	lwt () =
+          Lwt_log.error ~section
+	    "gen_server overloaded"
+	in
+          T.terminate state
+      ) else (
+	lwt msg = receive self in
+          match msg with
+	    | #msg ->
+		loop self state
+	    | m ->
+		lwt result =
+	          try_lwt
+		    T.handle m state
+		  with
+		    | exn ->
+			lwt () =
+                          Lwt_log.error ~exn ~section
+			    "gen_server raised an exception"
+			in
+                          Lwt.return (`Stop state)
+		in
+		  match result with
+		    | `Continue state ->
+			loop self state
+		    | `Stop state ->
+			T.terminate state
+      )
     in
       spawn (fun self ->
 	       lwt state = T.init init_data self in

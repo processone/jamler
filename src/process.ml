@@ -5,6 +5,7 @@ type -'a pid
 type 'a proc = {id : int;
 		queue : 'a Queue.t;
 		mutable t : unit Lwt.t;
+		mutable overloaded : bool;
 		mutable wakener : 'a Lwt.u option}
 
 external pid_to_proc : 'a pid -> 'a proc = "%identity"
@@ -16,6 +17,7 @@ let spawn f =
   let proc = {id = (incr id_seq; !id_seq);
 	      queue = Queue.create ();
 	      t = Lwt.return ();
+	      overloaded = false;
 	      wakener = None}
   in
   let pid = proc_to_pid proc in
@@ -29,6 +31,7 @@ let spawn f =
 	  in
             Lwt.fail exn
   in
+    Lwt.on_cancel t (fun () -> Printf.printf "qwe\n%!");
     proc.t <- t;
     pid
 
@@ -39,8 +42,10 @@ let send pid msg =
     (match proc.wakener with
        | None ->
 	   if Queue.length proc.queue > 10000
-	   then Lwt.cancel proc.t
-	   else Queue.add msg proc.queue
+	   then (
+	     proc.overloaded <- true;
+	     Lwt.cancel proc.t
+	   ) else Queue.add msg proc.queue
        | Some wakener ->
 	   Lwt.wakeup wakener msg
     )
@@ -58,6 +63,10 @@ let receive pid =
     ) else (
       Lwt.return (Queue.take proc.queue)
     )
+
+let is_overloaded pid =
+  let proc = pid_to_proc pid in
+    proc.overloaded
 
 type timer = unit Lwt.t
 type 'a timer_msg = [ `TimerTimeout of timer * 'a ]

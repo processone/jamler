@@ -3,6 +3,7 @@ type 'a proc = {			(* TODO: make abstract *)
   id : int;
   queue : 'a Queue.t;
   mutable t : unit Lwt.t;
+  mutable overloaded : bool;
   mutable wakener : 'a Lwt.u option;
 }
 external pid_to_proc : 'a pid -> 'a proc = "%identity"
@@ -11,6 +12,7 @@ val spawn : ('a pid -> unit Lwt.t) -> 'a pid
 (*val send : 'a pid -> 'a -> unit*)
 val ( $! ) : 'a pid -> 'a -> unit
 val receive : 'a pid -> 'a Lwt.t
+val is_overloaded : 'a pid -> bool
 
 type timer = unit Lwt.t
 type 'a timer_msg = [ `TimerTimeout of timer * 'a ]
