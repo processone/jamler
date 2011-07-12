@@ -17,5 +17,6 @@ val is_overloaded : 'a pid -> bool
 type timer = unit Lwt.t
 type 'a timer_msg = [ `TimerTimeout of timer * 'a ]
 val send_after : float -> 'a pid -> 'a -> timer
+val apply_after : float -> (unit -> unit Lwt.t) -> timer
 val start_timer : float -> 'a timer_msg pid -> 'a -> timer
 val cancel_timer : timer -> unit
