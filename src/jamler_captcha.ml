@@ -416,28 +416,6 @@ handle_info({remove_id, Id}, State) ->
     {noreply, State};
 *)
 
-let is_limited = function
-  | None ->
-      false
-  | Some limiter -> (
-      match captcha_limit () with
-	| Some int when int > 0 ->
-	    (* TODO
-	       case catch gen_server:call(?MODULE, {is_limited, Limiter, Int},
-                                       5000) of
-                true ->
-                    true;
-                false ->
-                    false;
-                Err ->
-                    ?ERROR_MSG("Call failed: ~p", [Err]),
-                    false
-               end; *)
-	    false
-	| _ ->
-	    false
-    )
-
 let check_captcha_setup () =
   match is_feature_available () with
     | true -> (
@@ -446,7 +424,7 @@ let check_captcha_setup () =
 	    Lwt.return ()
 	with
 	  | _ ->
-	      Lwt_log.fatal ~section
+	      Lwt_log.warning ~section
 		("captcha is enabled in the option captcha_cmd, " ^
 		   "but it can't generate images")
       )
