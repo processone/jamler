@@ -105,7 +105,7 @@ struct
 		 access;
 		 check_from = true;
 		 password = "password";
-		 hosts = [Jlib.nameprep_exn "service.localhost"];}
+		 hosts = [Jlib.nameprep_exn "mrim.zinid.ru"];}
     in
       Tcp.activate socket self;
       Lwt.return state

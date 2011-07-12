@@ -4,6 +4,7 @@ module Auth = Jamler_auth
 module Router = Jamler_router
 module Translate = Jamler_translate
 module Config = Jamler_config
+module Captcha = Jamler_captcha
 
 type source = [ `JID of Jlib.LJID.t | `IP of Unix.inet_addr ]
 
@@ -58,6 +59,28 @@ struct
 
   let get_time_string () =
     write_time (Unix.localtime (Unix.time ()))
+
+  let process_xdata_submit el =
+    match Xml.get_subtag el "x" with
+      | None ->
+	  None
+      | Some xdata ->
+	  let fields = Jlib.parse_xdata_submit xdata in
+	    try (
+	      match (List.assoc "username" fields,
+		     List.assoc "password" fields) with
+		| user :: _, pass :: _ -> (
+		    match Jlib.nodeprep user with
+		      | Some luser ->
+			  Some (luser, pass)
+		      | None ->
+			  None
+		  )
+		| _ ->
+		    None
+	    ) with
+	      | Not_found ->
+		  None
 
   let source_to_string = function
     | `IP ip ->
@@ -298,31 +321,31 @@ struct
 			       `Error (Jlib.err_jid_malformed, Some subel)}))
 	      | _ ->
 		  if is_captcha_enabled lserver then (
-		    (* case ejabberd_captcha:process_reply(SubEl) of
-			ok ->
-			    case process_xdata_submit(SubEl) of
-				{ok, User, Password} ->
-				    try_register_or_set_password(
-				      User, Server, Password, From,
-				      IQ, SubEl, Source, Lang, true);
-				_ ->
-				    IQ#iq{type = error,
-					  sub_el = [SubEl, ?ERR_BAD_REQUEST]}
-			    end;
-			{error, malformed} ->
-			    IQ#iq{type = error,
-				  sub_el = [SubEl, ?ERR_BAD_REQUEST]};
-			_ ->
-			    ErrText = "The CAPTCHA verification has failed",
-			    IQ#iq{type = error,
-				  sub_el = [SubEl,
-					    ?ERRT_NOT_ALLOWED(Lang, ErrText)]}
-		    end; *)
-		    Lwt.return
-		      (`IQ {iq with
-			      Jlib.iq_type =
-			   `Error (Jlib.err_internal_server_error,
-				   Some subel)})
+		    try (
+		      let () = Captcha.process_reply_exn subel in
+			match process_xdata_submit subel with
+			  | Some (luser, password) ->
+			      try_register_or_set_password
+				luser lserver password from
+				iq subel source lang true
+			  | None ->
+			      Lwt.return
+				(`IQ {iq with
+					Jlib.iq_type =
+				     `Error (Jlib.err_bad_request, Some subel)})
+		    ) with
+		      | Captcha.Err_malformed ->
+			  Lwt.return
+			    (`IQ {iq with
+				    Jlib.iq_type =
+				 `Error (Jlib.err_bad_request, Some subel)})
+		      | _ ->
+			  let errtxt = "The CAPTCHA verification has failed" in
+			    Lwt.return
+			      (`IQ {iq with
+				      Jlib.iq_type =
+				   `Error ((Jlib.errt_not_allowed
+					      lang errtxt), Some subel)})
 		  ) else (
 		    Lwt.return
 		      (`IQ {iq with
@@ -340,50 +363,60 @@ struct
 		| false ->
 		    Lwt.return (false, [`XmlCdata user], [])
 	  in
+	    lwt () = Lwt_log.error ~section "here2" in
 	    if (is_captcha_enabled to'.Jlib.lserver) && is_registered then (
-	      (* TopInstrEl = {xmlelement, "instructions", [],
-				  [{xmlcdata,
-				    translate:translate(
-				      Lang, "You need a client that supports x:data "
-				      "and CAPTCHA to register")}]},
-		    InstrEl = {xmlelement, "instructions", [],
-			       [{xmlcdata,
-				 translate:translate(
-				   Lang,
-				   "Choose a username and password "
-				   "to register with this server")}]},
-		    UField = {xmlelement, "field",
-			      [{"type", "text-single"},
-			       {"label", translate:translate(Lang, "User")},
-			       {"var", "username"}],
-			      [{xmlelement, "required", [], []}]},
-		    PField = {xmlelement, "field",
-			      [{"type", "text-private"},
-			       {"label", translate:translate(Lang, "Password")},
-			       {"var", "password"}],
-			      [{xmlelement, "required", [], []}]},
-		    case ejabberd_captcha:create_captcha_x(
-			   ID, To, Lang, Source, [InstrEl, UField, PField]) of
-			{ok, CaptchaEls} ->
-			    IQ#iq{type = result,
-				  sub_el = [{xmlelement, "query",
-					     [{"xmlns", "jabber:iq:register"}],
-					     [TopInstrEl | CaptchaEls]}]};
-                        {error, limit} ->
-                            ErrText = "Too many CAPTCHA requests",
-                            IQ#iq{type = error,
-				  sub_el = [SubEl, ?ERRT_RESOURCE_CONSTRAINT(
-                                                      Lang, ErrText)]};
-			_Err ->
-			    ErrText = "Unable to generate a CAPTCHA",
-			    IQ#iq{type = error,
-				  sub_el = [SubEl, ?ERRT_INTERNAL_SERVER_ERROR(
-						      Lang, ErrText)]}
-		    end; *)
-	      Lwt.return (`IQ {iq with
-				 Jlib.iq_type =
-			      `Error (Jlib.err_internal_server_error,
-				      Some subel)})
+	      let top_instr_el =
+		`XmlElement ("instructions", [],
+			     [`XmlCdata
+				(Translate.translate
+				   lang
+				   ("You need a client that supports x:data "
+				    ^ "and CAPTCHA to register"))]) in
+	      let instr_el =
+		`XmlElement ("instructions", [],
+			     [`XmlCdata
+				(Translate.translate
+				   lang
+				   ("Choose a username and password "
+				    ^ "to register with this server"))]) in
+	      let ufield =
+		`XmlElement ("field",
+			     [("type", "text-single");
+			      ("label", Translate.translate lang "User");
+			      ("var", "username")],
+			     [`XmlElement ("required", [], [])]) in
+	      let pfield =
+		`XmlElement ("field",
+			     [("type", "text-private");
+			      ("label", Translate.translate lang "Password");
+			      ("var", "password")],
+			     [`XmlElement ("required", [], [])]) in
+		try_lwt (
+		  lwt captcha_els = Captcha.create_captcha_x_exn
+		    id to' lang (Some source) [instr_el; ufield; pfield] [] in
+		    Lwt.return
+		      (`IQ {iq with Jlib.iq_type =
+			   `Result (Some (`XmlElement
+					    ("query",
+					     [("xmlns", "jabber:iq:register")],
+					     top_instr_el :: captcha_els)))})
+		) with
+		  | Captcha.Err_limit ->
+		      let errtext = "Too many CAPTCHA requests" in
+			Lwt.return
+			  (`IQ {iq with
+				  Jlib.iq_type =
+			       `Error ((Jlib.errt_resource_constraint
+					  lang errtext),
+				       Some subel)})
+		  | _ ->
+		      let errtext = "Unable to generate a CAPTCHA" in
+			Lwt.return
+			  (`IQ {iq with
+				  Jlib.iq_type =
+			       `Error ((Jlib.errt_internal_server_error
+					  lang errtext),
+				       Some subel)})
 	    ) else (
 	      Lwt.return
 		(`IQ {iq with Jlib.iq_type =
@@ -411,14 +444,17 @@ struct
 			       [("xmlns", <:ns<FEATURE_IQREGISTER>>)],
 			       [])) :: acc)
 
-  let unauthenticated_iq_register _acc (server, iq, ip) =
+  let unauthenticated_iq_register _acc ((lserver : Jlib.namepreped), iq, ip) =
     let address = `IP ip in
       match_lwt process_iq' (Jlib.make_jid_exn "" "" "")
-	(Jlib.make_jid_exn "" server "") iq address with
+	(Jlib.make_jid_exn "" (lserver :> string) "") iq address with
 	  | `IQ res_iq ->
-	      let res1 = Jlib.replace_from_to (Jlib.make_jid_exn "" server "")
-		(Jlib.make_jid_exn "" "" "") (Jlib.iq_to_xml res_iq) in
-		Lwt.return (Hooks.OK, Jlib.remove_attr "to" res1)
+	      let res1 = Jlib.replace_from_to
+		(Jlib.make_jid_exn "" (lserver :> string) "")
+		(Jlib.make_jid_exn "" "" "")
+		(Jlib.iq_to_xml res_iq) in
+	      let res2 = Jlib.remove_attr "to" res1 in
+		Lwt.return (Hooks.OK, Some (res2 :> Xml.element_cdata))
 	  | `Ignore ->
 	      assert false
 
@@ -427,10 +463,10 @@ struct
     Lwt.return (
       [Gen_mod.iq_handler `Local host <:ns<REGISTER>> process_iq ();
        Gen_mod.iq_handler `SM host <:ns<REGISTER>> process_iq ();
-       (* Gen_mod.fold_hook c2s_stream_features host
- 	  stream_feature_register 50;
-	  Gen_mod.fold_hook c2s_unauthenticated_iq host
-	  unauthenticated_iq_register 50; *)
+       Gen_mod.fold_hook Jamler_c2s.c2s_stream_features host
+ 	 stream_feature_register 50;
+       Gen_mod.fold_hook Jamler_c2s.c2s_unauthenticated_iq host
+	 unauthenticated_iq_register 50
       ]
     )
 

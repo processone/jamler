@@ -467,6 +467,41 @@ let iq_to_xml {iq_id = id; iq_type = type'; _} =
 	[("id", id); ("type", stype)],
 	els) :> Xml.element)
 
+let rec parse_xdata_values els' res =
+  match els' with
+    | [] -> res
+    | (`XmlElement ("value", _attrs, subels)) :: els ->
+	let val' = Xml.get_cdata subels in
+	  parse_xdata_values els (val' :: res)
+    | _ :: els ->
+	parse_xdata_values els res
+
+let rec parse_xdata_fields els' res =
+  match els' with
+    | [] -> res
+    | (`XmlElement ("field", attrs, subels)) :: els -> (
+	match Xml.get_attr_s "var" attrs with
+	  | "" ->
+	      parse_xdata_fields els res
+	  | var ->
+	      let field = (var, List.rev (parse_xdata_values subels [])) in
+		parse_xdata_fields els (field :: res)
+      )
+    | _ :: els ->
+	parse_xdata_fields els res
+
+let parse_xdata_submit el =
+  match el with
+    | `XmlElement (_name, attrs, els) -> (
+	match Xml.get_attr_s "type" attrs with
+	  | "form" (* This is a workaround to accept Psi's wrong forms *)
+	  | "submit" ->
+	      List.rev (parse_xdata_fields els [])
+	  | _ ->
+	      []
+      )
+    | _ ->
+	[]
 
 let sha1 s =
   let h = Cryptokit.Hash.sha1 () in
