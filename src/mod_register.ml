@@ -363,7 +363,6 @@ struct
 		| false ->
 		    Lwt.return (false, [`XmlCdata user], [])
 	  in
-	    lwt () = Lwt_log.error ~section "here2" in
 	    if (is_captcha_enabled to'.Jlib.lserver) && is_registered then (
 	      let top_instr_el =
 		`XmlElement ("instructions", [],
