@@ -1,4 +1,4 @@
-let section = Jamler_log.new_section "router"
+let section = Jamler_log.new_section "hooks"
 
 let sort_hooks hs =
   let hcompare ((s1 : int), _) (s2, _) = compare s1 s2 in
