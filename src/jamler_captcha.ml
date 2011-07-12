@@ -17,7 +17,7 @@ exception Err_bad_match
 exception Err_not_found
 
 type captcha = {key: string;
-		timer: bool; (* TODO *)
+		timer: Process.timer;
 		callback: (result -> unit) option}
 
 type captcha_tbl = (string, captcha) Hashtbl.t
@@ -30,7 +30,7 @@ let vfield type' var value =
 let captcha_text lang =
   Translate.translate lang "Enter the text you see"
 
-let captcha_lifetime = 120000 (* two minutes *)
+let captcha_lifetime = 120.0 (* two minutes *)
 let limit_period = 60*1000*1000 (* one minute *)
 (* -define(RPC_TIMEOUT, 5000). *)
 
@@ -105,6 +105,27 @@ let create_image limiter =
     ) done;
     create_image' limiter key
 
+let lookup_captcha id =
+  try
+    Some (Hashtbl.find captcha_tbl id)
+  with
+    | Not_found ->
+	None
+
+let remove_id id () =
+  lwt _ = Lwt_log.debug_f ~section "captcha ~s timed out" id in
+  let _ = match lookup_captcha id with
+    | Some {callback = callback; _} -> (
+	Hashtbl.remove captcha_tbl id;
+	match callback with
+	  | Some f -> f Invalid
+	  | None -> ()
+      )
+    | _ ->
+	()
+  in
+    Lwt.return ()
+
 let create_captcha_exn sid from to' lang limiter callback =
   lwt type', key, image = create_image limiter in
     (* TODO:
@@ -143,9 +164,7 @@ let create_captcha_exn sid from to' lang limiter callback =
   let oob = `XmlElement ("x", [("xmlns", <:ns<OOB>>)],
 			 [`XmlElement ("url", [],
 				       [`XmlCdata (get_url id)])]) in
-    (* TODO:
-       Tref = erlang:send_after(?CAPTCHA_LIFETIME, ?MODULE, {remove_id, Id}), *)
-  let timer = true in
+  let timer = Process.apply_after captcha_lifetime (remove_id id) in
   let _ = Hashtbl.replace captcha_tbl id
     {key; timer; callback = Some callback} in
     Lwt.return (id, [body; oob; captcha; data])
@@ -190,9 +209,7 @@ let create_captcha_x_exn sid to' lang limiter head_els tail_els =
 		  [`XmlElement
 		     ("uri", [("type", type')],
 		      [`XmlCdata ("cid:" ^ cid)])])])] @ tail_els)) in
-    (* TODO:
-       Tref = erlang:send_after(?CAPTCHA_LIFETIME, ?MODULE, {remove_id, Id}), *)
-  let timer = true in
+  let timer = Process.apply_after captcha_lifetime (remove_id id) in
   let _ = Hashtbl.replace captcha_tbl id {key; timer; callback = None} in
     Lwt.return [captcha; data]
 
@@ -278,22 +295,14 @@ build_captcha_html(Id, Lang) ->
 	    {error, enoent}
    end. *)
 
-let lookup_captcha id =
-  try
-    Some (Hashtbl.find captcha_tbl id)
-  with
-    | Not_found ->
-	None
-
 (* this was do_check_captcha *)
 let check_captcha id provided_key =
   match lookup_captcha id with
     | Some {key = valid_key;
-	    timer = _timer;
+	    timer = timer;
 	    callback = callback} ->
 	Hashtbl.remove captcha_tbl id;
-	(* TODO
-	   erlang:cancel_timer(Tref), *)
+	Process.cancel_timer timer;
 	let result = if valid_key = provided_key then Valid else Invalid in
 	let _ = match callback with
 	  | Some f -> f result
