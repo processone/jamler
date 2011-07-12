@@ -304,31 +304,26 @@ let check_captcha id provided_key =
 	No_found
 
 let process_reply_exn el =
-  match el with
-    | `XmlElement _ -> (
-	match Xml.get_subtag el "x" with
-	  | None ->
-	      raise Err_malformed
-	  | Some xdata ->
-	      let fields = Jlib.parse_xdata_submit xdata in
-		try (
-		  match (List.assoc "challenge" fields,
-			 List.assoc "ocr" fields) with
-		    | id :: _, ocr :: _ -> (
-			match check_captcha id ocr with
-			  | Valid -> ()
-			  | Invalid -> raise Err_bad_match
-			  | No_found -> raise Err_not_found
-		      )
-		    | _ ->
-			raise Err_malformed
-		)
-		with
-		  | Not_found ->
-		      raise Err_malformed
-      )
-    | `XmlCdata _ ->
+  match Xml.get_subtag el "x" with
+    | None ->
 	raise Err_malformed
+    | Some xdata ->
+	let fields = Jlib.parse_xdata_submit xdata in
+	  try (
+	    match (List.assoc "challenge" fields,
+		   List.assoc "ocr" fields) with
+	      | id :: _, ocr :: _ -> (
+		  match check_captcha id ocr with
+		    | Valid -> ()
+		    | Invalid -> raise Err_bad_match
+		    | No_found -> raise Err_not_found
+		)
+	      | _ ->
+		  raise Err_malformed
+	  )
+	  with
+	    | Not_found ->
+		raise Err_malformed
 
 (* TODO
 process(_Handlers, #request{method='GET', lang=Lang, path=[_, Id]}) ->
