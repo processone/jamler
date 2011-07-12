@@ -363,6 +363,7 @@ struct
 		| false ->
 		    Lwt.return (false, [`XmlCdata user], [])
 	  in
+	    lwt () = Lwt_log.error ~section "here2" in
 	    if (is_captcha_enabled to'.Jlib.lserver) && is_registered then (
 	      let top_instr_el =
 		`XmlElement ("instructions", [],
@@ -443,14 +444,17 @@ struct
 			       [("xmlns", <:ns<FEATURE_IQREGISTER>>)],
 			       [])) :: acc)
 
-  let unauthenticated_iq_register _acc (server, iq, ip) =
+  let unauthenticated_iq_register _acc ((lserver : Jlib.namepreped), iq, ip) =
     let address = `IP ip in
       match_lwt process_iq' (Jlib.make_jid_exn "" "" "")
-	(Jlib.make_jid_exn "" server "") iq address with
+	(Jlib.make_jid_exn "" (lserver :> string) "") iq address with
 	  | `IQ res_iq ->
-	      let res1 = Jlib.replace_from_to (Jlib.make_jid_exn "" server "")
-		(Jlib.make_jid_exn "" "" "") (Jlib.iq_to_xml res_iq) in
-		Lwt.return (Hooks.OK, Jlib.remove_attr "to" res1)
+	      let res1 = Jlib.replace_from_to
+		(Jlib.make_jid_exn "" (lserver :> string) "")
+		(Jlib.make_jid_exn "" "" "")
+		(Jlib.iq_to_xml res_iq) in
+	      let res2 = Jlib.remove_attr "to" res1 in
+		Lwt.return (Hooks.OK, Some (res2 :> Xml.element_cdata))
 	  | `Ignore ->
 	      assert false
 
@@ -459,10 +463,10 @@ struct
     Lwt.return (
       [Gen_mod.iq_handler `Local host <:ns<REGISTER>> process_iq ();
        Gen_mod.iq_handler `SM host <:ns<REGISTER>> process_iq ();
-       (* Gen_mod.fold_hook c2s_stream_features host
- 	  stream_feature_register 50;
-	  Gen_mod.fold_hook c2s_unauthenticated_iq host
-	  unauthenticated_iq_register 50; *)
+       Gen_mod.fold_hook Jamler_c2s.c2s_stream_features host
+ 	 stream_feature_register 50;
+       Gen_mod.fold_hook Jamler_c2s.c2s_unauthenticated_iq host
+	 unauthenticated_iq_register 50
       ]
     )
 

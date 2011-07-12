@@ -12,6 +12,15 @@ module SM = Jamler_sm
 module Roster = Gen_roster
 module Privacy = Mod_privacy_sql
 
+let c2s_stream_features :
+    (Jlib.namepreped, Xml.element_cdata list) Hooks.fold_hook =
+  Hooks.create_fold ()
+
+let c2s_unauthenticated_iq :
+    (Jlib.namepreped * Jlib.iq_query Jlib.iq * Unix.inet_addr,
+     Xml.element_cdata option) Hooks.fold_hook =
+  Hooks.create_fold ()
+
 module C2S :
 sig
   type msg =
@@ -204,36 +213,30 @@ struct
     in
       match Jlib.iq_query_info el with
 	| `IQ iq -> (
-	    let res = None in		(* TODO *)
-	    (*res = ejabberd_hooks:run_fold(c2s_unauthenticated_iq,
-					  StateData#state.server,
-					  empty,
-					  [StateData#state.server, IQ,
-					   StateData#state.ip]),
-	    *)
-	    match res with
-	      | None ->
-		  (* The only reasonable IQ's here are auth and register IQ's
-		     They contain secrets, so don't include subelements to
-		     response *)
-		  let iq = {iq with
-			      Jlib.iq_type = `Error (
-				Jlib.err_service_unavailable, None)}
-		  in
-		  let res =
-		    Jlib.replace_from_to
-		      (Jlib.make_jid_exn "" (state.server :> string) "")
-		      (Jlib.make_jid_exn "" "" "")
-		      (Jlib.iq_to_xml iq)
-		  in
-		  let res = Jlib.remove_attr "to" res in
-		    send_element state res
-	      | Some res ->
-		  send_element state res
+	    match_lwt Hooks.run_fold c2s_unauthenticated_iq
+	      state.server None (state.server, iq, state.ip) with
+		| None ->
+		    (* The only reasonable IQ's here are auth and register IQ's
+		       They contain secrets, so don't include subelements to
+		       response *)
+		    let iq = {iq with
+				Jlib.iq_type = `Error (
+				  Jlib.err_service_unavailable, None)}
+		    in
+		    let res =
+		      Jlib.replace_from_to
+			(Jlib.make_jid_exn "" (state.server :> string) "")
+			(Jlib.make_jid_exn "" "" "")
+			(Jlib.iq_to_xml iq)
+		    in
+		    let res = Jlib.remove_attr "to" res in
+		      Lwt.return (send_element state res)
+		| Some res ->
+		    Lwt.return (send_element state res)
 	  )
 	| _ ->
 	    (* Drop any stanza, which isn't IQ stanza *)
-	    ()
+	    Lwt.return ()
 
   let privacy_check_packet state from to' packet dir =
     Hooks.run_fold_plain
@@ -809,6 +812,9 @@ struct
 					[]
 					end,
 				      *)
+				    lwt stream_feat_els =
+				      Hooks.run_fold c2s_stream_features
+					server [] (server) in
 				      send_element
 					state
 					(`XmlElement
@@ -818,13 +824,7 @@ struct
 					    [`XmlElement
 					       ("mechanisms",
 						[("xmlns", <:ns<SASL>>)],
-						mechs)]
-					      (*++
-						ejabberd_hooks:run_fold(
-						c2s_stream_features,
-						Server,
-						[], [Server])*))
-					);
+						mechs)] @ stream_feat_els));
 				      Lwt.return (
 					`Continue
 					  {state with
@@ -1102,10 +1102,10 @@ wait_for_stream(timeout, StateData) ->
 			     {state with state = Wait_for_auth})
 	      )
 	    | None ->
-		process_unauthenticated_stanza state el;
-		Lwt.return
-		  (`Continue
-		     {state with state = Wait_for_auth})
+		lwt () = process_unauthenticated_stanza state el in
+		  Lwt.return
+		    (`Continue
+		       {state with state = Wait_for_auth})
 	)
 (*
 wait_for_auth(timeout, StateData) ->
@@ -1284,11 +1284,11 @@ wait_for_auth(timeout, StateData) ->
 		    send_trailer(StateData),
 		    {stop, normal, StateData};
 		true ->*)
-		  process_unauthenticated_stanza state el;
-		  Lwt.return (
-		    `Continue
-		      {state with
-			 state = Wait_for_feature_request})
+		  lwt () = process_unauthenticated_stanza state el in
+		    Lwt.return (
+		      `Continue
+			{state with
+			   state = Wait_for_feature_request})
 	)
 
 (*
@@ -1374,10 +1374,10 @@ wait_for_feature_request(timeout, StateData) ->
 				 state = Wait_for_feature_request})
 		)
 	      | _ ->
-		process_unauthenticated_stanza state el;
-		Lwt.return
-		  (`Continue
-		     {state with state = Wait_for_feature_request})
+		  lwt () = process_unauthenticated_stanza state el in
+		    Lwt.return
+		      (`Continue
+			 {state with state = Wait_for_feature_request})
 	)
 
 (*
