@@ -23,6 +23,7 @@ sig
     string -> string -> (string -> string) -> bool Lwt.t
   val get_password :
     Jlib.nodepreped -> Jlib.namepreped -> string option Lwt.t
+  val plain_password_required : bool
 
   val does_user_exist : Jlib.nodepreped -> Jlib.namepreped -> bool Lwt.t
   val remove : Jlib.nodepreped -> Jlib.namepreped -> unit Lwt.t
@@ -103,6 +104,14 @@ let get_password_with_authmodule user server =
 	)
   in
     aux user server (auth_modules server)
+
+let plain_password_required server =
+  List.exists
+    (fun m ->
+       let module A = (val m : Auth) in
+	 A.plain_password_required
+    ) (auth_modules server)
+
 
 let does_user_exist user server =
   let rec aux user server =
@@ -220,6 +229,8 @@ struct
 
   let get_password _user _server =
     Lwt.return (Some "test")
+
+  let plain_password_required = false
 
   let does_user_exist _user _server =
     Lwt.return true

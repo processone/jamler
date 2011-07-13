@@ -752,21 +752,6 @@ struct
 			      | "1.0" -> (
 				  send_header state (server :> string) "1.0" default_lang;
 				  if not state.authenticated then (
-				    (*SASLState =
-				      cyrsasl:server_new(
-				      "jabber", Server, "", [],
-				      fun(U) ->
-				      ejabberd_auth:get_password_with_authmodule(
-				      U, Server)
-				      end,
-				      fun(U, P) ->
-				      ejabberd_auth:check_password_with_authmodule(
-				      U, Server, P)
-				      end,
-				      fun(U, P, D, DG) ->
-				      ejabberd_auth:check_password_with_authmodule(
-				      U, Server, P, D, DG)
-				      end),*)
 				    let mechs =
 				      List.map
 					(fun s ->
@@ -830,7 +815,6 @@ struct
 					  {state with
 					     state = Wait_for_feature_request;
 					     server = server;
-					     (*sasl_state = SASLState,*)
 					     lang = lang});
 				  ) else (
 				    match (state.resource :> string) with
@@ -945,8 +929,7 @@ wait_for_stream(timeout, StateData) ->
 		    | _ -> [`XmlCdata u]
 		in
 		let res =
-		  match (*ejabberd_auth:plain_password_required(
-			  StateData#state.server)*)false with (* TODO *)
+		  match Auth.plain_password_required state.server with
 		    | false ->
 			  `XmlElement
 			    (name, attrs,
@@ -981,18 +964,17 @@ wait_for_stream(timeout, StateData) ->
 		  Lwt.return
 		    (`Continue
 		       {state with state = Wait_for_auth})
-	    | Some (_id, `Set, (u, _p, _d, r)) -> (
+	    | Some (_id, `Set, (u, p, d, r)) -> (
 		match Jlib.make_jid u (state.server :> string) r with
 		  | Some jid when (Jamler_acl.match_rule
 				     state.server state.access jid false) -> (
-		      (*let dgen = fun pw ->
+		      let dgen pw =
                         Jlib.sha1 (state.streamid ^ pw)
-		      in*)
-			match (*ejabberd_auth:check_password_with_authmodule(
-			  U, StateData#state.server, P, D, DGen) *) (* TODO *)
-			  (true, 0)
+		      in
+			match_lwt Auth.check_password_digest_with_authmodule
+			  jid.Jlib.luser state.server p d dgen
 			with
-			  | (true, _auth_module) -> (
+			  | Some _auth_module -> (
 			      (*?INFO_MSG(
 				"(~w) Accepted legacy authentication for ~s by ~p",
 				[StateData#state.socket,

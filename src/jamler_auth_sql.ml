@@ -40,6 +40,8 @@ struct
 	    else Lwt.return (passwd = password && password <> "")
       | None -> Lwt.return false
 
+  let plain_password_required = false
+
   let does_user_exist user server =
     match_lwt get_password user server with
       | Some passwd -> Lwt.return true

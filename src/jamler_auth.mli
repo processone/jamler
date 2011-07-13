@@ -16,6 +16,7 @@ sig
     string -> string -> (string -> string) -> bool Lwt.t
   val get_password :
     Jlib.nodepreped -> Jlib.namepreped -> string option Lwt.t
+  val plain_password_required : bool
 
   val does_user_exist : Jlib.nodepreped -> Jlib.namepreped -> bool Lwt.t
   val remove : Jlib.nodepreped -> Jlib.namepreped -> unit Lwt.t
@@ -34,6 +35,7 @@ val check_password_digest_with_authmodule :
   string -> string -> (string -> string) -> string option Lwt.t
 val get_password_with_authmodule :
   Jlib.nodepreped -> Jlib.namepreped -> (string * string) option Lwt.t
+val plain_password_required : Jlib.namepreped -> bool
 
 val does_user_exist : Jlib.nodepreped -> Jlib.namepreped -> bool Lwt.t
 val remove : Jlib.nodepreped -> Jlib.namepreped -> unit Lwt.t
