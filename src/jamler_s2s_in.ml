@@ -508,11 +508,8 @@ stream_established(closed, StateData) ->
   let terminate state =
     lwt () = Lwt_log.debug ~section "terminated" in
     XMLReceiver.free state.xml_receiver;
-    lwt () =
-      if Tcp.state state.socket = Lwt_unix.Opened
-      then Tcp.close state.socket
-      else Lwt.return () in
-    Lwt.return()
+    lwt () = Tcp.close state.socket in
+      Lwt.return()
 
 end
 

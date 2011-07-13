@@ -49,17 +49,18 @@ struct
   type state =
       {pid : msg pid;
        socket : Tcp.socket;
+       receiver : unit Lwt.t;
        xml_receiver : XMLReceiver.t;
        state : c2s_state;
        streamid : string;
        access : bool Jamler_acl.access_rule;
        (*	(* TODO *)
        shaper,
-       zlib = false,
-       tls = false,
-       tls_required = false,
-       tls_enabled = false,
-       tls_options = [],*)
+       zlib = false,*)
+       tls : bool;
+       tls_required : bool;
+       tls_enabled : bool;
+       tls_options : Tcp.tls_option list;
        authenticated : bool;
        user : Jlib.nodepreped;
        server : Jlib.namepreped;
@@ -97,11 +98,35 @@ struct
 		 {value, {_, S}} -> S;
 		 _ -> none
 	     end,
+    StartTLS = lists:member(starttls, Opts),
+    StartTLSRequired = lists:member(starttls_required, Opts),
+    TLSEnabled = lists:member(tls, Opts),
+    TLS = StartTLS orelse StartTLSRequired orelse TLSEnabled,
+    TLSOpts1 =
+	lists:filter(fun({certfile, _}) -> true;
+			(_) -> false
+		     end, Opts),
+    TLSOpts = [verify_none | TLSOpts1],
       *)
+    let starttls = true in
+    let starttls_required = false in
+    let tls_enabled = false in
+    let tls = starttls || starttls_required || tls_enabled in
+    let tls_options = [ `Certfile "src/ssl.pem" ] in
+    let () =
+      if tls_enabled
+      then Tcp.starttls socket []
+    in
+    let receiver = Tcp.activate socket self in
     let state = {pid = self;
 		 socket;
+		 receiver;
 		 xml_receiver;
 		 state = Wait_for_stream;
+		 tls;
+		 tls_required = starttls_required;
+		 tls_enabled;
+		 tls_options;
 		 streamid = "";
 		 access;
 		 authenticated = false;
@@ -122,7 +147,6 @@ struct
 		 lang = "";
 		}
     in
-      Tcp.activate socket self;
       Lwt.return state
 
   let myname = "localhost"		(* TODO *)
@@ -130,6 +154,8 @@ struct
   let invalid_xml_err = Jlib.serr_xml_not_well_formed
   let host_unknown_err = Jlib.serr_host_unknown
   let invalid_from = Jlib.serr_invalid_from
+  let policy_violation_err _lang _text = Jlib.serr_policy_violation (* TODO *)
+
 
   let send_text state text =
     (*Printf.printf "Send XML on stream = %S\n" text; flush stdout;*)
@@ -759,10 +785,8 @@ struct
 							[`XmlCdata s]))
 					(SASL.listmech server)
 				    in
-				      (*SockMod =
-					(StateData#state.sockmod):get_sockmod(
-					StateData#state.socket),
-					Zlib = StateData#state.zlib,
+				    let sockmod = Tcp.get_name state.socket in
+					(*Zlib = StateData#state.zlib,
 					CompressFeature =
 					case Zlib andalso
 					((SockMod == gen_tcp) orelse
@@ -775,28 +799,28 @@ struct
 					_ ->
 					[]
 					end,
-					TLS = StateData#state.tls,
-					TLSEnabled = StateData#state.tls_enabled,
-					TLSRequired = StateData#state.tls_required,
-					TLSFeature =
-					case (TLS == true) andalso
-					(TLSEnabled == false) andalso
-					(SockMod == gen_tcp) of
-					true ->
-					case TLSRequired of
-					true ->
-					[{xmlelement, "starttls",
-					[{"xmlns", ?NS_TLS}],
-					[{xmlelement, "required",
-					[], []}]}];
-					_ ->
-					[{xmlelement, "starttls",
-					[{"xmlns", ?NS_TLS}], []}]
-					end;
-					false ->
-					[]
-					end,
 				      *)
+				    let tls = state.tls in
+				    let tls_enabled = state.tls_enabled in
+				    let tls_required = state.tls_required in
+				    let tls_feature =
+				      if tls &&
+					not tls_enabled &&
+					sockmod = `Tcp
+				      then (
+					if tls_required
+					then
+					  [`XmlElement
+					     ("starttls",
+					      [("xmlns", <:ns<TLS>>)],
+					      [`XmlElement ("required",
+							    [], [])])]
+					else
+					  [`XmlElement
+					     ("starttls",
+					      [("xmlns", <:ns<TLS>>)], [])]
+				      ) else []
+				    in
 				    lwt stream_feat_els =
 				      Hooks.run_fold c2s_stream_features
 					server [] (server) in
@@ -804,12 +828,12 @@ struct
 					state
 					(`XmlElement
 					   ("stream:features", [],
-					    (*TLSFeature ++
-					      CompressFeature ++*)
-					    [`XmlElement
-					       ("mechanisms",
-						[("xmlns", <:ns<SASL>>)],
-						mechs)] @ stream_feat_els));
+					    tls_feature @
+					     (* CompressFeature ++*)
+					      [`XmlElement
+						 ("mechanisms",
+						  [("xmlns", <:ns<SASL>>)],
+						  mechs)] @ stream_feat_els));
 				      Lwt.return (
 					`Continue
 					  {state with
@@ -862,23 +886,23 @@ struct
 				)
 			      | _ ->
 				  send_header state (server :> string) "" default_lang;
-				  (*if
-				    (not StateData#state.tls_enabled) and
-				    StateData#state.tls_required ->
-				    send_element(
-				    StateData,
-				    ?POLICY_VIOLATION_ERR(
-				    Lang,
-				    "Use of STARTTLS required")),
-				    send_trailer(StateData),
-				    {stop, normal, StateData};
-				    true ->*)
-				  Lwt.return (
-				    `Continue
-				      {state with
-					 state = Wait_for_auth;
-					 server = server;
-					 lang = lang})
+				  if not state.tls_enabled &&
+				    state.tls_required
+				  then (
+				    send_element
+				      state
+				      (policy_violation_err
+					 lang
+					 "Use of STARTTLS required");
+				    send_trailer state;
+				    Lwt.return (`Stop state)
+				  ) else
+				    Lwt.return (
+				      `Continue
+					{state with
+					   state = Wait_for_auth;
+					   server = server;
+					   lang = lang})
 			)
 		      | _ -> (
 			  send_header state myname "" default_lang;
@@ -1109,14 +1133,14 @@ wait_for_auth(timeout, StateData) ->
     match msg with
       | `XmlStreamElement el -> (
 	  let `XmlElement (name, attrs, els) = el in
-	    (* Zlib = StateData#state.zlib,
-	       TLS = StateData#state.tls,
-	       TLSEnabled = StateData#state.tls_enabled,
-	       TLSRequired = StateData#state.tls_required,
-	       SockMod = (StateData#state.sockmod):get_sockmod(StateData#state.socket),*)
+	    (* Zlib = StateData#state.zlib, *)
+	  let tls = state.tls in
+	  let tls_enabled = state.tls_enabled in
+	  let tls_required = state.tls_required in
+	  let sockmod = Tcp.get_name state.socket in
 	    match (Xml.get_attr_s "xmlns" attrs), name with
-	      | <:ns<SASL>>, "auth" (*when not ((SockMod == gen_tcp) and
-				      TLSRequired)*) (* TODO *) -> (
+	      | <:ns<SASL>>, "auth" when (not (sockmod = `Tcp &&
+					      tls_required)) -> (
 		  let mech = Xml.get_attr_s "mechanism" attrs in
 		  let client_in = Jlib.decode_base64 (Xml.get_cdata els) in
 		  lwt sasl_result =
@@ -1198,30 +1222,35 @@ wait_for_auth(timeout, StateData) ->
 			      {state with
 				 state = Wait_for_feature_request})
 		)
-		(* | <:ns<TLS>>, "starttls" (*when TLS == true,
-					 TLSEnabled == false,
-					 SockMod == gen_tcp*) (* TODO *)
-		  ->
-	    TLSOpts = case ejabberd_config:get_local_option(
+	      | <:ns<TLS>>, "starttls" when (tls && not tls_enabled &&
+					       sockmod = `Tcp) ->
+		let tlsopts =		(* TODO *)
+		  (*case ejabberd_config:get_local_option(
 			     {domain_certfile, StateData#state.server}) of
-			  undefined ->
-			      StateData#state.tls_options;
-			  CertFile ->
+			  undefined ->*)
+		  state.tls_options
+			  (*CertFile ->
 			      [{certfile, CertFile} |
 			       lists:keydelete(
 				 certfile, 1, StateData#state.tls_options)]
-		      end,
-	    Socket = StateData#state.socket,
-	    TLSSocket = (StateData#state.sockmod):starttls(
-			  Socket, TLSOpts,
-			  xml:element_to_binary(
-			    {xmlelement, "proceed", [{"xmlns", ?NS_TLS}], []})),
-	    fsm_next_state(wait_for_stream,
-			   StateData#state{socket = TLSSocket,
-					   streamid = new_id(),
-					   tls_enabled = true
-					  });
-	{?NS_COMPRESS, "compress"} when Zlib == true,
+		      end,*)
+		in
+		let socket = state.socket in
+		  Lwt.cancel state.receiver;
+		  XMLReceiver.reset_stream state.xml_receiver;
+		  send_element
+		    state
+		    (`XmlElement ("proceed", [("xmlns", <:ns<TLS>>)], []));
+		  Tcp.starttls socket tlsopts;
+		  let receiver = Tcp.activate state.socket state.pid in
+		    fsm_next_state
+		      {state with
+			 state = Wait_for_stream;
+			 receiver;
+			 streamid = new_id();
+			 tls_enabled = true;
+		      }
+	(*{?NS_COMPRESS, "compress"} when Zlib == true,
 					((SockMod == gen_tcp) or
 					 (SockMod == tls)) ->
 	    case xml:get_subtag(El, "method") of
@@ -1256,21 +1285,20 @@ wait_for_auth(timeout, StateData) ->
 	    end;
 *)
 	      | _ ->
-		  (* TODO *)
-	    (*if
-		(SockMod == gen_tcp) and TLSRequired ->
-		    Lang = StateData#state.lang,
-		    send_element(StateData, ?POLICY_VIOLATION_ERR(
-					       Lang,
-					       "Use of STARTTLS required")),
-		    send_trailer(StateData),
-		    {stop, normal, StateData};
-		true ->*)
-		  lwt () = process_unauthenticated_stanza state el in
-		    Lwt.return (
-		      `Continue
-			{state with
-			   state = Wait_for_feature_request})
+		  if sockmod = `Tcp && tls_required then (
+		    let lang = state.lang in
+		    send_element state
+		      (policy_violation_err lang
+			 "Use of STARTTLS required");
+		      send_trailer state;
+		      Lwt.return (`Stop state)
+		  ) else (
+		    lwt () = process_unauthenticated_stanza state el in
+		      Lwt.return (
+			`Continue
+			  {state with
+			     state = Wait_for_feature_request})
+		  )
 	)
 
 (*
@@ -1898,9 +1926,8 @@ session_established(timeout, StateData) ->
 	      "tcp data %d %S" (String.length data) data
 	  in
             XMLReceiver.parse state.xml_receiver data;
-            Tcp.activate state.socket state.pid;
-            (*state.pid $! `Zxc (data, 1);*)
-            Lwt.return (`Continue state)
+            let receiver = Tcp.activate state.socket state.pid in
+              Lwt.return (`Continue {state with receiver})
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
           lwt () = Lwt_log.debug ~section "tcp close" in
@@ -1926,11 +1953,7 @@ session_established(timeout, StateData) ->
 
   let terminate state =
     XMLReceiver.free state.xml_receiver;
-    lwt () =
-      if Tcp.state state.socket = Lwt_unix.Opened
-      then Tcp.close state.socket
-      else Lwt.return ()
-    in
+    lwt () = Tcp.close state.socket in
       (match state.state with
 	 | Session_established -> (
 	    (*case StateData#state.authenticated of

@@ -289,11 +289,7 @@ struct
 
   let terminate state =
     XMLReceiver.free state.xml_receiver;
-    lwt () =
-      if Tcp.state state.socket = Lwt_unix.Opened
-      then Tcp.close state.socket
-      else Lwt.return ()
-    in
+    lwt () = Tcp.close state.socket in
       match state.state with
 	| Stream_established ->
 	    lwt () =

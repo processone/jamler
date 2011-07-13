@@ -1051,11 +1051,7 @@ struct
 	| None ->
 	    Lwt.return ()
 	| Some socket ->
-	    lwt () =
-	      if Tcp.state socket = Lwt_unix.Opened
-	      then Tcp.close socket
-	      else Lwt.return ()
-	    in
+	    lwt () = Tcp.close socket in
 	      Lwt.return ()
 
 
