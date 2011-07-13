@@ -203,15 +203,15 @@ let entropy s =
 	  String.iter
 	    (fun c ->
 	       if c >= 'a' && c <= 'z' then
-		 lowletter := !lowletter + 26
+		 lowletter := 26
                else if c >= '0' && c <= '9' then
-		 digit := !digit + 9
+		 digit := 9
 	       else if c >= 'A' && c <= 'Z' then
-		 hiletter := !hiletter + 26
+		 hiletter := 26
 	       else if (Char.code c) >= 0x21 && (Char.code c) <= 0x7e then
-		 printable := !printable + 33
+		 printable := 33
 	       else
-		 other := !other + 128) s;
+		 other := 128) s;
 	  let sum = !digit + !printable + !lowletter + !hiletter + !other in
 	    (float_of_int len) *. (log (float_of_int sum)) /. (log 2.0)
 
