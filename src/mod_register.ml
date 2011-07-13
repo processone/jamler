@@ -41,6 +41,23 @@ struct
     Config.(get_module_opt_with_default
 	      name ["welcom_message"; "body"] string "")
 
+  let registration_timeout =
+    Config.(get_global_opt ["registration_timeout"] int)
+
+  module TimeTreap = Treap.Make
+    (struct
+       let compare = Pervasives.compare
+       let hash = Hashtbl.hash
+       let equal = (=)
+       type t = source
+     end)
+    (struct
+       let compare = Pervasives.compare
+       type t = int
+     end)
+
+  let timeout_treap = ref TimeTreap.empty
+
   let check_ip_access _ _ =
     (* TODO *)
     true
@@ -98,13 +115,44 @@ struct
 	     acl:match_rule(Server, Access, JID) *)
 	  false
 
-  let check_timeout _source =
-    (* TODO *)
-    true
+  let rec clean_treap treap clean_priority =
+    match TimeTreap.is_empty treap with
+      | true ->
+	  treap
+      | false ->
+	  let _key, priority, _value = TimeTreap.get_root treap in
+	    if priority > clean_priority then (
+	      clean_treap (TimeTreap.delete_root treap) clean_priority
+	    ) else
+	      treap
 
-  let remove_timeout _source =
-    (* TODO *)
-    ()
+  let check_timeout source =
+    match registration_timeout () with
+      | Some timeout -> (
+	  let priority = -1 * (int_of_float (Unix.time ())) in
+	  let clean_priority = priority + timeout in
+	  let treap = !timeout_treap in
+	  let treap1 = clean_treap treap clean_priority in
+	    match TimeTreap.lookup source treap1 with
+	      | None ->
+		  let treap2 = TimeTreap.insert source priority [] treap1 in
+		    timeout_treap := treap2;
+		    true
+	      | Some _ ->
+		  timeout_treap := treap1;
+		  false
+	)
+      | None ->
+	  true
+
+  let remove_timeout source =
+    match registration_timeout () with
+      | Some _ ->
+	  let treap = !timeout_treap in
+	  let treap1 = TimeTreap.delete source treap in
+	    timeout_treap := treap1
+      | None ->
+	  ()
 
   let may_remove_resource = function
     | `JID (u, s, _r) ->
