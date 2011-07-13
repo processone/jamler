@@ -3,6 +3,8 @@ module Config = Jamler_config
 
 let section = Jamler_log.new_section "captcha"
 
+type limiter = [ `JID of Jlib.LJID.t | `IP of Unix.inet_addr ]
+
 type result = | Valid
 	      | Invalid
 	      | No_found
@@ -31,12 +33,26 @@ let captcha_text lang =
   Translate.translate lang "Enter the text you see"
 
 let captcha_lifetime = 120.0 (* two minutes *)
-let limit_period = 60*1000*1000 (* one minute *)
+let captcha_limit_period = 60.0 (* one minute *)
 (* -define(RPC_TIMEOUT, 5000). *)
 
 let captcha_url = Config.(get_global_opt_with_default ["captcha_url"] string "")
 let captcha_cmd = Config.(get_global_opt_with_default ["captcha_cmd"] string "")
 let captcha_limit = Config.(get_global_opt ["captcha_limit"] int)
+
+module LimitTreap = Treap.Make
+  (struct
+     let compare = Pervasives.compare
+     let hash = Hashtbl.hash
+     let equal = (=)
+     type t = limiter
+     end)
+  (struct
+     let compare = Pervasives.compare
+     type t = float
+   end)
+
+let limits_treap = ref LimitTreap.empty
 
 let is_feature_available () =
   match captcha_cmd () with
@@ -55,24 +71,39 @@ let get_url str =
     | url ->
 	url ^ "/" ^ str
 
+let rec clean_treap treap clean_priority =
+    match LimitTreap.is_empty treap with
+      | true ->
+	  treap
+      | false ->
+	  let _key, priority, _value = LimitTreap.get_root treap in
+	    if priority > clean_priority then (
+	      clean_treap (LimitTreap.delete_root treap) clean_priority
+	    ) else
+	      treap
+
+let is_limited' limiter rate_limit =
+  let now_priority = -1.0 *. (Unix.gettimeofday ()) in
+  let clean_priority = now_priority +. captcha_limit_period in
+  let limits = clean_treap !limits_treap clean_priority in
+    match LimitTreap.lookup limiter limits with
+      | Some (_, rate) when rate >= rate_limit ->
+	  limits_treap := limits;
+	  true
+      | Some (priority, rate) ->
+	  limits_treap := LimitTreap.insert limiter priority (rate+1) limits;
+	  false
+      | None ->
+	  limits_treap := LimitTreap.insert limiter now_priority 1 limits;
+	  false
+
 let is_limited = function
   | None ->
       false
   | Some limiter -> (
       match captcha_limit () with
 	| Some int when int > 0 ->
-	    (* TODO
-	       case catch gen_server:call(?MODULE, {is_limited, Limiter, Int},
-                                       5000) of
-                true ->
-                    true;
-                false ->
-                    false;
-                Err ->
-                    ?ERROR_MSG("Call failed: ~p", [Err]),
-                    false
-               end; *)
-	    false
+	    is_limited' limiter int
 	| _ ->
 	    false
     )
@@ -384,40 +415,6 @@ process(_Handlers, #request{method='POST', q=Q, lang=Lang, path=[_, Id]}) ->
 
 process(_Handlers, _Request) ->
     ejabberd_web:error(not_found).
-*)
-
-(* TODO
-   handle_call({is_limited, Limiter, RateLimit}, _From, State) ->
-    NowPriority = now_priority(),
-    CleanPriority = NowPriority + ?LIMIT_PERIOD,
-    Limits = clean_treap(State#state.limits, CleanPriority),
-    case treap:lookup(Limiter, Limits) of
-        {ok, _, Rate} when Rate >= RateLimit ->
-            {reply, true, State#state{limits = Limits}};
-        {ok, Priority, Rate} ->
-            NewLimits = treap:insert(Limiter, Priority, Rate+1, Limits),
-            {reply, false, State#state{limits = NewLimits}};
-        _ ->
-            NewLimits = treap:insert(Limiter, NowPriority, 1, Limits),
-            {reply, false, State#state{limits = NewLimits}}
-    end;
-
-...........
-
-handle_info({remove_id, Id}, State) ->
-    ?DEBUG("captcha ~p timed out", [Id]),
-    case ets:lookup(captcha, Id) of
-	[#captcha{args=Args, pid=Pid}] ->
-	    if is_pid(Pid) ->
-		    Pid ! {captcha_failed, Args};
-	       true ->
-		    ok
-	    end,
-	    ets:delete(captcha, Id);
-	_ ->
-	    ok
-    end,
-    {noreply, State};
 *)
 
 let check_captcha_setup () =
