@@ -55,8 +55,8 @@ struct
        streamid : string;
        access : bool Jamler_acl.access_rule;
        (*	(* TODO *)
-       shaper,
-       zlib = false,*)
+       shaper,*)
+       zlib : bool;
        tls : bool;
        tls_required : bool;
        tls_enabled : bool;
@@ -98,6 +98,7 @@ struct
 		 {value, {_, S}} -> S;
 		 _ -> none
 	     end,
+    Zlib = lists:member(zlib, Opts),
     StartTLS = lists:member(starttls, Opts),
     StartTLSRequired = lists:member(starttls_required, Opts),
     TLSEnabled = lists:member(tls, Opts),
@@ -108,6 +109,7 @@ struct
 		     end, Opts),
     TLSOpts = [verify_none | TLSOpts1],
       *)
+    let zlib = true in
     let starttls = true in
     let starttls_required = false in
     let tls_enabled = false in
@@ -123,6 +125,7 @@ struct
 		 receiver;
 		 xml_receiver;
 		 state = Wait_for_stream;
+		 zlib;
 		 tls;
 		 tls_required = starttls_required;
 		 tls_enabled;
@@ -786,20 +789,21 @@ struct
 					(SASL.listmech server)
 				    in
 				    let sockmod = Tcp.get_name state.socket in
-					(*Zlib = StateData#state.zlib,
-					CompressFeature =
-					case Zlib andalso
-					((SockMod == gen_tcp) orelse
-					(SockMod == tls)) of
-					true ->
-					[{xmlelement, "compression",
-					[{"xmlns", ?NS_FEATURE_COMPRESS}],
-					[{xmlelement, "method",
-					[], [{xmlcdata, "zlib"}]}]}];
-					_ ->
-					[]
-					end,
-				      *)
+				    let zlib = state.zlib in
+				    let compress_feature =
+				      if zlib &&
+					(sockmod = `Tcp (*||
+							  (SockMod == tls)*))
+				      then
+					[`XmlElement
+					   ("compression",
+					    [("xmlns",
+					      <:ns<FEATURE_COMPRESS>>)],
+					    [`XmlElement
+					       ("method",
+						[], [`XmlCdata "zlib"])])]
+				      else []
+				    in
 				    let tls = state.tls in
 				    let tls_enabled = state.tls_enabled in
 				    let tls_required = state.tls_required in
@@ -829,7 +833,7 @@ struct
 					(`XmlElement
 					   ("stream:features", [],
 					    tls_feature @
-					     (* CompressFeature ++*)
+					      compress_feature @
 					      [`XmlElement
 						 ("mechanisms",
 						  [("xmlns", <:ns<SASL>>)],
@@ -1133,7 +1137,7 @@ wait_for_auth(timeout, StateData) ->
     match msg with
       | `XmlStreamElement el -> (
 	  let `XmlElement (name, attrs, els) = el in
-	    (* Zlib = StateData#state.zlib, *)
+	  let zlib = state.zlib in
 	  let tls = state.tls in
 	  let tls_enabled = state.tls_enabled in
 	  let tls_required = state.tls_required in
@@ -1250,40 +1254,48 @@ wait_for_auth(timeout, StateData) ->
 			 streamid = new_id();
 			 tls_enabled = true;
 		      }
-	(*{?NS_COMPRESS, "compress"} when Zlib == true,
-					((SockMod == gen_tcp) or
-					 (SockMod == tls)) ->
-	    case xml:get_subtag(El, "method") of
-		false ->
-		    send_element(StateData,
-				 {xmlelement, "failure",
-				  [{"xmlns", ?NS_COMPRESS}],
-				  [{xmlelement, "setup-failed", [], []}]}),
-		    fsm_next_state(wait_for_feature_request, StateData);
-		Method ->
-		    case xml:get_tag_cdata(Method) of
-			"zlib" ->
-			    Socket = StateData#state.socket,
-			    ZlibSocket = (StateData#state.sockmod):compress(
-					   Socket,
-					   xml:element_to_binary(
-					     {xmlelement, "compressed",
-					      [{"xmlns", ?NS_COMPRESS}], []})),
-			    fsm_next_state(wait_for_stream,
-			     StateData#state{socket = ZlibSocket,
-					     streamid = new_id()
-					    });
-			_ ->
-			    send_element(StateData,
-					 {xmlelement, "failure",
-					  [{"xmlns", ?NS_COMPRESS}],
-					  [{xmlelement, "unsupported-method",
-					    [], []}]}),
-			    fsm_next_state(wait_for_feature_request,
-					   StateData)
-		    end
-	    end;
-*)
+	      | <:ns<COMPRESS>>, "compress" when (
+		  zlib && (sockmod = `Tcp (*|| SockMod == tls*))) -> (
+		  match Xml.get_subtag el "method" with
+		    | None ->
+			send_element state
+			  (`XmlElement
+			     ("failure",
+			      [("xmlns", <:ns<COMPRESS>>)],
+			      [`XmlElement ("setup-failed", [], [])]));
+			fsm_next_state state
+		    | Some method' -> (
+			match Xml.get_tag_cdata method' with
+			  | "zlib" ->
+			      let socket = state.socket in
+				Lwt.cancel state.receiver;
+				XMLReceiver.reset_stream state.xml_receiver;
+				send_element
+				  state
+				  (`XmlElement
+				     ("compressed",
+				      [("xmlns", <:ns<COMPRESS>>)], []));
+				Tcp.compress socket;
+				let receiver =
+				  Tcp.activate state.socket state.pid
+				in
+				  fsm_next_state
+				    {state with
+				       state = Wait_for_stream;
+				       receiver;
+				       streamid = new_id();
+				    }
+			  | _ ->
+			      send_element state
+				(`XmlElement
+				   ("failure",
+				    [("xmlns", <:ns<COMPRESS>>)],
+				    [`XmlElement
+				       ("unsupported-method",
+					[], [])]));
+			      fsm_next_state state
+		      )
+		)
 	      | _ ->
 		  if sockmod = `Tcp && tls_required then (
 		    let lang = state.lang in
