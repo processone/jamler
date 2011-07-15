@@ -24,7 +24,7 @@ let c2s_unauthenticated_iq :
 module C2S :
 sig
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg
+      [ Socket.msg | XMLReceiver.msg | GenServer.msg
       | SM.msg | `Zxc of string * int ]
   type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
   type state
@@ -34,7 +34,7 @@ sig
 end =
 struct
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg
+      [ Socket.msg | XMLReceiver.msg | GenServer.msg
       | SM.msg | `Zxc of string * int ]
 
   type c2s_state =
@@ -48,7 +48,7 @@ struct
 
   type state =
       {pid : msg pid;
-       socket : Tcp.socket;
+       socket : Socket.socket;
        receiver : unit Lwt.t;
        xml_receiver : XMLReceiver.t;
        state : c2s_state;
@@ -60,7 +60,7 @@ struct
        tls : bool;
        tls_required : bool;
        tls_enabled : bool;
-       tls_options : Tcp.tls_option list;
+       tls_options : Socket.tls_option list;
        authenticated : bool;
        user : Jlib.nodepreped;
        server : Jlib.namepreped;
@@ -90,7 +90,7 @@ struct
   let section = Jamler_log.new_section "c2s"
 
   let init (socket, access) self =
-    let socket = Tcp.of_fd socket self in
+    let socket = Socket.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
       (* TODO *)
       (*
@@ -117,9 +117,9 @@ struct
     let tls_options = [ `Certfile "src/ssl.pem" ] in
     let () =
       if tls_enabled
-      then Tcp.starttls socket []
+      then Socket.starttls socket []
     in
-    let receiver = Tcp.activate socket self in
+    let receiver = Socket.activate socket self in
     let state = {pid = self;
 		 socket;
 		 receiver;
@@ -162,7 +162,7 @@ struct
 
   let send_text state text =
     (*Printf.printf "Send XML on stream = %S\n" text; flush stdout;*)
-    Tcp.send_async state.socket text
+    Socket.send_async state.socket text
 
   let send_element state el =
     send_text state (Xml.element_to_string el)
@@ -788,7 +788,7 @@ struct
 							[`XmlCdata s]))
 					(SASL.listmech server)
 				    in
-				    let sockmod = Tcp.get_name state.socket in
+				    let sockmod = Socket.get_name state.socket in
 				    let zlib = state.zlib in
 				    let compress_feature =
 				      if zlib &&
@@ -1141,7 +1141,7 @@ wait_for_auth(timeout, StateData) ->
 	  let tls = state.tls in
 	  let tls_enabled = state.tls_enabled in
 	  let tls_required = state.tls_required in
-	  let sockmod = Tcp.get_name state.socket in
+	  let sockmod = Socket.get_name state.socket in
 	    match (Xml.get_attr_s "xmlns" attrs), name with
 	      | <:ns<SASL>>, "auth" when (not (sockmod = `Tcp &&
 					      tls_required)) -> (
@@ -1245,8 +1245,8 @@ wait_for_auth(timeout, StateData) ->
 		  send_element
 		    state
 		    (`XmlElement ("proceed", [("xmlns", <:ns<TLS>>)], []));
-		  Tcp.starttls socket tlsopts;
-		  let receiver = Tcp.activate state.socket state.pid in
+		  Socket.starttls socket tlsopts;
+		  let receiver = Socket.activate state.socket state.pid in
 		    fsm_next_state
 		      {state with
 			 state = Wait_for_stream;
@@ -1275,9 +1275,9 @@ wait_for_auth(timeout, StateData) ->
 				  (`XmlElement
 				     ("compressed",
 				      [("xmlns", <:ns<COMPRESS>>)], []));
-				Tcp.compress socket;
+				Socket.compress socket;
 				let receiver =
-				  Tcp.activate state.socket state.pid
+				  Socket.activate state.socket state.pid
 				in
 				  fsm_next_state
 				    {state with
@@ -1938,7 +1938,7 @@ session_established(timeout, StateData) ->
 	      "tcp data %d %S" (String.length data) data
 	  in
             XMLReceiver.parse state.xml_receiver data;
-            let receiver = Tcp.activate state.socket state.pid in
+            let receiver = Socket.activate state.socket state.pid in
               Lwt.return (`Continue {state with receiver})
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
@@ -1956,7 +1956,7 @@ session_established(timeout, StateData) ->
 	  handle_broadcast m state
       | `Zxc (s, n) ->
           if n <= 1000000 then (
-            Tcp.send_async state.socket (string_of_int n ^ s);
+            Socket.send_async state.socket (string_of_int n ^ s);
             state.pid $! `Zxc (s, n + 1)
           );
           Lwt_main.yield () >>
@@ -1965,7 +1965,7 @@ session_established(timeout, StateData) ->
 
   let terminate state =
     XMLReceiver.free state.xml_receiver;
-    lwt () = Tcp.close state.socket in
+    lwt () = Socket.close state.socket in
       (match state.state with
 	 | Session_established -> (
 	    (*case StateData#state.authenticated of

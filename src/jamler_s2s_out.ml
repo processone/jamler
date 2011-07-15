@@ -17,7 +17,7 @@ module S2SLib = Jamler_s2s_lib
 module S2SOut :
 sig
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg
+      [ Socket.msg | XMLReceiver.msg | GenServer.msg
       | unit timer_msg
       | Jamler_s2s_lib.s2s_out_msg ]
   type start_type =
@@ -34,7 +34,7 @@ sig
 end =
 struct
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg
+      [ Socket.msg | XMLReceiver.msg | GenServer.msg
       | unit timer_msg
       | Jamler_s2s_lib.s2s_out_msg ]
 
@@ -63,7 +63,7 @@ struct
 
   type state =
       {pid: msg pid;
-       socket : Tcp.socket option;
+       socket : Socket.socket option;
        xml_receiver : XMLReceiver.t;
        state: s2s_out_state;
        stream_id : string;
@@ -92,7 +92,7 @@ struct
   let send_text state text =
     match state.socket with
       | Some socket ->
-	  Tcp.send_async socket text
+	  Socket.send_async socket text
       | None -> assert false
 
   let send_element state el =
@@ -233,8 +233,8 @@ struct
     let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
     let addr = Unix.ADDR_INET (addr', port) in
     lwt () = Lwt_unix.connect socket addr in
-    let tcpsock = Tcp.of_fd socket self in
-      Tcp.activate tcpsock self;
+    let tcpsock = Socket.of_fd socket self in
+      Socket.activate tcpsock self;
       Lwt.return tcpsock
 
   let open_socket1 = open_socket2
@@ -368,7 +368,7 @@ struct
   let close_socket state =
     match state.socket with
       | Some tcpsock ->
-	  Tcp.close tcpsock
+	  Socket.close tcpsock
       | None ->
 	  Lwt.return ()
 
@@ -1014,7 +1014,7 @@ struct
 		    "tcp data %d %S" (String.length data) data
 		in
 		  XMLReceiver.parse state.xml_receiver data;
-		  Tcp.activate socket state.pid;
+		  Socket.activate socket state.pid;
 		  Lwt.return (`Continue state)
 	    | _ -> assert false
 	)
@@ -1051,7 +1051,7 @@ struct
 	| None ->
 	    Lwt.return ()
 	| Some socket ->
-	    lwt () = Tcp.close socket in
+	    lwt () = Socket.close socket in
 	      Lwt.return ()
 
 

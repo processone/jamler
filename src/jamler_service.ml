@@ -14,7 +14,7 @@ module ACL = Jamler_acl
 module ExtService :
 sig
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg | Router.msg ]
+      [ Socket.msg | XMLReceiver.msg | GenServer.msg | Router.msg ]
   type init_data = Lwt_unix.file_descr
   type state
   val init : init_data -> msg pid -> state Lwt.t
@@ -24,7 +24,7 @@ sig
 end =
 struct
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg | Router.msg ]
+      [ Socket.msg | XMLReceiver.msg | GenServer.msg | Router.msg ]
 
   type service_state =
     | Wait_for_stream
@@ -33,7 +33,7 @@ struct
 
   type state =
       {pid: msg pid;
-       socket: Tcp.socket;
+       socket: Socket.socket;
        xml_receiver : XMLReceiver.t;
        state : service_state;
        streamid : string;
@@ -53,7 +53,7 @@ struct
   let init socket self =
     lwt () = Lwt_log.notice_f ~section "external service connected from %s"
       (Jamler_listener.sockaddr_to_string (Lwt_unix.getpeername socket)) in
-    let socket = Tcp.of_fd socket self in
+    let socket = Socket.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
       (* TODO *)
     let access = Jamler_acl.all in
@@ -107,7 +107,7 @@ struct
 		 password = "password";
 		 hosts = [Jlib.nameprep_exn "mrim.zinid.ru"];}
     in
-      Tcp.activate socket self;
+      Socket.activate socket self;
       Lwt.return state
 
   let myname = "localhost"              (* TODO *)
@@ -127,7 +127,7 @@ struct
       "</stream:stream>"
 
   let send_text state text =
-    Tcp.send_async state.socket text
+    Socket.send_async state.socket text
 
   let send_element state el =
     send_text state (Xml.element_to_string el)
@@ -271,7 +271,7 @@ struct
 	      "tcp data %d %S\n" (String.length data) data
 	  in
             XMLReceiver.parse state.xml_receiver data;
-            Tcp.activate state.socket state.pid;
+            Socket.activate state.socket state.pid;
             Lwt.return (`Continue state)
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
@@ -289,7 +289,7 @@ struct
 
   let terminate state =
     XMLReceiver.free state.xml_receiver;
-    lwt () = Tcp.close state.socket in
+    lwt () = Socket.close state.socket in
       match state.state with
 	| Stream_established ->
 	    lwt () =

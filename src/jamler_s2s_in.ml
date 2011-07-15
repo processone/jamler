@@ -18,7 +18,7 @@ module S2SIn :
 sig
   type validation_msg = Jamler_s2s_lib.validation_msg
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
+      [ Socket.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
   type init_data = Lwt_unix.file_descr
   type state
   val init : init_data -> msg pid -> state Lwt.t
@@ -34,7 +34,7 @@ end =
 struct
   type validation_msg = Jamler_s2s_lib.validation_msg
   type msg =
-      [ Tcp.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
+      [ Socket.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
 
   type s2s_in_state =
     | Wait_for_stream
@@ -49,7 +49,7 @@ struct
 
   type state =
       {pid: msg pid;
-       socket: Tcp.socket;
+       socket: Socket.socket;
        xml_receiver : XMLReceiver.t;
        state : s2s_in_state;
        streamid : string;
@@ -76,7 +76,7 @@ struct
     Jlib.get_random_string ()
 
   let send_text state text =
-    Tcp.send_async state.socket text
+    Socket.send_async state.socket text
 
   let send_element state el =
     send_text state (Xml.element_to_string el)
@@ -98,7 +98,7 @@ struct
 
   let init socket self =
     lwt () = Lwt_log.debug ~secion "started" in
-    let socket = Tcp.of_fd socket self in
+    let socket = Socket.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
     let state = {pid = self;
                  socket;
@@ -117,7 +117,7 @@ struct
 		 auth_domain = Jlib.nameprep_exn "";
 		 (* shaper, timer *)}
     in
-      Tcp.activate socket self;
+      Socket.activate socket self;
       Lwt.return state
 
   let invalid_ns_err = Jlib.serr_invalid_namespace
@@ -493,7 +493,7 @@ stream_established(closed, StateData) ->
               "tcp data %d %S" (String.length data) data
           in
             XMLReceiver.parse state.xml_receiver data;
-            Tcp.activate state.socket state.pid;
+            Socket.activate state.socket state.pid;
             Lwt.return (`Continue state)
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
@@ -508,7 +508,7 @@ stream_established(closed, StateData) ->
   let terminate state =
     lwt () = Lwt_log.debug ~section "terminated" in
     XMLReceiver.free state.xml_receiver;
-    lwt () = Tcp.close state.socket in
+    lwt () = Socket.close state.socket in
       Lwt.return()
 
 end
