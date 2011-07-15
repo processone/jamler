@@ -2,9 +2,11 @@ open Process
 
 let section = Jamler_log.new_section "gen_server"
 
-type msg = [ `System ]
+type system_msg = [ `System ]
+type msg = [ system_msg | `Timeout ]
 type 'a result =
     [ `Continue of 'a
+    | `ContinueTimeout of 'a * float
     | `Stop of 'a
     ] Lwt.t
 
@@ -13,7 +15,7 @@ sig
   type msg
   type state
   type init_data
-  val init : init_data -> msg pid -> state Lwt.t
+  val init : init_data -> msg pid -> state result
   val handle : msg -> state -> state result
   val terminate : state -> unit Lwt.t
 end
@@ -27,15 +29,15 @@ end
 
 module Make (T : Type with type msg = private [> msg]) :
 sig
-  type msg = [ `System ]
+  type msg = [ `System | `Timeout ]
   type init_data = T.init_data
   val start : init_data -> T.msg pid
 end =
 struct
-  type msg = [ `System ]
+  type msg = [ `System | `Timeout ]
   type init_data = T.init_data
   let start init_data =
-    let rec loop self state =
+    let rec loop self state timeout =
       if is_overloaded self then (
 	lwt () =
           Lwt_log.error ~section
@@ -43,10 +45,16 @@ struct
 	in
           T.terminate state
       ) else (
-	lwt msg = receive self in
+	lwt msg =
+	  match timeout with
+	    | None -> receive self
+	    | Some timeout ->
+		Lwt.pick [receive self;
+			  (Lwt_unix.sleep timeout >> Lwt.return `Timeout)]
+	in
           match msg with
-	    | #msg ->
-		loop self state
+	    | #system_msg ->
+		loop self state timeout
 	    | m ->
 		lwt result =
 	          try_lwt
@@ -59,14 +67,18 @@ struct
 			in
                           Lwt.return (`Stop state)
 		in
-		  match result with
-		    | `Continue state ->
-			loop self state
-		    | `Stop state ->
-			T.terminate state
+		  process_result self result
       )
+    and process_result self =
+      function
+	| `Continue state ->
+	    loop self state None
+	| `ContinueTimeout (state, timeout) ->
+	    loop self state (Some timeout)
+	| `Stop state ->
+	    T.terminate state
     in
       spawn (fun self ->
-	       lwt state = T.init init_data self in
-		 loop self state)
+	       lwt result = T.init init_data self in
+		 process_result self result)
 end

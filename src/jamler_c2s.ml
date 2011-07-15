@@ -25,17 +25,17 @@ module C2S :
 sig
   type msg =
       [ Socket.msg | XMLReceiver.msg | GenServer.msg
-      | SM.msg | `Zxc of string * int ]
+      | SM.msg ]
   type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
   type state
-  val init : init_data -> msg pid -> state Lwt.t
+  val init : init_data -> msg pid -> state GenServer.result
   val handle : msg -> state -> state GenServer.result
   val terminate : state -> unit Lwt.t
 end =
 struct
   type msg =
       [ Socket.msg | XMLReceiver.msg | GenServer.msg
-      | SM.msg | `Zxc of string * int ]
+      | SM.msg ]
 
   type c2s_state =
     | Wait_for_stream
@@ -88,6 +88,25 @@ struct
   type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
 
   let section = Jamler_log.new_section "c2s"
+
+  let c2s_open_timeout = 60.0
+  let c2s_hibernate_timeout = 90.0
+
+  let fsm_next_state state =
+    let res =
+      match state.state with
+	| Wait_for_stream ->
+	    `ContinueTimeout (state, c2s_open_timeout)
+	| Wait_for_auth
+	| Wait_for_feature_request
+	| Wait_for_bind
+	| Wait_for_session
+	| Wait_for_sasl_response _ ->
+	    `ContinueTimeout (state, c2s_open_timeout)
+	| Session_established ->
+	    `Continue state
+    in
+      Lwt.return res
 
   let init (socket, access) self =
     let socket = Socket.of_fd socket self in
@@ -150,7 +169,7 @@ struct
 		 lang = "";
 		}
     in
-      Lwt.return state
+      fsm_next_state state
 
   let myname = "localhost"		(* TODO *)
   let invalid_ns_err = Jlib.serr_invalid_namespace
@@ -725,11 +744,6 @@ struct
 		    else false
 	)
 
-
-  let fsm_next_state state =
-    (* TODO *)
-    Lwt.return (`Continue state)
-
   let maybe_migrate state =
     (*PackedStateData = pack(StateData),*)
     let {user = u; server = s; resource = r; sid = sid; _} = state in
@@ -838,12 +852,11 @@ struct
 						 ("mechanisms",
 						  [("xmlns", <:ns<SASL>>)],
 						  mechs)] @ stream_feat_els));
-				      Lwt.return (
-					`Continue
-					  {state with
-					     state = Wait_for_feature_request;
-					     server = server;
-					     lang = lang});
+				      fsm_next_state
+					{state with
+					   state = Wait_for_feature_request;
+					   server = server;
+					   lang = lang}
 				  ) else (
 				    match (state.resource :> string) with
 				      | "" ->
@@ -869,23 +882,21 @@ struct
 					      (`XmlElement
 						 ("stream:features", [],
 						  stream_features));
-					    Lwt.return (
-					      `Continue
-						{state with
-						   state = Wait_for_bind;
-						   server = server;
-						   lang = lang})
+					    fsm_next_state
+					      {state with
+						 state = Wait_for_bind;
+						 server = server;
+						 lang = lang}
 				      | _ ->
 					  send_element
 					    state
 					    (`XmlElement
 					       ("stream:features", [], []));
-					  Lwt.return (
-					    `Continue
-					      {state with
-						 state = Wait_for_session;
-						 server = server;
-						 lang = lang})
+					  fsm_next_state
+					    {state with
+					       state = Wait_for_session;
+					       server = server;
+					       lang = lang}
 				  )
 				)
 			      | _ ->
@@ -901,12 +912,11 @@ struct
 				    send_trailer state;
 				    Lwt.return (`Stop state)
 				  ) else
-				    Lwt.return (
-				      `Continue
-					{state with
-					   state = Wait_for_auth;
-					   server = server;
-					   lang = lang})
+				    fsm_next_state
+				      {state with
+					 state = Wait_for_auth;
+					 server = server;
+					 lang = lang}
 			)
 		      | _ -> (
 			  send_header state myname "" default_lang;
@@ -921,10 +931,9 @@ struct
 		      send_trailer state;
 		      Lwt.return (`Stop state)
 	)
-(*
-wait_for_stream(timeout, StateData) ->
-    {stop, normal, StateData};
-*)
+
+      | `Timeout ->
+	  Lwt.return (`Stop state)
 
       | `XmlStreamElement _ ->
 	  send_element state invalid_xml_err;
@@ -979,9 +988,7 @@ wait_for_stream(timeout, StateData) ->
 				 ])])
 		in
 		  send_element state res;
-		  Lwt.return
-		    (`Continue
-		       {state with state = Wait_for_auth})
+		  fsm_next_state {state with state = Wait_for_auth}
 	      )
 	    | Some (_id, `Set, (_u, _p, _d, "")) ->
 		let err =
@@ -989,9 +996,7 @@ wait_for_stream(timeout, StateData) ->
 		    (Jlib.err_auth_no_resource_provided state.lang)
 		in
 		  send_element state err;
-		  Lwt.return
-		    (`Continue
-		       {state with state = Wait_for_auth})
+		  fsm_next_state {state with state = Wait_for_auth}
 	    | Some (_id, `Set, (u, p, d, r)) -> (
 		match Jlib.make_jid u (state.server :> string) r with
 		  | Some jid when (Jamler_acl.match_rule
@@ -1082,9 +1087,8 @@ wait_for_stream(timeout, StateData) ->
 				Jlib.make_error_reply el Jlib.err_not_authorized
 			      in
 				send_element state err;
-				Lwt.return
-				  (`Continue
-				     {state with state = Wait_for_auth})
+				fsm_next_state
+				  {state with state = Wait_for_auth}
 		    )
 		  | None ->
 		      (*?INFO_MSG(
@@ -1095,9 +1099,7 @@ wait_for_stream(timeout, StateData) ->
 		      let err = Jlib.make_error_reply el Jlib.err_jid_malformed
 		      in
 			send_element state err;
-			Lwt.return
-			  (`Continue
-			     {state with state = Wait_for_auth})
+			fsm_next_state {state with state = Wait_for_auth}
 		  | Some jid ->
 		      (*?INFO_MSG(
 			"(~w) Forbidden legacy authentication for ~s",
@@ -1107,20 +1109,15 @@ wait_for_stream(timeout, StateData) ->
 		      let err = Jlib.make_error_reply el Jlib.err_not_allowed
 		      in
 			send_element state err;
-			Lwt.return
-			  (`Continue
-			     {state with state = Wait_for_auth})
+			fsm_next_state {state with state = Wait_for_auth}
 	      )
 	    | None ->
 		lwt () = process_unauthenticated_stanza state el in
-		  Lwt.return
-		    (`Continue
-		       {state with state = Wait_for_auth})
+		  fsm_next_state {state with state = Wait_for_auth}
 	)
-(*
-wait_for_auth(timeout, StateData) ->
-    {stop, normal, StateData};
-*)
+
+      | `Timeout ->
+	  Lwt.return (`Stop state)
 
       | `XmlStreamStart _ -> assert false
 
@@ -1181,14 +1178,13 @@ wait_for_auth(timeout, StateData) ->
                             send_element state
                               (`XmlElement ("success",
                                             [("xmlns", <:ns<SASL>>)], []));
-                            Lwt.return
-			      (`Continue
-				 {state with
-				    state = Wait_for_stream;
-                                    streamid = new_id ();
-                                    authenticated = true;
-                                    (*auth_module = AuthModule,*)
-                                    user = u})
+                            fsm_next_state
+			      {state with
+				 state = Wait_for_stream;
+                                 streamid = new_id ();
+                                 authenticated = true;
+                                 (*auth_module = AuthModule,*)
+                                 user = u}
 			)
 		      | SASL.Continue (server_out, sasl_mech) ->
 			  send_element state
@@ -1196,10 +1192,9 @@ wait_for_auth(timeout, StateData) ->
 			       ("challenge",
 				[("xmlns", <:ns<SASL>>)],
 				[`XmlCdata (Jlib.encode_base64 server_out)]));
-			  Lwt.return
-			    (`Continue
-			       {state with
-				  state = Wait_for_sasl_response sasl_mech})
+			  fsm_next_state
+			    {state with
+			       state = Wait_for_sasl_response sasl_mech}
 		      | SASL.ErrorUser (error, username) ->
 			  (*?INFO_MSG(
 			    "(~w) Failed authentication for ~s@~s",
@@ -1211,20 +1206,18 @@ wait_for_auth(timeout, StateData) ->
 				 ("failure",
 				  [("xmlns", <:ns<SASL>>)],
 				  [`XmlElement (error, [], [])]));
-			    Lwt.return (
-			      `Continue
-				{state with
-				   state = Wait_for_feature_request})
+			    fsm_next_state
+			      {state with
+				 state = Wait_for_feature_request}
 		      | SASL.Error error ->
 			  send_element state
 			    (`XmlElement
 			       ("failure",
 				[("xmlns", <:ns<SASL>>)],
 				[`XmlElement (error, [], [])]));
-			  Lwt.return (
-			    `Continue
-			      {state with
-				 state = Wait_for_feature_request})
+			  fsm_next_state
+			    {state with
+			       state = Wait_for_feature_request}
 		)
 	      | <:ns<TLS>>, "starttls" when (tls && not tls_enabled &&
 					       sockmod = `Tcp) ->
@@ -1306,17 +1299,14 @@ wait_for_auth(timeout, StateData) ->
 		      Lwt.return (`Stop state)
 		  ) else (
 		    lwt () = process_unauthenticated_stanza state el in
-		      Lwt.return (
-			`Continue
-			  {state with
-			     state = Wait_for_feature_request})
+		      fsm_next_state
+			{state with
+			   state = Wait_for_feature_request}
 		  )
 	)
 
-(*
-wait_for_feature_request(timeout, StateData) ->
-    {stop, normal, StateData};
-*)
+      | `Timeout ->
+	  Lwt.return (`Stop state)
 
       | `XmlStreamStart _ -> assert false
 
@@ -1350,14 +1340,13 @@ wait_for_feature_request(timeout, StateData) ->
                             send_element state
                               (`XmlElement ("success",
                                             [("xmlns", <:ns<SASL>>)], []));
-                            Lwt.return
-			      (`Continue
-				 {state with
-				    state = Wait_for_stream;
-                                    streamid = new_id ();
-                                    authenticated = true;
-                                    (*auth_module = AuthModule,*)
-                                    user = u})
+                            fsm_next_state
+			      {state with
+				 state = Wait_for_stream;
+                                 streamid = new_id ();
+                                 authenticated = true;
+                                 (*auth_module = AuthModule,*)
+                                 user = u}
 			)
 		      | SASL.Continue (server_out, sasl_mech) ->
 			  send_element state
@@ -1365,10 +1354,9 @@ wait_for_feature_request(timeout, StateData) ->
 			       ("challenge",
 				[("xmlns", <:ns<SASL>>)],
 				[`XmlCdata (Jlib.encode_base64 server_out)]));
-			  Lwt.return
-			    (`Continue
-			       {state with
-				  state = Wait_for_sasl_response sasl_mech})
+			  fsm_next_state
+			    {state with
+			       state = Wait_for_sasl_response sasl_mech}
 		      | SASL.ErrorUser (error, username) ->
 			  (*?INFO_MSG(
 			    "(~w) Failed authentication for ~s@~s",
@@ -1380,32 +1368,27 @@ wait_for_feature_request(timeout, StateData) ->
 				 ("failure",
 				  [("xmlns", <:ns<SASL>>)],
 				  [`XmlElement (error, [], [])]));
-			    Lwt.return (
-			      `Continue
-				{state with
-				   state = Wait_for_feature_request})
+			    fsm_next_state
+			      {state with
+				 state = Wait_for_feature_request}
 		      | SASL.Error error ->
 			  send_element state
 			    (`XmlElement
 			       ("failure",
 				[("xmlns", <:ns<SASL>>)],
 				[`XmlElement (error, [], [])]));
-			  Lwt.return (
-			    `Continue
-			      {state with
-				 state = Wait_for_feature_request})
+			  fsm_next_state
+			    {state with
+			       state = Wait_for_feature_request}
 		)
 	      | _ ->
 		  lwt () = process_unauthenticated_stanza state el in
-		    Lwt.return
-		      (`Continue
-			 {state with state = Wait_for_feature_request})
+		    fsm_next_state
+		      {state with state = Wait_for_feature_request}
 	)
 
-(*
-wait_for_sasl_response(timeout, StateData) ->
-    {stop, normal, StateData};
-*)
+      | `Timeout ->
+	  Lwt.return (`Stop state)
 
       | `XmlStreamStart _ -> assert false
 
@@ -1443,9 +1426,8 @@ wait_for_sasl_response(timeout, StateData) ->
 			  Jlib.make_error_reply el Jlib.err_bad_request
 			in
 			  send_element state err;
-			  Lwt.return
-			    (`Continue
-			       {state with state = Wait_for_bind})
+			  fsm_next_state
+			    {state with state = Wait_for_bind}
 		    | Some r ->
 			let jid = Jlib.make_jid' u state.server r in
 			let res =
@@ -1462,20 +1444,18 @@ wait_for_sasl_response(timeout, StateData) ->
 				      ))}
 			in
 			  send_element state (Jlib.iq_to_xml res);
-			  Lwt.return
-			    (`Continue {state with
-					  state = Wait_for_session;
-					  resource = r;
-					  jid = jid})
+			  fsm_next_state
+			    {state with
+			       state = Wait_for_session;
+			       resource = r;
+			       jid = jid}
 	      )
 	    | _ ->
-		Lwt.return (`Continue {state with state = Wait_for_bind})
+		fsm_next_state {state with state = Wait_for_bind}
 	)
 
-(*
-wait_for_bind(timeout, StateData) ->
-    {stop, normal, StateData};
-*)
+      | `Timeout ->
+	  Lwt.return (`Stop state)
 
       | `XmlStreamStart _ -> assert false
 
@@ -1556,19 +1536,15 @@ wait_for_bind(timeout, StateData) ->
 			let err = Jlib.make_error_reply el Jlib.err_not_allowed
 			in
 			  send_element state err;
-			  Lwt.return
-			    (`Continue
-			       {state with state = Wait_for_session})
+			  fsm_next_state
+			    {state with state = Wait_for_session}
 	      )
 	    | _ ->
-		Lwt.return
-		  (`Continue
-		     {state with state = Wait_for_session})
+		fsm_next_state {state with state = Wait_for_session}
 	)
-(*
-wait_for_session(timeout, StateData) ->
-    {stop, normal, StateData};
-*)
+
+      | `Timeout ->
+	  Lwt.return (`Stop state)
 
       | `XmlStreamStart _ -> assert false
 
@@ -1697,6 +1673,8 @@ session_established(timeout, StateData) ->
 		       [?MODULE, Options, session_established, StateData]),
     fsm_next_state(session_established, StateData);
 *)
+      | `Timeout ->
+	  fsm_next_state state
 
       | `XmlStreamStart _ -> assert false
 
@@ -1939,7 +1917,7 @@ session_established(timeout, StateData) ->
 	  in
             XMLReceiver.parse state.xml_receiver data;
             let receiver = Socket.activate state.socket state.pid in
-              Lwt.return (`Continue {state with receiver})
+              fsm_next_state {state with receiver}
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
           lwt () = Lwt_log.debug ~section "tcp close" in
@@ -1948,26 +1926,20 @@ session_established(timeout, StateData) ->
             Gc.print_stat stdout; flush stdout;*)
             Lwt.return (`Stop state)
       | `Tcp_close _socket -> assert false
-      | #XMLReceiver.msg as m ->
+      | (#XMLReceiver.msg | `Timeout) as m ->
 	  handle_xml m state
       | #Router.msg as m ->
 	  handle_route m state
       | `Broadcast _ as m ->
 	  handle_broadcast m state
-      | `Zxc (s, n) ->
-          if n <= 1000000 then (
-            Socket.send_async state.socket (string_of_int n ^ s);
-            state.pid $! `Zxc (s, n + 1)
-          );
-          Lwt_main.yield () >>
-          Lwt.return (`Continue state)
-      | #GenServer.msg -> assert false
+      | #GenServer.system_msg -> assert false
 
   let terminate state =
     XMLReceiver.free state.xml_receiver;
     lwt () = Socket.close state.socket in
-      (match state.state with
-	 | Session_established -> (
+    lwt () =
+      match state.state with
+	| Session_established -> (
 	    (*case StateData#state.authenticated of
 		replaced ->
 		    ?INFO_MSG("(~w) Replaced session for ~s",
@@ -1992,31 +1964,31 @@ session_established(timeout, StateData) ->
 		    (*?INFO_MSG("(~w) Close session for ~s",
 			      [StateData#state.socket,
 			       jlib:jid_to_string(StateData#state.jid)]),*)
-	     lwt () = Lwt_log.notice_f ~section "close session for %s" (Jlib.jid_to_string state.jid) in
-	       (match state with
-		  | {pres_last = None;
-		     pres_a;
-		     pres_i;
-		     pres_invis = false; _} when (LJIDSet.is_empty pres_a &&
-						    LJIDSet.is_empty pres_i) ->
-		      SM.close_session
-			state.sid state.user state.server state.resource;
-		  | _ ->
-		      let from = state.jid in
-		      let packet =
-			`XmlElement ("presence",
-				     [("type", "unavailable")], [])
-		      in
-			SM.close_session_unset_presence
-			  state.sid state.user state.server state.resource "";
-			presence_broadcast state from state.pres_a packet;
-			presence_broadcast state from state.pres_i packet
-	       );
-	       Lwt.return ()
-	   )
-	 | _ ->
-	     Lwt.return ()
-      );
+	    lwt () = Lwt_log.notice_f ~section "close session for %s" (Jlib.jid_to_string state.jid) in
+	      (match state with
+		 | {pres_last = None;
+		    pres_a;
+		    pres_i;
+		    pres_invis = false; _} when (LJIDSet.is_empty pres_a &&
+						   LJIDSet.is_empty pres_i) ->
+		     SM.close_session
+		       state.sid state.user state.server state.resource;
+		 | _ ->
+		     let from = state.jid in
+		     let packet =
+		       `XmlElement ("presence",
+				    [("type", "unavailable")], [])
+		     in
+		       SM.close_session_unset_presence
+			 state.sid state.user state.server state.resource "";
+		       presence_broadcast state from state.pres_a packet;
+		       presence_broadcast state from state.pres_i packet
+	      );
+	      Lwt.return ()
+	  )
+	| _ ->
+	    Lwt.return ()
+    in
       Lwt.return ()
 end
 

@@ -26,7 +26,7 @@ sig
       ]
   type init_data = Jlib.namepreped * Jlib.namepreped * start_type
   type state
-  val init : init_data -> msg pid -> state Lwt.t
+  val init : init_data -> msg pid -> state GenServer.result
   val handle : msg -> state -> state GenServer.result
   val terminate : state -> unit Lwt.t
   val start_connection : Jamler_s2s_lib.s2s_out_msg pid -> unit
@@ -214,7 +214,8 @@ struct
 		 new' = new';
 		 verify = verify';
 		 timer = timer}
-    in Lwt.return state
+    in
+      Lwt.return (`Continue state)
 
   let outgoing_s2s_timeout () =
     (* case ejabberd_config:get_local_option(outgoing_s2s_options) of

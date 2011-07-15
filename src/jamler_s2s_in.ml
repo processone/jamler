@@ -21,7 +21,7 @@ sig
       [ Socket.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
   type init_data = Lwt_unix.file_descr
   type state
-  val init : init_data -> msg pid -> state Lwt.t
+  val init : init_data -> msg pid -> state GenServer.result
   val handle : msg -> state -> state GenServer.result
   val terminate : state -> unit Lwt.t
 
@@ -118,7 +118,7 @@ struct
 		 (* shaper, timer *)}
     in
       Socket.activate socket self;
-      Lwt.return state
+      Lwt.return (`Continue state)
 
   let invalid_ns_err = Jlib.serr_invalid_namespace
   let invalid_xml_err = Jlib.serr_xml_not_well_formed
