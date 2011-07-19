@@ -16,19 +16,16 @@ module S2SLib = Jamler_s2s_lib
 
 module S2SOut :
 sig
-  type msg =
-      [ Socket.msg | XMLReceiver.msg | GenServer.msg
-      | unit timer_msg
-      | Jamler_s2s_lib.s2s_out_msg ]
   type start_type =
       [ `New of string
       | `Verify of (Jamler_s2s_lib.validation_msg pid * string * string)
       ]
-  type init_data = Jlib.namepreped * Jlib.namepreped * start_type
-  type state
-  val init : init_data -> msg pid -> state GenServer.result
-  val handle : msg -> state -> state GenServer.result
-  val terminate : state -> unit Lwt.t
+  include GenServer.Type with
+    type msg =
+        [ Socket.msg | XMLReceiver.msg | GenServer.msg
+        | unit timer_msg
+        | Jamler_s2s_lib.s2s_out_msg ]
+    and type init_data = Jlib.namepreped * Jlib.namepreped * start_type
   val start_connection : Jamler_s2s_lib.s2s_out_msg pid -> unit
   val stop_connection : Jamler_s2s_lib.s2s_out_msg pid -> unit
 end =

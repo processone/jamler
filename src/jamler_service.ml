@@ -13,14 +13,10 @@ module ACL = Jamler_acl
 
 module ExtService :
 sig
-  type msg =
-      [ Socket.msg | XMLReceiver.msg | GenServer.msg | Router.msg ]
-  type init_data = Lwt_unix.file_descr
-  type state
-  val init : init_data -> msg pid -> state GenServer.result
-  val handle : msg -> state -> state GenServer.result
-  val terminate : state -> unit Lwt.t
-
+  include GenServer.Type with
+    type msg =
+        [ Socket.msg | XMLReceiver.msg | GenServer.msg | Router.msg ]
+    and type init_data = Lwt_unix.file_descr
 end =
 struct
   type msg =

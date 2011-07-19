@@ -23,14 +23,11 @@ let c2s_unauthenticated_iq :
 
 module C2S :
 sig
-  type msg =
-      [ Socket.msg | XMLReceiver.msg | GenServer.msg
-      | SM.msg ]
-  type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
-  type state
-  val init : init_data -> msg pid -> state GenServer.result
-  val handle : msg -> state -> state GenServer.result
-  val terminate : state -> unit Lwt.t
+  include GenServer.Type with
+    type msg =
+        [ Socket.msg | XMLReceiver.msg | GenServer.msg
+        | SM.msg ]
+    and type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
 end =
 struct
   type msg =

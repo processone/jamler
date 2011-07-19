@@ -17,13 +17,10 @@ module S2S = Jamler_s2s
 module S2SIn :
 sig
   type validation_msg = Jamler_s2s_lib.validation_msg
-  type msg =
-      [ Socket.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
-  type init_data = Lwt_unix.file_descr
-  type state
-  val init : init_data -> msg pid -> state GenServer.result
-  val handle : msg -> state -> state GenServer.result
-  val terminate : state -> unit Lwt.t
+  include GenServer.Type with
+    type msg =
+        [ Socket.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
+    and type init_data = Lwt_unix.file_descr
 
   val s2s_stream_features :
     (Jlib.namepreped, Xml.element_cdata list) Hooks.fold_hook
