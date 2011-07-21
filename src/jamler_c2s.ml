@@ -28,7 +28,7 @@ sig
         [ Socket.msg | XMLReceiver.msg | GenServer.msg
         | SM.msg ]
     and type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
-    and type stop_reason = GenServer.reason
+    and type stop_reason = [ GenServer.reason | `Replaced ]
 end =
 struct
   type msg =
@@ -85,7 +85,7 @@ struct
 
   type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
 
-  type stop_reason = GenServer.reason
+  type stop_reason = [ GenServer.reason | `Replaced ]
 
   let section = Jamler_log.new_section "c2s"
 
@@ -1932,6 +1932,14 @@ session_established(timeout, StateData) ->
 	  handle_route m state
       | `Broadcast _ as m ->
 	  handle_broadcast m state
+      | `Replaced ->
+	  (* TODO *)
+	  (*let lang = state.lang in*)
+	  send_element
+	    state
+	    Jlib.serr_conflict (*Lang, "Replaced by new connection"*);
+	  send_trailer state;
+	  Lwt.return (`StopReason (state, `Replaced))
       | #GenServer.system_msg -> assert false
 
   let terminate state reason =
@@ -1940,51 +1948,65 @@ session_established(timeout, StateData) ->
     lwt () =
       match state.state with
 	| Session_established -> (
-	    (*case StateData#state.authenticated of
-		replaced ->
-		    ?INFO_MSG("(~w) Replaced session for ~s",
+	    match reason with
+	      | `Replaced -> (
+		    (*?INFO_MSG("(~w) Replaced session for ~s",
 			      [StateData#state.socket,
-			       jlib:jid_to_string(StateData#state.jid)]),
-		    From = StateData#state.jid,
-		    Packet = {xmlelement, "presence",
-			      [{"type", "unavailable"}],
-			      [{xmlelement, "status", [],
-				[{xmlcdata, "Replaced by new connection"}]}]},
-		    ejabberd_sm:close_session_unset_presence(
-		      StateData#state.sid,
-		      StateData#state.user,
-		      StateData#state.server,
-		      StateData#state.resource,
-		      "Replaced by new connection"),
-		    presence_broadcast(
-		      StateData, From, StateData#state.pres_a, Packet),
-		    presence_broadcast(
-		      StateData, From, StateData#state.pres_i, Packet);
-		_ ->*)
+			       jlib:jid_to_string(StateData#state.jid)]),*)
+		  lwt () =
+		    Lwt_log.notice_f ~section
+		      "replaced session for %s" (Jlib.jid_to_string state.jid)
+		  in
+		  let from = state.jid in
+		  let packet =
+		    `XmlElement
+		      ("presence",
+		       [("type", "unavailable")],
+		       [`XmlElement
+			  ("status", [],
+			   [`XmlCdata "Replaced by new connection"])])
+		  in
+		    SM.close_session_unset_presence
+		      state.sid
+		      state.user state.server state.resource
+		      "Replaced by new connection";
+		    presence_broadcast
+		      state from state.pres_a packet;
+		    presence_broadcast
+		      state from state.pres_i packet;
+		    Lwt.return ()
+		)
+	      | _ -> (
 		    (*?INFO_MSG("(~w) Close session for ~s",
 			      [StateData#state.socket,
 			       jlib:jid_to_string(StateData#state.jid)]),*)
-	    lwt () = Lwt_log.notice_f ~section "close session for %s" (Jlib.jid_to_string state.jid) in
-	      (match state with
-		 | {pres_last = None;
-		    pres_a;
-		    pres_i;
-		    pres_invis = false; _} when (LJIDSet.is_empty pres_a &&
-						   LJIDSet.is_empty pres_i) ->
-		     SM.close_session
-		       state.sid state.user state.server state.resource;
-		 | _ ->
-		     let from = state.jid in
-		     let packet =
-		       `XmlElement ("presence",
-				    [("type", "unavailable")], [])
-		     in
-		       SM.close_session_unset_presence
-			 state.sid state.user state.server state.resource "";
-		       presence_broadcast state from state.pres_a packet;
-		       presence_broadcast state from state.pres_i packet
-	      );
-	      Lwt.return ()
+		  lwt () =
+		    Lwt_log.notice_f ~section
+		      "close session for %s" (Jlib.jid_to_string state.jid)
+		  in
+		    (match state with
+		       | {pres_last = None;
+			  pres_a;
+			  pres_i;
+			  pres_invis = false; _} when
+			   (LJIDSet.is_empty pres_a &&
+			      LJIDSet.is_empty pres_i) ->
+			   SM.close_session
+			     state.sid state.user state.server state.resource;
+		       | _ ->
+			   let from = state.jid in
+			   let packet =
+			     `XmlElement ("presence",
+					  [("type", "unavailable")], [])
+			   in
+			     SM.close_session_unset_presence
+			       state.sid
+			       state.user state.server state.resource "";
+			     presence_broadcast state from state.pres_a packet;
+			     presence_broadcast state from state.pres_i packet
+		    );
+		    Lwt.return ()
+		)
 	  )
 	| _ ->
 	    Lwt.return ()

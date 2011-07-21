@@ -10,7 +10,7 @@ module GenIQHandler = Jamler_gen_iq_handler
 
 type broadcast =
     [ `RosterItem of LJID.t * [ `None | `From | `To | `Both | `Remove ] ]
-type msg = [ Router.msg | `Broadcast of broadcast ]
+type msg = [ Router.msg | `Broadcast of broadcast | `Replaced ]
 type info = [ `TODO ] list
 
 module Session :
@@ -211,9 +211,7 @@ let check_existing_resources user server resource =
             List.iter
       	(fun ((_, pid) as s) ->
       	   if s != max_sid then (
-      	     (* TODO *)
-      	     ()
-      	     (* Pid ! replaced; *)
+      	     pid $! `Replaced
       	   )
       	) sids
 

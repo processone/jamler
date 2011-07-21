@@ -2,7 +2,7 @@ open Process
 
 type broadcast =
     [ `RosterItem of Jlib.LJID.t * [ `None | `From | `To | `Both | `Remove ] ]
-type msg = [ Jamler_router.msg | `Broadcast of broadcast ]
+type msg = [ Jamler_router.msg | `Broadcast of broadcast | `Replaced ]
 type info = [ `TODO ] list
 type sid = float * msg pid
 
