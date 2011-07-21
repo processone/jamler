@@ -21,6 +21,7 @@ sig
     type msg =
         [ Socket.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
     and type init_data = Lwt_unix.file_descr
+    and type stop_reason = GenServer.reason
 
   val s2s_stream_features :
     (Jlib.namepreped, Xml.element_cdata list) Hooks.fold_hook
@@ -64,6 +65,8 @@ struct
 	  timer *)}
 
   type init_data = Lwt_unix.file_descr
+
+  type stop_reason = GenServer.reason
 
   let s2s_stream_features = Hooks.create_fold ()
   let s2s_receive_packet = Hooks.create ()
@@ -502,7 +505,7 @@ stream_established(closed, StateData) ->
           handle_xml m state
       | #GenServer.msg -> assert false
 
-  let terminate state =
+  let terminate state _reason =
     lwt () = Lwt_log.debug ~section "terminated" in
     XMLReceiver.free state.xml_receiver;
     lwt () = Socket.close state.socket in

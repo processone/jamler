@@ -17,6 +17,7 @@ sig
     type msg =
         [ Socket.msg | XMLReceiver.msg | GenServer.msg | Router.msg ]
     and type init_data = Lwt_unix.file_descr
+    and type stop_reason = GenServer.reason
 end =
 struct
   type msg =
@@ -40,6 +41,8 @@ struct
       }
 
   type init_data = Lwt_unix.file_descr
+
+  type stop_reason = GenServer.reason
 
   let section = Jamler_log.new_section "service"
 
@@ -283,7 +286,7 @@ struct
           handle_route m state
       | #GenServer.msg -> assert false
 
-  let terminate state =
+  let terminate state _reason =
     XMLReceiver.free state.xml_receiver;
     lwt () = Socket.close state.socket in
       match state.state with

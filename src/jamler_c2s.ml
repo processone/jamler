@@ -28,6 +28,7 @@ sig
         [ Socket.msg | XMLReceiver.msg | GenServer.msg
         | SM.msg ]
     and type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
+    and type stop_reason = GenServer.reason
 end =
 struct
   type msg =
@@ -83,6 +84,8 @@ struct
       }
 
   type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
+
+  type stop_reason = GenServer.reason
 
   let section = Jamler_log.new_section "c2s"
 
@@ -1931,7 +1934,7 @@ session_established(timeout, StateData) ->
 	  handle_broadcast m state
       | #GenServer.system_msg -> assert false
 
-  let terminate state =
+  let terminate state reason =
     XMLReceiver.free state.xml_receiver;
     lwt () = Socket.close state.socket in
     lwt () =

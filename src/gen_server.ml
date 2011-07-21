@@ -4,10 +4,12 @@ let section = Jamler_log.new_section "gen_server"
 
 type system_msg = [ `System ]
 type msg = [ system_msg | `Timeout ]
-type 'a result =
+type reason = [ `Normal | `Exception of exn ]
+type ('a, 'b) result =
     [ `Continue of 'a
     | `ContinueTimeout of 'a * float
     | `Stop of 'a
+    | `StopReason of 'a * 'b
     ] Lwt.t
 
 module type Type =
@@ -15,9 +17,10 @@ sig
   type msg
   type state
   type init_data
-  val init : init_data -> msg pid -> state result
-  val handle : msg -> state -> state result
-  val terminate : state -> unit Lwt.t
+  type stop_reason
+  val init : init_data -> msg pid -> (state, stop_reason) result
+  val handle : msg -> state -> (state, stop_reason) result
+  val terminate : state -> stop_reason -> unit Lwt.t
 end
 
 module type S =
@@ -27,7 +30,8 @@ sig
   val start : init_data -> msg pid
 end
 
-module Make (T : Type with type msg = private [> msg]) :
+module Make (T : Type with type msg = private [> msg]
+		      and type stop_reason = private [> reason ]) :
 sig
   type msg = [ `System | `Timeout ]
   type init_data = T.init_data
@@ -43,7 +47,7 @@ struct
           Lwt_log.error ~section
 	    "gen_server overloaded"
 	in
-          T.terminate state
+          T.terminate state `Normal
       ) else (
 	lwt msg =
 	  match timeout with
@@ -65,7 +69,7 @@ struct
                           Lwt_log.error ~exn ~section
 			    "gen_server raised an exception"
 			in
-                          Lwt.return (`Stop state)
+                          Lwt.return (`StopReason (state, `Exception exn))
 		in
 		  process_result self result
       )
@@ -76,7 +80,9 @@ struct
 	| `ContinueTimeout (state, timeout) ->
 	    loop self state (Some timeout)
 	| `Stop state ->
-	    T.terminate state
+	    T.terminate state `Normal
+	| `StopReason (state, reason) ->
+	    T.terminate state reason
     in
       spawn (fun self ->
 	       lwt result = T.init init_data self in

@@ -26,6 +26,7 @@ sig
         | unit timer_msg
         | Jamler_s2s_lib.s2s_out_msg ]
     and type init_data = Jlib.namepreped * Jlib.namepreped * start_type
+    and type stop_reason = GenServer.reason
   val start_connection : Jamler_s2s_lib.s2s_out_msg pid -> unit
   val stop_connection : Jamler_s2s_lib.s2s_out_msg pid -> unit
 end =
@@ -57,6 +58,8 @@ struct
       ]
 
   type init_data = Jlib.namepreped * Jlib.namepreped * start_type
+
+  type stop_reason = GenServer.reason
 
   type state =
       {pid: msg pid;
@@ -1031,7 +1034,7 @@ struct
 	  handle_timer m state
       | #GenServer.msg -> assert false
 
-  let terminate state =
+  let terminate state _reason =
     lwt () = Lwt_log.debug ~section "terminated" in
       (match state.new' with
 	 | None -> ()
