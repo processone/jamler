@@ -1167,8 +1167,6 @@ struct
 		  in
 		    match sasl_result with
 		      | SASL.Done props -> (
-			  (*catch (StateData#state.sockmod):reset_stream(
-                            StateData#state.socket),*)
 			  XMLReceiver.reset_stream state.xml_receiver;
 			  let u = Jlib.nodeprep_exn (List.assoc `Username props) in	(* TODO *)
 			    (*AuthModule = xml:get_attr_s(auth_module, Props),*)
@@ -1329,8 +1327,6 @@ struct
 		  let client_in = Jlib.decode_base64 (Xml.get_cdata els) in
 		    match_lwt SASL.server_step sasl_state client_in with
 		      | SASL.Done props -> (
-			  (*catch (StateData#state.sockmod):reset_stream(
-                            StateData#state.socket),*)
 			  XMLReceiver.reset_stream state.xml_receiver;
 			  let u = Jlib.nodeprep_exn (List.assoc `Username props) in	(* TODO *)
 			    (*AuthModule = xml:get_attr_s(auth_module, Props),
@@ -1498,11 +1494,13 @@ struct
 			in
 			let fs = ljid :: fs in
 			let ts = ljid :: ts in
-		    (*PrivList =
-			ejabberd_hooks:run_fold(
-			  privacy_get_user_list, StateData#state.server,
-			  #userlist{},
-			  [U, StateData#state.server]),*)
+			lwt priv_list =
+                          Hooks.run_fold
+                            Privacy.privacy_get_user_list
+                            state.server
+                            (Privacy.new_userlist ())
+                            (jid.Jlib.luser, state.server)
+			in
                         let sid =
 			  (Unix.gettimeofday (), (state.pid :> SM.msg pid))
 			in
@@ -1518,7 +1516,7 @@ struct
 			       (*conn = Conn;*)
 			     pres_f = LJIDSet.from_list fs;
 			     pres_t = LJIDSet.from_list ts;
-			       (*privacy_list = PrivList*)}
+			     privacy_list = priv_list}
 			in
 		    (*DebugFlag = ejabberd_hooks:run_fold(c2s_debug_start_hook,
 							NewStateData#state.server,
