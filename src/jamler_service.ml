@@ -313,7 +313,7 @@ struct
   let listen_parser =
     Jamler_config.P
       (function _json ->
-	 (fun socket -> ignore (Service.start socket))
+	 (fun socket -> any_pid (Service.start socket))
       )
 end
 

@@ -1012,7 +1012,12 @@ struct
 				"(~w) Accepted legacy authentication for ~s by ~p",
 				[StateData#state.socket,
 				jlib:jid_to_string(JID), AuthModule]),*)
-			      lwt () = Lwt_log.notice_f ~section "accepted legacy authentication for %s" (Jlib.jid_to_string jid) in
+			      lwt () =
+				Lwt_log.notice_f ~section
+				  "%a accepted legacy authentication for %S"
+				  format_pid state.pid
+				  (Jlib.jid_to_string jid)
+			      in
 				match (*need_redirect(StateData#state{user = U})*) (* TODO *)
 				  None
 				with
@@ -1078,11 +1083,12 @@ struct
 					       state = Session_established}
                             )
 			  | _ ->
-			    (*?INFO_MSG(
-			       "(~w) Failed legacy authentication for ~s",
-			       [StateData#state.socket,
-				jlib:jid_to_string(JID)]),*)
-			      lwt () = Lwt_log.notice_f ~section "failed legacy authentication for %s" (Jlib.jid_to_string jid) in
+			      lwt () =
+				Lwt_log.notice_f ~section
+				  "%a failed legacy authentication for %S"
+				  format_pid state.pid
+				  (Jlib.jid_to_string jid)
+			      in
 		              let err =
 				Jlib.make_error_reply el Jlib.err_not_authorized
 			      in
@@ -1091,11 +1097,12 @@ struct
 				  {state with state = Wait_for_auth}
 		    )
 		  | None ->
-		      (*?INFO_MSG(
-			"(~w) Forbidden legacy authentication for "
-			"username '~s' with resource '~s'",
-			[StateData#state.socket, U, R]),*)
-		      lwt () = Lwt_log.notice_f ~section "forbidden legacy authentication for %s with resource '%s'" u r in
+		      lwt () =
+			Lwt_log.notice_f ~section
+			  "%a forbidden legacy authentication for %S with resource %S"
+			  format_pid state.pid
+			  u r
+		      in
 		      let err = Jlib.make_error_reply el Jlib.err_jid_malformed
 		      in
 			send_element state err;
@@ -1105,7 +1112,12 @@ struct
 			"(~w) Forbidden legacy authentication for ~s",
 			[StateData#state.socket,
 			jlib:jid_to_string(JID)]),*)
-		      lwt () = Lwt_log.notice_f ~section "forbidden legacy authentication for %s" (Jlib.jid_to_string jid) in
+		      lwt () =
+			Lwt_log.notice_f ~section
+			  "%a forbidden legacy authentication for %S"
+			  format_pid state.pid
+			  (Jlib.jid_to_string jid)
+		      in
 		      let err = Jlib.make_error_reply el Jlib.err_not_allowed
 		      in
 			send_element state err;
@@ -1172,7 +1184,12 @@ struct
 			    (*AuthModule = xml:get_attr_s(auth_module, Props),*)
 			    (*?INFO_MSG("(~w) Accepted authentication for ~s by ~p",
                               [StateData#state.socket, U, AuthModule]),*)
-			  lwt () = Lwt_log.notice_f ~section "accepted authentication for %s" (u :> string) in
+			  lwt () =
+			    Lwt_log.notice_f ~section
+			      "%a accepted authentication for %S"
+			      format_pid state.pid
+			      (u :> string)
+			  in
                             send_element state
                               (`XmlElement ("success",
                                             [("xmlns", <:ns<SASL>>)], []));
@@ -1198,7 +1215,12 @@ struct
 			    "(~w) Failed authentication for ~s@~s",
 			    [StateData#state.socket,
 			    Username, StateData#state.server]),*)
-			  lwt () = Lwt_log.notice_f ~section "failed authentication for %s@%s" username (state.server :> string) in
+			  lwt () =
+			    Lwt_log.notice_f ~section
+			      "%a failed authentication for %s@%s"
+			      format_pid state.pid
+			      username (state.server :> string)
+			  in
 			    send_element state
 			      (`XmlElement
 				 ("failure",
@@ -1332,7 +1354,12 @@ struct
 			    (*AuthModule = xml:get_attr_s(auth_module, Props),
 			      ?INFO_MSG("(~w) Accepted authentication for ~s by ~p",
 			      [StateData#state.socket, U, AuthModule]),*)
-			  lwt () = Lwt_log.notice_f ~section "accepted authentication for %s" (u :> string) in
+			  lwt () =
+			    Lwt_log.notice_f ~section
+			      "%a accepted authentication for %S"
+			      format_pid state.pid
+			      (u :> string)
+			  in
                             send_element state
                               (`XmlElement ("success",
                                             [("xmlns", <:ns<SASL>>)], []));
@@ -1354,11 +1381,12 @@ struct
 			    {state with
 			       state = Wait_for_sasl_response sasl_mech}
 		      | SASL.ErrorUser (error, username) ->
-			  (*?INFO_MSG(
-			    "(~w) Failed authentication for ~s@~s",
-			    [StateData#state.socket,
-			    Username, StateData#state.server]),*)
-			  lwt () = Lwt_log.notice_f ~section "failed authentication for %s@%s" username (state.server :> string) in
+			  lwt () =
+			    Lwt_log.notice_f ~section
+			      "%a failed authentication for %S at %s"
+			      format_pid state.pid
+			      username (state.server :> string)
+			  in
 			    send_element state
 			      (`XmlElement
 				 ("failure",
@@ -1475,10 +1503,12 @@ struct
 		  match (Jamler_acl.match_rule
 			   state.server state.access jid false) with
 		    | true ->
-			(*?INFO_MSG("(~w) Opened session for ~s",
-			      [StateData#state.socket,
-			       jlib:jid_to_string(JID)]),*)
-		      lwt () = Lwt_log.notice_f ~section "opened session for %s" (Jlib.jid_to_string jid) in
+		      lwt () =
+			Lwt_log.notice_f ~section
+			  "%a opened session for %s"
+			  format_pid state.pid
+			  (Jlib.jid_to_string jid)
+		      in
 		      let res = Jlib.make_result_iq_reply el in
 			send_element state res;
 		    (*change_shaper(StateData, JID),*)
@@ -1527,10 +1557,13 @@ struct
 		    | _ ->
 		    (*ejabberd_hooks:run(forbidden_session_hook,
 				       StateData#state.server, [JID]),
-		    ?INFO_MSG("(~w) Forbidden session for ~s",
-			      [StateData#state.socket,
-			       jlib:jid_to_string(JID)]),*)
-			lwt () = Lwt_log.notice_f ~section "forbidden session for %s" (Jlib.jid_to_string jid) in
+		    *)
+			lwt () =
+			  Lwt_log.notice_f ~section
+			    "%a forbidden session for %s"
+			    format_pid state.pid
+			    (Jlib.jid_to_string jid)
+			in
 			let err = Jlib.make_error_reply el Jlib.err_not_allowed
 			in
 			  send_element state err;
@@ -1948,12 +1981,11 @@ session_established(timeout, StateData) ->
 	| Session_established -> (
 	    match reason with
 	      | `Replaced -> (
-		    (*?INFO_MSG("(~w) Replaced session for ~s",
-			      [StateData#state.socket,
-			       jlib:jid_to_string(StateData#state.jid)]),*)
 		  lwt () =
 		    Lwt_log.notice_f ~section
-		      "replaced session for %s" (Jlib.jid_to_string state.jid)
+		      "%a replaced session for %s"
+		      format_pid state.pid
+		      (Jlib.jid_to_string state.jid)
 		  in
 		  let from = state.jid in
 		  let packet =
@@ -1975,12 +2007,11 @@ session_established(timeout, StateData) ->
 		    Lwt.return ()
 		)
 	      | _ -> (
-		    (*?INFO_MSG("(~w) Close session for ~s",
-			      [StateData#state.socket,
-			       jlib:jid_to_string(StateData#state.jid)]),*)
 		  lwt () =
 		    Lwt_log.notice_f ~section
-		      "close session for %s" (Jlib.jid_to_string state.jid)
+		      "%a close session for %s"
+		      format_pid state.pid
+		      (Jlib.jid_to_string state.jid)
 		  in
 		    (match state with
 		       | {pres_last = None;
@@ -2036,7 +2067,7 @@ struct
 		   | Not_found ->
 		       Jamler_acl.all
 	       in
-		 (fun socket -> ignore (C2SServer.start (socket, access)))
+		 (fun socket -> any_pid (C2SServer.start (socket, access)))
 	   | json ->
 	       raise (Error
 			(Printf.sprintf "expected JSON object value, got %s"

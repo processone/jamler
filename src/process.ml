@@ -68,6 +68,15 @@ let is_overloaded pid =
   let proc = pid_to_proc pid in
     proc.overloaded
 
+let pid_to_string pid =
+  let proc = pid_to_proc pid in
+    "<" ^ string_of_int proc.id ^ ">"
+
+let format_pid () pid = pid_to_string pid
+
+type empty
+external any_pid : 'a pid -> empty pid = "%identity"
+
 type timer = unit Lwt.t
 type 'a timer_msg = [ `TimerTimeout of timer * 'a ]
 

@@ -5,7 +5,7 @@ let section = Jamler_log.new_section "listener"
 module type ListenModule =
 sig
   val name : string
-  val listen_parser : (Lwt_unix.file_descr -> unit) Jamler_config.p
+  val listen_parser : (Lwt_unix.file_descr -> empty pid) Jamler_config.p
 end
 
 let mods : (string, (module ListenModule)) Hashtbl.t =
@@ -101,7 +101,15 @@ let rec accept start listen_socket =
       (sockaddr_to_string (Lwt_unix.getpeername socket))
       (sockaddr_to_string (Lwt_unix.getsockname socket))
   in
-    start socket;
+  let pid = start socket in
+  lwt () =
+    Lwt_log.notice_f
+      ~section
+      "%a is handling connection %s -> %s"
+      format_pid pid
+      (sockaddr_to_string (Lwt_unix.getpeername socket))
+      (sockaddr_to_string (Lwt_unix.getsockname socket))
+  in
     accept start listen_socket
 
 let start_listener (port, family, start) _self =

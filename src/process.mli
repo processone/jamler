@@ -13,6 +13,11 @@ val spawn : ('a pid -> unit Lwt.t) -> 'a pid
 val ( $! ) : 'a pid -> 'a -> unit
 val receive : 'a pid -> 'a Lwt.t
 val is_overloaded : 'a pid -> bool
+val pid_to_string : 'a pid -> string
+val format_pid : unit -> 'a pid -> string
+
+type empty
+val any_pid : 'a pid -> empty pid
 
 type timer = unit Lwt.t
 type 'a timer_msg = [ `TimerTimeout of timer * 'a ]
