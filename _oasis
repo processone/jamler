@@ -71,6 +71,22 @@ Executable jamler
   CCLib: -lexpat -lidn
   NativeOpt: -w A
 
+Flag tests
+  Description: Build and run tests
+
+Executable test
+  Path: src
+  MainIs: test.ml
+  CompiledObject: native
+  Install: false
+  Build$: flag(tests)
+  BuildDepends: oUnit (>= 1.1.0)
+  ByteOpt: -w A
+
+Test main
+  Run$: flag(tests)
+  Command: $test
+
 SourceRepository jamler
   Type: git
   Location: git+ssh://git@gitorious.process-one.net/jamler/jamler.git
