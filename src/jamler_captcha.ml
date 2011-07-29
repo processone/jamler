@@ -3,6 +3,13 @@ module Config = Jamler_config
 
 let section = Jamler_log.new_section "captcha"
 
+let prefix pref string =
+  let len = String.length pref in
+    try
+      (Str.first_chars string len) = pref
+    with
+      | _ -> false
+
 type limiter = [ `JID of Jlib.LJID.t | `IP of Unix.inet_addr ]
 
 type result = | Valid
@@ -35,6 +42,8 @@ let captcha_text lang =
 let captcha_lifetime = 120.0 (* two minutes *)
 let captcha_limit_period = 60.0 (* one minute *)
 (* -define(RPC_TIMEOUT, 5000). *)
+let cmd_timeout = 5.0 (* 5 seconds *)
+(* -define(MAX_FILE_SIZE, 64*1024). *)
 
 let captcha_url = Config.(get_global_opt_with_default ["captcha_url"] string "")
 let captcha_cmd = Config.(get_global_opt_with_default ["captcha_cmd"] string "")
@@ -108,17 +117,32 @@ let is_limited = function
 	    false
     )
 
-let cmd _cmdline =
-  (* TODO *)
-  Lwt.fail Err_nodata
+let cmd cmdline key =
+  let args = [|cmdline; key|] in
+    Lwt_process.pread ~timeout:cmd_timeout (cmdline, args)
 
 let do_create_image key =
   let filename = captcha_cmd () in
-  let cmdline = filename ^ " " ^ key in
-    match cmd cmdline with
-	(* TODO *)
-      | res ->
-	  res
+    match%lwt cmd filename key with
+      | "" ->
+	  let%lwt () = Lwt_log.error_f ~section
+	    "failed to process output from '%s %s': no data"
+	    filename key in
+	    Lwt.fail Err_nodata
+      | data ->
+	  if prefix "\x89PNG\r\n\x1a\n" data then
+	    Lwt.return ("image/png", key, data)
+	  else if prefix "\xff\xd8" data then
+	    Lwt.return ("image/jpeg", key, data)
+	  else if prefix "GIF87a" data then
+	    Lwt.return ("image/gif", key, data)
+	  else if prefix "GIF89a" data then
+	    Lwt.return ("image/gif", key, data)
+	  else
+	    let%lwt () = Lwt_log.error_f ~section
+	      "failed to process output from '%s %s': malformed image"
+	      filename key in
+	      Lwt.fail Err_malformed_image
 
 let create_image' limiter key =
   match is_limited limiter with
