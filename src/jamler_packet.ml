@@ -1,30 +1,29 @@
 open Process
-module Buf = Jamler_buffer
-
-type msg = [ `Packet of string ]
+module Buffer = Jamler_buffer
 
 type header =
   | BE1
   | BE2
   | BE4
 
-type t = {pid : msg pid;
-	  header : header;
+type t = {mutable header : header;
 	  mutable len : int;
 	  buf : Buffer.t}
 
-let create pid header =
-  let pid = (pid :> msg pid) in
+let create header =
   let header =
     match header with
       | `BE1 -> BE1
       | `BE2 -> BE2
       | `BE4 -> BE4
   in
-    {pid;
-     header;
+    {header;
      len = -1;
      buf = Buffer.create 32}
+
+let change st header =
+  st.header <- header;
+  st.len <- -1
 
 let header_len =
   function
@@ -48,36 +47,23 @@ let parse_len st h pos =
 	  if h0 > 0 then raise Size_limit;
 	  (((((h0 lsl 8) lor h1) lsl 8) lor h2) lsl 8) lor h3
 
-let rec parse_string st s pos =
-  let hlen = header_len st.header in
-    if String.length s >= pos + hlen then (
-      let len = parse_len st s pos in
-	if String.length s >= pos + hlen + len then (
-	  let packet = String.sub s (pos + hlen) len in
-	    st.pid $! `Packet packet;
-	    parse_string st s (pos + hlen + len)
-	) else pos
-    ) else pos
-
 let parse_with_len st =
   let hlen = header_len st.header in
     if Buffer.length st.buf >= hlen + st.len then (
-      let s = Buffer.contents st.buf in
-      let pos = parse_string st s 0 in
-	Buffer.reset st.buf;
-	Buffer.add_substring st.buf s pos (String.length s - pos);
+      let packet = Buffer.sub st.buf hlen st.len in
+	Buffer.remove st.buf (hlen + st.len);
 	st.len <- -1;
-    )
+	Some packet
+    ) else None
 
 let parse st data =
   Buffer.add_string st.buf data;
   let hlen = header_len st.header in
     if st.len < 0 then (
       if Buffer.length st.buf >= hlen then (
-	let h = Buffer.sub st.buf 0 hlen in
-	  st.len <- parse_len st h 0;
-	  parse_with_len st
-      )
+	st.len <- parse_len st st.buf.Buffer.buf st.buf.Buffer.start;
+	parse_with_len st
+      ) else None
     ) else parse_with_len st
 
 

@@ -233,7 +233,7 @@ struct
     let timeout = outgoing_s2s_timeout () in
     let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
     let addr = Unix.ADDR_INET (addr', port) in
-    lwt () = Lwt_unix.connect socket addr in
+    lwt () = Lwt_unix.connect socket addr in (* TODO *)
     let tcpsock = Socket.of_fd socket self in
       Socket.activate tcpsock self;
       Lwt.return tcpsock

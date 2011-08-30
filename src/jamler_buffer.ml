@@ -64,3 +64,10 @@ let remove b len =
     String.blit b.buf b.start b.buf 0 b.len;
     b.start <- 0;
   )
+
+let length b = b.len
+
+let sub b ofs len =
+  if ofs + len > b.len
+  then invalid_arg "Jamler_buffer.sub";
+  String.sub b.buf (b.start + ofs) len

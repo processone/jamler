@@ -5,12 +5,14 @@ let section = Jamler_log.new_section "gen_server"
 type system_msg = [ `System ]
 type msg = [ system_msg | `Timeout ]
 type reason = [ `Normal | `Exception of exn ]
-type ('a, 'b) result =
+type ('a, 'b) plain_result =
     [ `Continue of 'a
     | `ContinueTimeout of 'a * float
     | `Stop of 'a
     | `StopReason of 'a * 'b
-    ] Lwt.t
+    ]
+type ('a, 'b) init_result = [ ('a, 'b) plain_result | `Init_failed ] Lwt.t
+type ('a, 'b) result = ('a, 'b) plain_result Lwt.t
 
 module type Type =
 sig
@@ -18,7 +20,7 @@ sig
   type state
   type init_data
   type stop_reason
-  val init : init_data -> msg pid -> (state, stop_reason) result
+  val init : init_data -> msg pid -> (state, stop_reason) init_result
   val handle : msg -> state -> (state, stop_reason) result
   val terminate : state -> stop_reason -> unit Lwt.t
 end
@@ -86,5 +88,7 @@ struct
     in
       spawn (fun self ->
 	       lwt result = T.init init_data self in
-		 process_result self result)
+		 match result with
+		   | `Init_failed -> Lwt.return ()
+		   | #plain_result as result -> process_result self result)
 end
