@@ -17,21 +17,54 @@ type erl_term =
   (*| ErlFun*)
 
 
-let rec term_to_string =
-  function
-    | ErlInt x -> string_of_int x
-    | ErlFloat x -> string_of_float x
-    | ErlAtom x -> x
-    | ErlReference _x -> "#ref"
-    | ErlPid _x -> "#pid"
-    | ErlTuple xs ->
-	"{" ^
-	  String.concat ", " (List.map term_to_string (Array.to_list xs)) ^
-	  "}"
-    | ErlNil -> "[]"
-    | ErlCons (x, t) -> "[" ^ term_to_string x ^ " | " ^ term_to_string t ^ "]"
-    | ErlString x -> "\"" ^ x ^ "\""
-    | ErlBinary x -> "<<\"" ^ x ^ "\">>"
+let term_to_string term =
+  let rec aux b term =
+    match term with
+      | ErlInt x -> Buffer.add_string b (string_of_int x)
+      | ErlFloat x -> Buffer.add_string b (string_of_float x)
+      | ErlAtom x -> Buffer.add_string b x
+      | ErlReference _x -> Buffer.add_string b "#ref"
+      | ErlPid _x -> Buffer.add_string b "#pid"
+      | ErlTuple xs ->
+	  Buffer.add_string b "{";
+	  for i = 0 to Array.length xs do
+	    if i > 0
+	    then Buffer.add_string b ", ";
+	    aux b xs.(i)
+	  done
+      | ErlNil -> Buffer.add_string b "[]"
+      | ErlCons (x, t) ->
+	  Buffer.add_string b "[";
+	  aux b x;
+	  let u = ref t in
+	    while (match !u with
+		     | ErlCons (x, t) ->
+			 Buffer.add_string b ", ";
+			 aux b x;
+			 u := t;
+			 true
+		     | ErlNil ->
+			 false
+		     | t ->
+			 Buffer.add_string b " | ";
+			 aux b t;
+			 false
+		  ) do
+	      ()
+	    done;
+	    Buffer.add_string b "]";
+      | ErlString x ->
+	  Buffer.add_string b "\"";
+	  Buffer.add_string b x;
+	  Buffer.add_string b "\""
+      | ErlBinary x ->
+	  Buffer.add_string b "<<\"";
+	  Buffer.add_string b x;
+	  Buffer.add_string b "\">>"
+  in
+  let b = Buffer.create 10 in
+    aux b term;
+    Buffer.contents b
 
 let term_to_binary term =
   let rec aux b =
@@ -74,14 +107,9 @@ let term_to_binary term =
 	    Buffer.add_char b
 	      (Char.chr (Int64.to_int (Int64.shift_right x shift) land 0xff))
 	  in
-	    add_byte x 56;
-	    add_byte x 48;
-	    add_byte x 40;
-	    add_byte x 32;
-	    add_byte x 24;
-	    add_byte x 16;
-	    add_byte x 8;
-	    add_byte x 0;
+	    for i = 7 downto 0 do
+	      add_byte x (i * 8)
+	    done
       | ErlAtom x ->
 	  let len = String.length x in
 	    assert (len < 256);
@@ -172,3 +200,174 @@ let term_to_binary term =
     Buffer.add_char b '\131';
     aux b term;
     Buffer.contents b
+
+let binary_to_term s pos =
+  let pos = ref pos in
+  let len = String.length s in
+    if !pos < len && s.[!pos] = '\131' then (
+      incr pos;
+      let rec parse s pos =
+	let len = String.length s in
+	  if !pos < len then (
+	    match s.[!pos] with
+	      | '\097' ->
+		  incr pos;
+		  if !pos < len then (
+		    let res = ErlInt (Char.code s.[!pos]) in
+		      incr pos;
+		      res
+		  ) else invalid_arg "binary_to_term"
+	      | '\098' ->
+		  incr pos;
+		  if !pos + 3 < len then (
+		    let x0 = Char.code s.[!pos] in
+		    let x1 = Char.code s.[!pos + 1] in
+		    let x2 = Char.code s.[!pos + 2] in
+		    let x3 = Char.code s.[!pos + 3] in
+		    let x0 = if x0 < 128 then x0 else x0 - 256 in
+		    let x =
+		      (((((x0 lsl 8) lor x1) lsl 8) lor x2) lsl 8) lor x3
+		    in
+		    let res = ErlInt x in
+		      pos := !pos  + 4;
+		      res
+		  ) else invalid_arg "binary_to_term"
+	      | '\110' ->
+		  incr pos;
+		  if !pos < len then (
+		    let n = Char.code s.[!pos] in
+		      incr pos;
+		      if !pos + n < len then (
+			let sign = s.[!pos] <> '\000' in
+			  incr pos;
+			  let res = ref 0 in
+			    for i = 0 to n - 1 do
+			      res :=
+				!res lor ((Char.code s.[!pos + i]) lsl (i * 8))
+			    done;
+			    pos := !pos  + n;
+			    if sign
+			    then ErlInt (- !res)
+			    else ErlInt !res
+		      ) else invalid_arg "binary_to_term"
+		  ) else invalid_arg "binary_to_term"
+	      | '\070' ->
+		  incr pos;
+		  if !pos + 7 < len then (
+		    let x = ref 0L in
+		      for i = 0 to 7 do
+			x :=
+			  Int64.logor
+			    (Int64.shift_left !x 8)
+			    (Int64.of_int (Char.code s.[!pos + i]))
+		      done;
+		      pos := !pos + 8;
+		      ErlFloat (Int64.float_of_bits !x)
+		  ) else invalid_arg "binary_to_term"
+	      | '\100' ->
+		  incr pos;
+		  if !pos + 1 < len then (
+		    if s.[!pos] <> '\000' then invalid_arg "binary_to_term";
+		    let n = Char.code s.[!pos + 1] in
+		      pos := !pos + 2;
+		      if !pos + n - 1 < len then (
+			let x = String.sub s !pos n in
+			  pos := !pos + n;
+			  ErlAtom x
+		      ) else invalid_arg "binary_to_term"
+		  ) else invalid_arg "binary_to_term"
+	      | '\104' ->
+		  incr pos;
+		  if !pos < len then (
+		    let n = Char.code s.[!pos] in
+		      incr pos;
+		      let xs = Array.make n ErlNil in
+			for i = 0 to n - 1 do
+			  xs.(i) <- parse s pos
+			done;
+			ErlTuple xs
+		  ) else invalid_arg "binary_to_term"
+	      | '\105' ->
+		  incr pos;
+		  if !pos + 3 < len then (
+		    let n0 = Char.code s.[!pos] in
+		    let n1 = Char.code s.[!pos + 1] in
+		    let n2 = Char.code s.[!pos + 2] in
+		    let n3 = Char.code s.[!pos + 3] in
+		    let n =
+		      (((((n0 lsl 8) lor n1) lsl 8) lor n2) lsl 8) lor n3
+		    in
+		      pos := !pos + 4;
+		      if n0 <> 0 then invalid_arg "binary_to_term";
+		      let xs = Array.make n ErlNil in
+			for i = 0 to n - 1 do
+			  xs.(i) <- parse s pos
+			done;
+			ErlTuple xs
+		  ) else invalid_arg "binary_to_term"
+	      | '\106' ->
+		  incr pos;
+		  ErlNil
+	      | '\107' ->
+		  incr pos;
+		  if !pos + 1 < len then (
+		    let n0 = Char.code s.[!pos] in
+		    let n1 = Char.code s.[!pos + 1] in
+		    let n = (n0 lsl 8) lor n1 in
+		      pos := !pos + 2;
+		      if !pos + n - 1 < len then (
+			let x = String.sub s !pos n in
+			  pos := !pos + n;
+			  ErlString x
+		      ) else invalid_arg "binary_to_term"
+		  ) else invalid_arg "binary_to_term"
+	      | '\108' ->
+		  incr pos;
+		  if !pos + 3 < len then (
+		    let n0 = Char.code s.[!pos] in
+		    let n1 = Char.code s.[!pos + 1] in
+		    let n2 = Char.code s.[!pos + 2] in
+		    let n3 = Char.code s.[!pos + 3] in
+		    let n =
+		      (((((n0 lsl 8) lor n1) lsl 8) lor n2) lsl 8) lor n3
+		    in
+		      pos := !pos + 4;
+		      if n0 <> 0 then invalid_arg "binary_to_term";
+		      let xs = Array.make n ErlNil in
+			for i = 0 to n - 1 do
+			  xs.(i) <- parse s pos
+			done;
+			let tail = parse s pos in
+			let res = ref tail in
+			  for i = n - 1 downto 0 do
+			    res := ErlCons (xs.(i), !res)
+			  done;
+			  !res
+		  ) else invalid_arg "binary_to_term"
+	      | '\109' ->
+		  incr pos;
+		  if !pos + 1 < len then (
+		    let n0 = Char.code s.[!pos] in
+		    let n1 = Char.code s.[!pos + 1] in
+		    let n2 = Char.code s.[!pos + 2] in
+		    let n3 = Char.code s.[!pos + 3] in
+		    let n =
+		      (((((n0 lsl 8) lor n1) lsl 8) lor n2) lsl 8) lor n3
+		    in
+		      pos := !pos + 4;
+		      if n0 <> 0 then invalid_arg "binary_to_term";
+		      if !pos + n - 1 < len then (
+			let x = String.sub s !pos n in
+			  pos := !pos + n;
+			  ErlBinary x
+		      ) else invalid_arg "binary_to_term"
+		  ) else invalid_arg "binary_to_term"
+	      | _ ->
+		  invalid_arg "binary_to_term"
+	  ) else invalid_arg "binary_to_term"
+      in
+      let res = parse s pos in
+	(res, !pos)
+    ) else invalid_arg "binary_to_term"
+
+

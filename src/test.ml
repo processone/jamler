@@ -8,6 +8,14 @@ let test_erlang_term_to_binary term bytes () =
   let s' = Erlang.term_to_binary term in
     assert_equal ~printer s s'
 
+let test_erlang_binary_to_term term () =
+  let printer = Erlang.term_to_string in
+  let s = Erlang.term_to_binary term in
+  let (term', pos) = Erlang.binary_to_term s 0 in
+    assert_equal ~printer term term';
+    assert_equal ~printer:string_of_int ~msg:"Wrong position"
+      (String.length s) pos
+
 let erlang_tests =
   let open Erlang in
     ["term_to_binary_int_0" >::
@@ -378,6 +386,117 @@ let erlang_tests =
 			     ErlCons (ErlAtom "c", ErlNil))))
 	  [131; 108; 0; 0; 0; 3;
 	   100; 0; 1; 97; 100; 0; 1; 98; 100; 0; 1; 99; 106]);
+     "binary_to_term_int_0" >::
+       (test_erlang_binary_to_term (ErlInt 0));
+     "binary_to_term_int_1" >::
+       (test_erlang_binary_to_term (ErlInt 1));
+     "binary_to_term_int_2" >::
+       (test_erlang_binary_to_term (ErlInt 2));
+     "binary_to_term_int_10" >::
+       (test_erlang_binary_to_term (ErlInt 10));
+     "binary_to_term_int_100" >::
+       (test_erlang_binary_to_term (ErlInt 100));
+     "binary_to_term_int_200" >::
+       (test_erlang_binary_to_term (ErlInt 200));
+     "binary_to_term_int_300" >::
+       (test_erlang_binary_to_term (ErlInt 300));
+     "binary_to_term_int_1000" >::
+       (test_erlang_binary_to_term (ErlInt 1000));
+     "binary_to_term_int_1000000" >::
+       (test_erlang_binary_to_term (ErlInt 1000000));
+     "binary_to_term_int_3000000000" >::
+       (test_erlang_binary_to_term (ErlInt 3000000000));
+     "binary_to_term_int_m1" >::
+       (test_erlang_binary_to_term (ErlInt (-1)));
+     "binary_to_term_int_m2" >::
+       (test_erlang_binary_to_term (ErlInt (-2)));
+     "binary_to_term_int_m10" >::
+       (test_erlang_binary_to_term (ErlInt (-10)));
+     "binary_to_term_int_m100" >::
+       (test_erlang_binary_to_term (ErlInt (-100)));
+     "binary_to_term_int_m200" >::
+       (test_erlang_binary_to_term (ErlInt (-200)));
+     "binary_to_term_int_m300" >::
+       (test_erlang_binary_to_term (ErlInt (-300)));
+     "binary_to_term_int_m1000" >::
+       (test_erlang_binary_to_term (ErlInt (-1000)));
+     "binary_to_term_int_m1000000" >::
+       (test_erlang_binary_to_term (ErlInt (-1000000)));
+     "binary_to_term_int_m3000000000" >::
+       (test_erlang_binary_to_term (ErlInt (-3000000000)));
+     "binary_to_term_float_0.0" >::
+       (test_erlang_binary_to_term (ErlFloat 0.0));
+     "binary_to_term_float_1.0" >::
+       (test_erlang_binary_to_term (ErlFloat 1.0));
+     "binary_to_term_float_0.5" >::
+       (test_erlang_binary_to_term (ErlFloat 0.5));
+     "binary_to_term_float_0.3" >::
+       (test_erlang_binary_to_term (ErlFloat 0.3));
+     "binary_to_term_float_0.123456789" >::
+       (test_erlang_binary_to_term (ErlFloat 0.123456789));
+     "binary_to_term_float_123e10" >::
+       (test_erlang_binary_to_term (ErlFloat 123.0e10));
+     "binary_to_term_float_123e-10" >::
+       (test_erlang_binary_to_term (ErlFloat 123.0e-10));
+     "binary_to_term_float_m1.0" >::
+       (test_erlang_binary_to_term (ErlFloat (-1.0)));
+     "binary_to_term_float_m0.5" >::
+       (test_erlang_binary_to_term (ErlFloat (-0.5)));
+     "binary_to_term_float_m0.3" >::
+       (test_erlang_binary_to_term (ErlFloat (-0.3)));
+     "binary_to_term_float_m0.123456789" >::
+       (test_erlang_binary_to_term (ErlFloat (-0.123456789)));
+     "binary_to_term_float_m123e10" >::
+       (test_erlang_binary_to_term (ErlFloat (-123.0e10)));
+     "binary_to_term_float_m123e-10" >::
+       (test_erlang_binary_to_term (ErlFloat (-123.0e-10)));
+     "binary_to_term_atom_a" >::
+       (test_erlang_binary_to_term (ErlAtom "a"));
+     "binary_to_term_atom_abc" >::
+       (test_erlang_binary_to_term (ErlAtom "abc"));
+     "binary_to_term_atom_empty" >::
+       (test_erlang_binary_to_term (ErlAtom ""));
+     "binary_to_term_tuple_empty" >::
+       (test_erlang_binary_to_term (ErlTuple [| |]));
+     "binary_to_term_tuple_1" >::
+       (test_erlang_binary_to_term (ErlTuple [| ErlInt 1 |]));
+     "binary_to_term_tuple_2" >::
+       (test_erlang_binary_to_term (ErlTuple [| ErlInt 1; ErlInt 2 |]));
+     "binary_to_term_tuple_abc" >::
+       (test_erlang_binary_to_term
+	  (ErlTuple [| ErlAtom "a"; ErlAtom "b"; ErlAtom "c"; |]));
+     "binary_to_term_tuple_1000" >::
+       (test_erlang_binary_to_term
+	  (ErlTuple (Array.init 1000 (fun i -> ErlInt (i + 1)))));
+     "binary_to_term_string_a" >::
+       (test_erlang_binary_to_term (ErlString "a"));
+     "binary_to_term_string_abc" >::
+       (test_erlang_binary_to_term (ErlString "abc"));
+     "binary_to_term_binary_empty" >::
+       (test_erlang_binary_to_term (ErlBinary ""));
+     "binary_to_term_binary_a" >::
+       (test_erlang_binary_to_term (ErlBinary "a"));
+     "binary_to_term_binary_abc" >::
+       (test_erlang_binary_to_term (ErlBinary "abc"));
+     "binary_to_term_list_empty" >::
+       (test_erlang_binary_to_term ErlNil);
+     "binary_to_term_list_a" >::
+       (test_erlang_binary_to_term (ErlCons (ErlAtom "a", ErlNil)));
+     "binary_to_term_list_a|b" >::
+       (test_erlang_binary_to_term (ErlCons (ErlAtom "a", ErlAtom "b")));
+     "binary_to_term_list_abc" >::
+       (test_erlang_binary_to_term
+	  (ErlCons (ErlAtom "a",
+		    ErlCons (ErlAtom "b",
+			     ErlCons (ErlAtom "c", ErlNil)))));
+     "binary_to_term_list_a70000" >::
+       (test_erlang_binary_to_term
+	  (let x = ref ErlNil in
+	     for i = 1 to 70000 do
+	       x := ErlCons (ErlInt 97, !x)
+	     done;
+	     !x
+	  ));
     ]
 
 let tests =
