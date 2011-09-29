@@ -6,24 +6,81 @@ type 'a proc = {id : int;
 		queue : 'a Queue.t;
 		mutable t : unit Lwt.t;
 		mutable overloaded : bool;
-		mutable wakener : 'a Lwt.u option}
+		mutable wakener : 'a Lwt.u option;
+		mutable name : string option;
+	       }
 
+let max_processes = 65536
+
+let processes : 'a proc option array = Array.make max_processes None
+let free_pids = Array.init (max_processes + 1) (fun i -> i)
+let free_pid_start = ref 0
+let free_pid_end = ref max_processes
+
+exception Process_table_full
+
+let add_free_pid pid =
+  free_pids.(!free_pid_end) <- pid;
+  incr free_pid_end;
+  if !free_pid_end >= max_processes + 1
+  then free_pid_end := 0;
+  assert (!free_pid_start <> !free_pid_end)
+
+let get_free_pid () =
+  if !free_pid_start = !free_pid_end
+  then raise Process_table_full;
+  let pid = free_pids.(!free_pid_start) in
+    incr free_pid_start;
+    if !free_pid_start >= max_processes + 1
+    then free_pid_start := 0;
+    pid
+
+
+type univ_msg = [ `Erl of Erlang.erl_term ]
+
+let registered = Hashtbl.create 10
+
+(*
 external pid_to_proc : 'a pid -> 'a proc = "%identity"
 external proc_to_pid : 'a proc -> 'a pid = "%identity"
+*)
 
-let id_seq = ref 0
+let pid_to_proc : 'a pid -> 'a proc =
+  fun pid ->
+    let pid = (Obj.magic pid : int) in
+      match processes.(pid) with
+	| Some proc -> Obj.magic proc
+	| None -> raise Not_found
+
+let proc_to_pid : 'a proc -> 'a pid =
+  fun proc ->
+    Obj.magic proc.id
 
 let spawn f =
-  let proc = {id = (incr id_seq; !id_seq);
+  let id = get_free_pid () in
+  let proc = {id;
 	      queue = Queue.create ();
 	      t = Lwt.return ();
 	      overloaded = false;
-	      wakener = None}
+	      wakener = None;
+	      name = None;
+	     }
   in
+  let () = processes.(id) <- Some (Obj.magic proc) in
   let pid = proc_to_pid proc in
   let t =
     try_lwt
-      f pid
+      Lwt.finalize (fun () -> f pid)
+	(fun () ->
+	   processes.(id) <- None;
+	   add_free_pid id;
+	   (match proc.name with
+	      | None -> ()
+	      | Some name ->
+		  Hashtbl.remove registered name
+	   );
+	   Lwt.return ()
+	)
     with
       | exn ->
 	  lwt () =
@@ -63,6 +120,32 @@ let receive pid =
     ) else (
       Lwt.return (Queue.take proc.queue)
     )
+
+let register pid name =
+  let proc = pid_to_proc pid in
+    if Hashtbl.mem registered name then (
+      invalid_arg "name is already in use"
+    ) else (
+      match proc.name with
+	| Some _ ->
+	    invalid_arg "already registered"
+	| None ->
+	    proc.name <- Some name;
+	    Hashtbl.replace registered name pid
+    )
+
+let unregister name =
+  if Hashtbl.mem registered name then (
+    let pid = Hashtbl.find registered name in
+    let proc = pid_to_proc pid in
+      proc.name <- None;
+      Hashtbl.remove registered name
+  ) else invalid_arg "not a registered name"
+
+let whereis name =
+  if Hashtbl.mem registered name then (
+    Hashtbl.find registered name
+  ) else invalid_arg "not a registered name"
 
 let is_overloaded pid =
   let proc = pid_to_proc pid in
