@@ -22,16 +22,20 @@ let term_to_string term =
     match term with
       | ErlInt x -> Buffer.add_string b (string_of_int x)
       | ErlFloat x -> Buffer.add_string b (string_of_float x)
-      | ErlAtom x -> Buffer.add_string b x
+      | ErlAtom x ->
+	  Buffer.add_string b "\'";
+	  Buffer.add_string b x;
+	  Buffer.add_string b "\'";
       | ErlReference _x -> Buffer.add_string b "#ref"
       | ErlPid _x -> Buffer.add_string b "#pid"
       | ErlTuple xs ->
 	  Buffer.add_string b "{";
-	  for i = 0 to Array.length xs do
+	  for i = 0 to Array.length xs - 1 do
 	    if i > 0
 	    then Buffer.add_string b ", ";
 	    aux b xs.(i)
-	  done
+	  done;
+	  Buffer.add_string b "}";
       | ErlNil -> Buffer.add_string b "[]"
       | ErlCons (x, t) ->
 	  Buffer.add_string b "[";
@@ -361,6 +365,13 @@ let binary_to_term s pos =
 			  pos := !pos + n;
 			  ErlBinary x
 		      ) else invalid_arg "binary_to_term"
+		  ) else invalid_arg "binary_to_term"
+	      | '\103' ->
+		  incr pos;
+		  let _node = parse s pos in
+		  if !pos + 8 < len then (
+		    pos := !pos + 9;
+		    ErlPid (Obj.magic ())
 		  ) else invalid_arg "binary_to_term"
 	      | _ ->
 		  invalid_arg "binary_to_term"
