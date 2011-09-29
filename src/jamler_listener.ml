@@ -94,12 +94,14 @@ let sockaddr_to_string addr =
 
 let rec accept start listen_socket =
   lwt (socket, _) = Lwt_unix.accept listen_socket in
+  let peername = Lwt_unix.getpeername socket in
+  let sockname = Lwt_unix.getsockname socket in
   lwt () =
     Lwt_log.notice_f
       ~section
       "accepted connection %s -> %s"
-      (sockaddr_to_string (Lwt_unix.getpeername socket))
-      (sockaddr_to_string (Lwt_unix.getsockname socket))
+      (sockaddr_to_string peername)
+      (sockaddr_to_string sockname)
   in
   let pid = start socket in
   lwt () =
@@ -107,8 +109,8 @@ let rec accept start listen_socket =
       ~section
       "%a is handling connection %s -> %s"
       format_pid pid
-      (sockaddr_to_string (Lwt_unix.getpeername socket))
-      (sockaddr_to_string (Lwt_unix.getsockname socket))
+      (sockaddr_to_string peername)
+      (sockaddr_to_string sockname)
   in
     accept start listen_socket
 
