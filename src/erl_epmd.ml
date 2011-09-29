@@ -428,24 +428,38 @@ struct
 	    lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
 	      Lwt.return (`Stop state)
 	  )
-(*      | Wait_for_alive2_resp (wakener, socket), `Packet data ->
-	  if String.length data >= 4 &&
-	    data.[0] = '\121' &&
-	      data.[1] = '\000'
-	  then (
-	    let creation = Char.code data.[3] land 3 in
-	      node_creation := creation;
-	      Lwt.wakeup wakener ();
-	      Lwt.return
-		(`Continue
-		   {state with
-		      state = Connection_established socket})
+      | Connection_established, `Packet data ->
+	  if String.length data = 0 then (
+	    send_packet state.socket "";
+	    Lwt.return (`Continue state)
+	  ) else if data.[0] = 'p' then (
+	    let (control, pos) = Erlang.binary_to_term data 1 in
+	    lwt () =
+	      Lwt_log.notice_f ~section
+		"control message %s" (Erlang.term_to_string control)
+	    in
+	    let open Erlang in
+	      match control with
+		| ErlTuple [| ErlInt 2; _; _ |] ->
+		    let (message, pos) = Erlang.binary_to_term data pos in
+		    lwt () =
+		      Lwt_log.notice_f ~section
+			"message %s" (Erlang.term_to_string message)
+		    in
+		      Lwt.return (`Continue state)
+		| ErlTuple [| ErlInt 6; _; _; _ |] ->
+		    let (message, pos) = Erlang.binary_to_term data pos in
+		    lwt () =
+		      Lwt_log.notice_f ~section
+			"message %s" (Erlang.term_to_string message)
+		    in
+		      Lwt.return (`Continue state)
+		| _ ->
+		    Lwt.return (`Continue state)
 	  ) else (
-	    Lwt.wakeup_exn wakener (Failure "can't register nodename");
-	    Lwt.return (`Stop state)
+	    lwt () = Lwt_log.error_f "Protocol error from %s" state.node in
+	      Lwt.return (`Stop state)
 	  )
-*)
-      | Connection_established, _ -> assert false
 
   let parse state data =
     match Packet.parse state.p data with
