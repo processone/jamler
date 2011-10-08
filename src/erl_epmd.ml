@@ -8,6 +8,7 @@ module GenServer = Gen_server
 let nodename = ref "jamler"		(* TODO *)
 let nodehost = ref "localhost"		(* TODO *)
 let node_creation = ref 0
+let node_port = ref 0
 let epmd_port = 4369
 let cookie = ref "YDZZQPNLWAMUSODVCMLA"	(* TODO *)
 
@@ -107,7 +108,7 @@ struct
 		  in
 		    Lwt.fail exn
 	  in
-	    send_packet socket (make_alive2_req 666 !nodename);
+	    send_packet socket (make_alive2_req !node_port !nodename);
 	    Lwt.return
 	      (`Continue
 		 {state with
@@ -277,20 +278,22 @@ sig
   include GenServer.Type with
     type msg =
         [ Socket.msg | packet_msg | `Parse | GenServer.msg ]
-    and type init_data = string
+    and type init_data = [ `Out of string | `In of Lwt_unix.file_descr ]
     and type stop_reason = GenServer.reason
 end =
 struct
   type msg =
       [ Socket.msg | packet_msg | `Parse | GenServer.msg ]
 
-  type init_data = string
+  type init_data = [ `Out of string | `In of Lwt_unix.file_descr ]
 
   type stop_reason = GenServer.reason
 
   type conn_state =
+    | Recv_name
     | Recv_status
     | Recv_challenge
+    | Recv_challenge_reply of int
     | Recv_challenge_ack of int
     | Connection_established
 
@@ -322,6 +325,21 @@ struct
       Buffer.add_string b node;
       Buffer.contents b
 
+  let make_challenge_req challenge =
+    let node = !nodename ^ "@" ^ !nodehost in
+    let flags =
+      dflag_published lor
+	dflag_extended_references lor
+	dflag_extended_pids_ports
+    in
+    let b = Buffer.create 20 in
+      Buffer.add_char b 'n';
+      add_int16_be b 5;
+      add_int32_be b flags;
+      add_int32_be b challenge;
+      Buffer.add_string b node;
+      Buffer.contents b
+
   let make_challenge_reply challenge digest =
     let b = Buffer.create 20 in
       Buffer.add_char b 'r';
@@ -329,36 +347,57 @@ struct
       Buffer.add_string b digest;
       Buffer.contents b
 
+  let make_challenge_ack digest =
+    let b = Buffer.create 20 in
+      Buffer.add_char b 'a';
+      Buffer.add_string b digest;
+      Buffer.contents b
+
   let init node self =
-    add_node_connection node self;
-    try_lwt
-      (match_lwt lookup_node node with
-	 | Some port -> (
-	     let (_nodename, hostname) = node_to_namehost node in
-	     lwt addr = get_addr_exn hostname in
-	       match_lwt open_socket' addr port with
-		 | Some socket -> (
-		     let socket = Socket.of_fd socket self in
-		       ignore (Socket.activate socket self);
-		       send_packet socket (make_send_name_req ());
-		       let state = Recv_status in
-			 Lwt.return
-			   (`Continue
-			      {pid = self;
-			       node;
-			       socket;
-			       state;
-			       p = Packet.create `BE2;
-			      })
-		   )
-		 | None -> raise_lwt Not_found
-	   )
-	 | None -> raise_lwt Not_found
-      )
-    with
-      | _exn ->
-	  remove_node_connection node;
-	  Lwt.return `Init_failed
+    match node with
+      | `Out node -> (
+	  add_node_connection node self;
+	  try_lwt
+	    (match_lwt lookup_node node with
+	       | Some port -> (
+		   let (_nodename, hostname) = node_to_namehost node in
+		   lwt addr = get_addr_exn hostname in
+		     match_lwt open_socket' addr port with
+		       | Some socket -> (
+			   let socket = Socket.of_fd socket self in
+			     ignore (Socket.activate socket self);
+			     send_packet socket (make_send_name_req ());
+			     let state = Recv_status in
+			       Lwt.return
+				 (`Continue
+				    {pid = self;
+				     node;
+				     socket;
+				     state;
+				     p = Packet.create `BE2;
+				    })
+			 )
+		       | None -> raise_lwt Not_found
+		 )
+	       | None -> raise_lwt Not_found
+	    )
+	  with
+	    | _exn ->
+		remove_node_connection node;
+		Lwt.return `Init_failed
+	)
+      | `In socket ->
+	  let socket = Socket.of_fd socket self in
+	    ignore (Socket.activate socket self);
+	    let state = Recv_name in
+	      Lwt.return
+		(`Continue
+		   {pid = self;
+		    node = "";
+		    socket;
+		    state;
+		    p = Packet.create `BE2;
+		   })
 
   let open_socket addr port self =
     (*let timeout = 1.0 in*)
@@ -374,6 +413,18 @@ struct
 
   let handle_msg msg state =
     match state.state, msg with
+      | Recv_name, `Packet data ->
+	  if data.[0] = 'n' && String.length data > 7 then (
+	    let node = String.sub data 7 (String.length data - 7) in
+	      send_packet state.socket "sok";
+	      let challege = Random.int 1000000000 in
+		send_packet state.socket (make_challenge_req challege);
+		Lwt.return
+		  (`Continue
+		     {state with state = Recv_challenge_reply challege})
+	  ) else (
+	    Lwt.return (`Stop state)
+	  )
       | Recv_status, `Packet data ->
 	  if data.[0] = 's' then (
 	    match data with
@@ -404,10 +455,40 @@ struct
 		      (Char.code schallenge.[3])))
 	    in
 	    let digest = Jlib.md5 (!cookie ^ Int64.to_string challenge) in
-	    let mychallege = Random.int 1000000000 in
-	      send_packet state.socket (make_challenge_reply mychallege digest);
+	    let mychallenge = Random.int 1000000000 in
+	      send_packet state.socket
+		(make_challenge_reply mychallenge digest);
 	      Lwt.return (`Continue {state with
-				       state = Recv_challenge_ack mychallege})
+				       state = Recv_challenge_ack mychallenge})
+	  ) else (
+	    lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
+	      Lwt.return (`Stop state)
+	  )
+      | Recv_challenge_reply mychallenge, `Packet data ->
+	  if data.[0] = 'r' && String.length data >= 5 then (
+	    let digest = Jlib.md5 (!cookie ^ string_of_int mychallenge) in
+	    let digest' = String.sub data 5 (String.length data - 5) in
+	      if digest = digest' then (
+		let schallenge = String.sub data 1 4 in
+		let challenge =
+		  Int64.logor
+		    (Int64.shift_left
+		       (Int64.of_int (Char.code schallenge.[0])) 24)
+		    (Int64.of_int
+		       ((Char.code schallenge.[1] lsl 16) lor
+			  (Char.code schallenge.[2] lsl 8) lor
+			  (Char.code schallenge.[3])))
+		in
+		let digest = Jlib.md5 (!cookie ^ Int64.to_string challenge) in
+		  send_packet state.socket (make_challenge_ack digest);
+		  add_node_connection state.node state.pid;
+		  Packet.change state.p Packet.BE4;
+		  Lwt.return (`Continue {state with
+					   state = Connection_established})
+	      ) else (
+		lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
+		  Lwt.return (`Stop state)
+	      )
 	  ) else (
 	    lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
 	      Lwt.return (`Stop state)
@@ -506,5 +587,53 @@ end
 
 module ErlNodeOutServer = GenServer.Make(ErlNodeOut)
 
+module ErlListener =
+struct
+  let sockaddr_to_string addr =
+    let nameinfo =
+      Unix.getnameinfo addr [Unix.NI_NUMERICHOST; Unix.NI_NUMERICSERV]
+    in
+      nameinfo.Unix.ni_hostname ^ ":" ^ nameinfo.Unix.ni_service
+
+  let rec accept start listen_socket =
+    lwt (socket, _) = Lwt_unix.accept listen_socket in
+    let peername = Lwt_unix.getpeername socket in
+    let sockname = Lwt_unix.getsockname socket in
+    lwt () =
+      Lwt_log.notice_f
+	~section
+	"accepted connection %s -> %s"
+	(sockaddr_to_string peername)
+	(sockaddr_to_string sockname)
+    in
+    let pid = ErlNodeOutServer.start (`In socket) in
+    lwt () =
+      Lwt_log.notice_f
+	~section
+	"%a is handling connection %s -> %s"
+	format_pid pid
+	(sockaddr_to_string peername)
+	(sockaddr_to_string sockname)
+    in
+      accept start listen_socket
+
+  let set_port socket =
+    let addr = Lwt_unix.getsockname socket in
+    let nameinfo =
+      Unix.getnameinfo addr [Unix.NI_NUMERICHOST; Unix.NI_NUMERICSERV]
+    in
+      node_port := int_of_string nameinfo.Unix.ni_service
+
+  let start _self =
+    let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+    let addr = Unix.ADDR_INET (Unix.inet_addr_any, 0) in
+      Lwt_unix.setsockopt socket Unix.SO_REUSEADDR true;
+      Lwt_unix.bind socket addr;
+      set_port socket;
+      Lwt_unix.listen socket 1024;
+      accept start socket
+end
+
 let _ =
-  ErlNodeOutServer.start "asd@localhost"
+  spawn ErlListener.start
+  (*ErlNodeOutServer.start (`Out "asd@localhost")*)
