@@ -152,8 +152,8 @@ let is_overloaded pid =
     proc.overloaded
 
 let pid_to_string pid =
-  let proc = pid_to_proc pid in
-    "<" ^ string_of_int proc.id ^ ">"
+  let id = (Obj.magic (pid : 'a pid) : int) in
+    "<" ^ string_of_int id ^ ">"
 
 let format_pid () pid = pid_to_string pid
 
