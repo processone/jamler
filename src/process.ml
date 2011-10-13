@@ -8,6 +8,7 @@ type 'a proc = {id : int;
 		mutable overloaded : bool;
 		mutable wakener : 'a Lwt.u option;
 		mutable name : string option;
+		mutable monitor_nodes : bool;
 	       }
 
 let max_processes = 65536
@@ -38,7 +39,7 @@ let get_free_pid () =
 
 type univ_msg = [ `Erl of Erlang.erl_term ]
 
-let registered = Hashtbl.create 10
+let registered : (string, univ_msg pid) Hashtbl.t = Hashtbl.create 10
 
 (*
 external pid_to_proc : 'a pid -> 'a proc = "%identity"
@@ -64,6 +65,7 @@ let spawn f =
 	      overloaded = false;
 	      wakener = None;
 	      name = None;
+	      monitor_nodes = false;
 	     }
   in
   let () = processes.(id) <- Some (Obj.magic proc) in
@@ -146,6 +148,38 @@ let whereis name =
   if Hashtbl.mem registered name then (
     Hashtbl.find registered name
   ) else invalid_arg "not a registered name"
+
+let send_by_name name msg =
+  whereis name $! msg
+
+let ($!!) = send_by_name
+
+let dist_send_ref : (Erlang.pid -> Erlang.erl_term -> unit) ref =
+  ref (fun _pid _term -> ())
+
+let ($!!!) pid term = !dist_send_ref pid term
+
+type monitor_nodes_msg =
+    [ `Node_up of string
+    | `Node_down of string
+    ]
+
+let monitor_nodes_pids : (monitor_nodes_msg pid, unit) Hashtbl.t =
+  Hashtbl.create 10
+
+let monitor_nodes pid flag =
+  let proc = pid_to_proc pid in
+    if proc.monitor_nodes <> flag then (
+      proc.monitor_nodes <- flag;
+      if flag then (
+	Hashtbl.replace monitor_nodes_pids pid ()
+      ) else (
+	Hashtbl.remove monitor_nodes_pids pid
+      )
+    )
+
+let monitor_nodes_iter f =
+  Hashtbl.iter (fun pid () -> f pid) monitor_nodes_pids
 
 let is_overloaded pid =
   let proc = pid_to_proc pid in
