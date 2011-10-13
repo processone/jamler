@@ -5,6 +5,7 @@ let section = Jamler_log.new_section "erl_epmd"
 module Packet = Jamler_packet
 module GenServer = Gen_server
 
+let full_nodename = ref "jamler"	(* TODO *)
 let nodename = ref "jamler"		(* TODO *)
 let nodehost = ref "localhost"		(* TODO *)
 let node_creation = ref 0
@@ -176,11 +177,16 @@ end
 
 module ErlEPMDServer = GenServer.Make(ErlEPMD)
 
-let start name =
-  nodename := name;
-  let (waiter, wakener) = Lwt.wait () in
-    ignore (ErlEPMDServer.start wakener);
-    waiter
+let start node =
+  let idx = String.index node '@' in
+  let nodename' = String.sub node 0 idx in
+  let hostname' = String.sub node (idx + 1) (String.length node - idx - 1) in
+    nodename := nodename';
+    nodehost := hostname';
+    full_nodename := node;
+    let (waiter, wakener) = Lwt.wait () in
+      ignore (ErlEPMDServer.start wakener);
+      waiter
 
 let get_addr_exn ascii_addr =
   lwt h = Lwt_lib.gethostbyname ascii_addr in
@@ -261,7 +267,7 @@ let dflag_dist_hdr_atom_cache = 0x2000
 let dflag_small_atom_tags = 0x4000
 
 
-type node_connection_msg = [ `TODO ]
+type node_connection_msg = [ `Send of Erlang.pid * Erlang.erl_term ]
 let nodes = Hashtbl.create 100
 let add_node_connection node pid =
   Hashtbl.replace nodes node pid
@@ -273,17 +279,19 @@ let find_node_connection node =
   with
     | Not_found -> None
 
-module ErlNodeOut :
+module ErlNodeConnection :
 sig
   include GenServer.Type with
     type msg =
-        [ Socket.msg | packet_msg | `Parse | GenServer.msg ]
+        [ Socket.msg | packet_msg | `Parse | node_connection_msg
+	| GenServer.msg ]
     and type init_data = [ `Out of string | `In of Lwt_unix.file_descr ]
     and type stop_reason = GenServer.reason
 end =
 struct
   type msg =
-      [ Socket.msg | packet_msg | `Parse | GenServer.msg ]
+      [ Socket.msg | packet_msg | `Parse | node_connection_msg
+      | GenServer.msg ]
 
   type init_data = [ `Out of string | `In of Lwt_unix.file_descr ]
 
@@ -303,13 +311,23 @@ struct
        socket : Socket.socket;
        state: conn_state;
        p : Packet.t;
+       queue : node_connection_msg Queue.t;
       }
 
   let send_text socket text =
     Socket.send_async socket text
 
   let send_packet state packet =
-    send_text state (Packet.decorate `BE2 packet)
+    let packet_type =
+      match state.state with
+	| Recv_name
+	| Recv_status
+	| Recv_challenge
+	| Recv_challenge_reply _
+	| Recv_challenge_ack _ -> `BE2
+	| Connection_established -> `BE4
+    in
+      send_text state.socket (Packet.decorate packet_type packet)
 
   let make_send_name_req () =
     let node = !nodename ^ "@" ^ !nodehost in
@@ -366,16 +384,18 @@ struct
 		       | Some socket -> (
 			   let socket = Socket.of_fd socket self in
 			     ignore (Socket.activate socket self);
-			     send_packet socket (make_send_name_req ());
 			     let state = Recv_status in
-			       Lwt.return
-				 (`Continue
-				    {pid = self;
-				     node;
-				     socket;
-				     state;
-				     p = Packet.create `BE2;
-				    })
+			     let state =
+			       {pid = self;
+				node;
+				socket;
+				state;
+				p = Packet.create `BE2;
+				queue = Queue.create ();
+			       }
+			     in
+			       send_packet state (make_send_name_req ());
+			       Lwt.return (`Continue state)
 			 )
 		       | None -> raise_lwt Not_found
 		 )
@@ -397,6 +417,7 @@ struct
 		    socket;
 		    state;
 		    p = Packet.create `BE2;
+		    queue = Queue.create ();
 		   })
 
   let open_socket addr port self =
@@ -411,17 +432,25 @@ struct
   let close_socket socket =
     Socket.close socket
 
+  let switch_to_connection_established state =
+    monitor_nodes_iter (fun pid -> pid $! `Node_up state.node);
+    Packet.change state.p Packet.BE4;
+    Lwt.return (`Continue {state with
+			     state = Connection_established})
+
   let handle_msg msg state =
     match state.state, msg with
       | Recv_name, `Packet data ->
 	  if data.[0] = 'n' && String.length data > 7 then (
 	    let node = String.sub data 7 (String.length data - 7) in
-	      send_packet state.socket "sok";
+	      send_packet state "sok";
 	      let challege = Random.int 1000000000 in
-		send_packet state.socket (make_challenge_req challege);
+		send_packet state (make_challenge_req challege);
 		Lwt.return
 		  (`Continue
-		     {state with state = Recv_challenge_reply challege})
+		     {state with
+			state = Recv_challenge_reply challege;
+			node})
 	  ) else (
 	    Lwt.return (`Stop state)
 	  )
@@ -432,7 +461,7 @@ struct
 	      | "sok_simultaneous" ->
 		  Lwt.return (`Continue {state with state = Recv_challenge})
 	      | "salive" ->
-		  send_packet state.socket "strue";
+		  send_packet state "strue";
 		  Lwt.return (`Continue {state with state = Recv_challenge})
 	      | "snok"
 	      | "snot_allowed"
@@ -456,7 +485,7 @@ struct
 	    in
 	    let digest = Jlib.md5 (!cookie ^ Int64.to_string challenge) in
 	    let mychallenge = Random.int 1000000000 in
-	      send_packet state.socket
+	      send_packet state
 		(make_challenge_reply mychallenge digest);
 	      Lwt.return (`Continue {state with
 				       state = Recv_challenge_ack mychallenge})
@@ -480,11 +509,9 @@ struct
 			  (Char.code schallenge.[3])))
 		in
 		let digest = Jlib.md5 (!cookie ^ Int64.to_string challenge) in
-		  send_packet state.socket (make_challenge_ack digest);
+		  send_packet state (make_challenge_ack digest);
 		  add_node_connection state.node state.pid;
-		  Packet.change state.p Packet.BE4;
-		  Lwt.return (`Continue {state with
-					   state = Connection_established})
+		  switch_to_connection_established state
 	      ) else (
 		lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
 		  Lwt.return (`Stop state)
@@ -498,9 +525,7 @@ struct
 	    let digest = Jlib.md5 (!cookie ^ string_of_int mychallenge) in
 	    let digest' = String.sub data 1 (String.length data - 1) in
 	      if digest = digest' then (
-		Packet.change state.p Packet.BE4;
-		Lwt.return (`Continue {state with
-					 state = Connection_established})
+		switch_to_connection_established state
 	      ) else (
 		lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
 		  Lwt.return (`Stop state)
@@ -511,13 +536,14 @@ struct
 	  )
       | Connection_established, `Packet data ->
 	  if String.length data = 0 then (
-	    send_packet state.socket "";
+	    send_packet state "";
 	    Lwt.return (`Continue state)
 	  ) else if data.[0] = 'p' then (
 	    let (control, pos) = Erlang.binary_to_term data 1 in
 	    lwt () =
 	      Lwt_log.notice_f ~section
-		"control message %s" (Erlang.term_to_string control)
+		"%a control message %s"
+		format_pid state.pid (Erlang.term_to_string control)
 	    in
 	    let open Erlang in
 	      match control with
@@ -528,12 +554,17 @@ struct
 			"message %s" (Erlang.term_to_string message)
 		    in
 		      Lwt.return (`Continue state)
-		| ErlTuple [| ErlInt 6; _; _; _ |] ->
+		| ErlTuple [| ErlInt 6; _; _; ErlAtom name |] ->
 		    let (message, pos) = Erlang.binary_to_term data pos in
 		    lwt () =
 		      Lwt_log.notice_f ~section
 			"message %s" (Erlang.term_to_string message)
 		    in
+		      (try
+			 name $!! `Erl message
+		       with
+			 | _ -> ()
+		      );
 		      Lwt.return (`Continue state)
 		| _ ->
 		    Lwt.return (`Continue state)
@@ -550,12 +581,40 @@ struct
       | None ->
 	  ()
 
+  let handle_send msg state =
+    match msg, state.state with
+    | _, Recv_name
+    | _, Recv_status
+    | _, Recv_challenge
+    | _, Recv_challenge_reply _
+    | _, Recv_challenge_ack _ ->
+	Queue.add msg state.queue;
+	Lwt.return (`Continue state)
+	  (* TODO: send queue *)
+    | `Send (pid, term), Connection_established ->
+	let open Erlang in
+	let control = ErlTuple [| ErlInt 2; ErlAtom ""; ErlPid pid |] in
+	let b = Buffer.create 10 in
+	  Buffer.add_char b 'p';
+	  term_to_buffer b control;
+	  term_to_buffer b term;
+	  lwt () =
+	    Lwt_log.notice_f ~section
+	      "%a send %S"
+	      format_pid state.pid
+	      (Buffer.contents b)
+	  in
+	    send_packet state (Buffer.contents b);
+	    Lwt.return (`Continue state)
+
   let handle (msg : msg) state =
     match msg with
       | `Tcp_data (socket, data) -> (
 	  lwt () =
 	    Lwt_log.notice_f ~section
-	      "tcp data %d %S" (String.length data) data
+	      "%a tcp data %d %S"
+	      format_pid state.pid
+	      (String.length data) data
 	  in
 	    parse state data;
 	    ignore (Socket.activate socket state.pid);
@@ -575,17 +634,38 @@ struct
       | `Parse ->
 	  parse state "";
 	  Lwt.return (`Continue state)
+      | #node_connection_msg as m ->
+	  handle_send m state
       | #GenServer.msg -> assert false
 
   let terminate state _reason =
-    remove_node_connection state.node;
-    lwt () = Socket.close state.socket in
-      Lwt.return ()
+    lwt () =
+      Lwt_log.notice_f ~section
+	"%a terminated connection to %S" format_pid state.pid state.node
+    in
+      remove_node_connection state.node;
+      (match state.state with
+	 | Connection_established ->
+	     monitor_nodes_iter (fun pid -> pid $! `Node_down state.node);
+	 | _ ->
+	     ()
+      );
+      lwt () = Socket.close state.socket in
+	Lwt.return ()
 
 
 end
 
-module ErlNodeOutServer = GenServer.Make(ErlNodeOut)
+module ErlNodeConnectionServer = GenServer.Make(ErlNodeConnection)
+
+let dist_send pid term =
+  let node = Erlang.node_of_pid pid in
+    match find_node_connection node with
+      | Some conn ->
+	  conn $! `Send (pid, term)
+      | None ->
+	  let conn = ErlNodeConnectionServer.start (`Out node) in
+	    conn $! `Send (pid, term)
 
 module ErlListener =
 struct
@@ -606,7 +686,7 @@ struct
 	(sockaddr_to_string peername)
 	(sockaddr_to_string sockname)
     in
-    let pid = ErlNodeOutServer.start (`In socket) in
+    let pid = ErlNodeConnectionServer.start (`In socket) in
     lwt () =
       Lwt_log.notice_f
 	~section
@@ -625,6 +705,7 @@ struct
       node_port := int_of_string nameinfo.Unix.ni_service
 
   let start _self =
+    Process.dist_send_ref := dist_send;
     let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
     let addr = Unix.ADDR_INET (Unix.inet_addr_any, 0) in
       Lwt_unix.setsockopt socket Unix.SO_REUSEADDR true;
@@ -634,6 +715,219 @@ struct
       accept start socket
 end
 
+module ErlNetKernel :
+sig
+  include GenServer.Type with
+    type msg = [ univ_msg | GenServer.msg ]
+    and type init_data = unit
+    and type stop_reason = GenServer.reason
+end =
+struct
+  type msg = [ univ_msg | GenServer.msg ]
+
+  type init_data = unit
+
+  type stop_reason = GenServer.reason
+
+  type state =
+      {pid : msg pid;
+      }
+
+  let init () self =
+    register (self :> univ_msg pid) "net_kernel";
+    Lwt.return (`Continue {pid = self})
+
+  open Erlang
+
+  let handle_call request from state =
+    match request, from with
+      | ErlTuple [| ErlAtom "is_auth"; _ |], ErlTuple [| ErlPid pid; tag |] ->
+	  let m = ErlTuple [| tag; ErlAtom "yes" |] in
+	    pid $!!! m;
+	    Lwt.return (`Continue state)
+      | _ ->
+	  Lwt.return (`Continue state)
+
+  let handle (msg : msg) state =
+    match msg with
+      (*| #packet_msg as m ->
+	  lwt () =
+	    let `Packet data = m in
+	      Lwt_log.notice_f ~section
+		"packet %S" data
+	  in
+	    handle_call m state*)
+      | `Erl (ErlTuple [| ErlAtom "$gen_call"; from; request |]) ->
+	  handle_call request from state
+      | `Erl term ->
+	  lwt () =
+	    Lwt_log.notice_f ~section
+	      "unexpected packet %s" (Erlang.term_to_string term)
+	  in
+	    Lwt.return (`Continue state)
+      | #GenServer.msg -> assert false
+
+  let terminate state _reason =
+    Lwt.return ()
+
+end
+
+module ErlNetKernelServer = GenServer.Make(ErlNetKernel)
+
+(* Doesn't work *)
+(*
+module ErlGlobal :
+sig
+  include GenServer.Type with
+    type msg = [ univ_msg | monitor_nodes_msg | GenServer.msg ]
+    and type init_data = unit
+    and type stop_reason = GenServer.reason
+end =
+struct
+  type msg = [ univ_msg | monitor_nodes_msg | GenServer.msg ]
+
+  type init_data = unit
+
+  type stop_reason = GenServer.reason
+
+  type state =
+      {pid : msg pid;
+       known : (string, unit) Hashtbl.t;
+       resolvers : (string, unit) Hashtbl.t;
+       sync_tag_my : (string, Erlang.erl_term) Hashtbl.t;
+       the_locker : [ `Asd ] pid;
+      }
+
+  let vsn = 5
+
+  let init () self =
+    register (self :> univ_msg pid) "global_name_server";
+    monitor_nodes (self :> monitor_nodes_msg pid) true;
+    Lwt.return (`Continue {pid = self;
+			   known = Hashtbl.create 10;
+			   resolvers = Hashtbl.create 10;
+			   sync_tag_my = Hashtbl.create 10;
+			   the_locker;
+			  })
+
+  open Erlang
+
+  let handle_call request from state =
+    match request, from with
+      (*| ErlTuple [| ErlAtom "is_auth"; _ |], ErlTuple [| ErlPid pid; tag |] ->
+	  let m = ErlTuple [| tag; ErlAtom "yes" |] in
+	    pid $!!! m;
+	    Lwt.return (`Continue state)
+      *)
+      | _ ->
+	  Lwt.return (`Continue state)
+
+  let init_connect vsn node init_msg his_tag state =
+    (* TODO *)
+    Lwt.return (`Continue state)
+
+  let handle_cast request state =
+    match request with
+      | ErlTuple [| ErlAtom "init_connect"; version;
+		    ErlAtom node; init_msg |] -> (
+	  match version with
+	    | ErlTuple [| ErlInt his_vsn; his_tag |] when his_vsn > vsn ->
+		init_connect vsn node init_msg his_tag state
+	    | ErlTuple [| ErlInt his_vsn; his_tag |] ->
+		init_connect his_vsn node init_msg his_tag state
+	    | ErlTuple tuple -> (
+		match Array.to_list tuple with
+		  | ErlInt _his_vsn :: his_tag :: _ ->
+		      init_connect vsn node init_msg his_tag state
+		  | _ ->
+		      assert false
+	      )
+	    | _ ->
+		lwt () =
+		  Lwt_log.notice_f ~section
+		    "illegal global protocol version %s node: %S\n"
+		    (term_to_string version) node
+		in
+		  Lwt.return (`Continue state)
+	)
+      | _ ->
+	  Lwt.return (`Continue state)
+
+  let handle (msg : msg) state =
+    match msg with
+      (*| #packet_msg as m ->
+	  lwt () =
+	    let `Packet data = m in
+	      Lwt_log.notice_f ~section
+		"packet %S" data
+	  in
+	    handle_call m state*)
+      | `Node_up node ->
+	  lwt () =
+	    Lwt_log.notice_f ~section "node up %S" node
+	  in
+	  let is_known =
+	    Hashtbl.mem state.known node ||
+              Hashtbl.mem state.resolvers node
+	  in
+	    if is_known then (
+	      Lwt.return (`Continue state)
+	    ) else (
+	      let mytag = ErlFloat (Unix.gettimeofday ()) in
+		Hashtbl.replace state.sync_tag_my node mytag;
+		state.the_locker $! `Node_up (node, mytag);
+		let not_a_pid = ErlAtom "no_longer_a_pid" in
+		let known =
+		  Hashtbl.fold
+		    (fun node () acc -> ErlCons (ErlString node, acc))
+		    state.known ErlNil
+		in
+		let locker =
+		  ErlTuple [| ErlAtom "locker"; not_a_pid;
+			      S1#state.known;
+			      ErlAtom "S1#state.the_locker TODO"
+			   |]
+		in
+		let init_c =
+		  ErlTuple [| ErlAtom "init_connect";
+			      ErlTuple [| ErlInt vsn; mytag |];
+			      !full_nodename;
+			      locker |]
+		in
+		  dist_send_by_name node "global_name_server"
+		    (ErlTuple [| ErlAtom "$gen_cast"; init_c |]);
+		  let resolver = start_resolver node mytag in
+		    Hashtbl.replace state.resolver node (mytag, resolver);
+		    Lwt.return (`Continue state)
+	    )
+      | `Node_down node ->
+	  lwt () =
+	    Lwt_log.notice_f ~section "node down %S" node
+	  in
+	    Lwt.return (`Continue state)
+      | `Erl (ErlTuple [| ErlAtom "$gen_call"; from; request |]) ->
+	  handle_call request from state
+      | `Erl (ErlTuple [| ErlAtom "$gen_cast"; request |]) ->
+	  handle_cast request state
+      | `Erl term ->
+	  lwt () =
+	    Lwt_log.notice_f ~section
+	      "unexpected packet %s" (Erlang.term_to_string term)
+	  in
+	    Lwt.return (`Continue state)
+      | #GenServer.msg -> assert false
+
+  let terminate state _reason =
+    Lwt.return ()
+
+end
+
+module ErlGlobalServer = GenServer.Make(ErlGlobal)
+*)
+
+
 let _ =
+  ErlNetKernelServer.start ();
+  (*ErlGlobalServer.start ();*)
   spawn ErlListener.start
-  (*ErlNodeOutServer.start (`Out "asd@localhost")*)
+  (*ErlNodeConnectionServer.start (`Out "asd@localhost")*)
