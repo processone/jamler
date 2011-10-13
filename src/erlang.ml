@@ -1,4 +1,4 @@
-type reference = string
+type reference = string * string
 type pid = string * int * int
 
 type erl_term =
@@ -16,6 +16,7 @@ type erl_term =
   (*| ErlBigInt of*)
   (*| ErlFun*)
 
+let node_of_pid (node, _, _) = node
 
 let term_to_string term =
   let rec aux b term =
@@ -26,7 +27,7 @@ let term_to_string term =
 	  Buffer.add_string b "\'";
 	  Buffer.add_string b x;
 	  Buffer.add_string b "\'";
-      | ErlReference x ->
+      | ErlReference (node, x) ->
 	  Buffer.add_string b "#Ref<";
 	  Buffer.add_string b (Printf.sprintf "%S" x);
 	  Buffer.add_string b ">";
@@ -80,7 +81,18 @@ let term_to_string term =
     aux b term;
     Buffer.contents b
 
-let term_to_binary term =
+(* TODO: move somewhere *)
+let add_int16_be buf x =
+  Buffer.add_char buf (Char.chr ((x lsr 8) land 0xff));
+  Buffer.add_char buf (Char.chr (x land 0xff))
+
+let add_int32_be buf x =
+  Buffer.add_char buf (Char.chr ((x lsr 24) land 0xff));
+  Buffer.add_char buf (Char.chr ((x lsr 16) land 0xff));
+  Buffer.add_char buf (Char.chr ((x lsr 8) land 0xff));
+  Buffer.add_char buf (Char.chr (x land 0xff))
+
+let term_to_buffer b term =
   let rec aux b =
     function
       | ErlInt x ->
@@ -131,12 +143,21 @@ let term_to_binary term =
 	    Buffer.add_char b '\000';
 	    Buffer.add_char b (Char.chr len);
 	    Buffer.add_string b x;
-      | ErlReference _x ->
-	  (* TODO *)
-	  assert false
-      | ErlPid _x ->
-	  (* TODO *)
-	  assert false
+      | ErlReference (node, opaque) ->
+	  Buffer.add_char b '\114';
+	  let n = String.length opaque / 4 in
+	    add_int16_be b n;
+	    aux b (ErlAtom node);
+	    let creation = 0 in		(* TODO *)
+	      Buffer.add_char b (Char.chr creation);
+	      Buffer.add_string b opaque
+      | ErlPid (node, id, serial) ->
+	  Buffer.add_char b '\103';
+	  aux b (ErlAtom node);
+	  add_int32_be b id;
+	  add_int32_be b serial;
+	  let creation = 0 in		(* TODO *)
+	    Buffer.add_char b (Char.chr creation);
       | ErlTuple xs ->
 	  let len = Array.length xs in
 	    if len < 256 then (
@@ -210,9 +231,12 @@ let term_to_binary term =
 	    Buffer.add_char b (Char.chr (len land 0xff));
 	    Buffer.add_string b x;
   in
-  let b = Buffer.create 10 in
     Buffer.add_char b '\131';
-    aux b term;
+    aux b term
+
+let term_to_binary term =
+  let b = Buffer.create 10 in
+    term_to_buffer b term;
     Buffer.contents b
 
 let binary_to_term s pos =
@@ -383,11 +407,15 @@ let binary_to_term s pos =
 		    let n1 = Char.code s.[!pos + 1] in
 		    let n = (n0 lsl 8) lor n1 in
 		      pos := !pos + 2;
-		      let _node = parse s pos in
+		      let node =
+			match parse s pos with
+			  | ErlAtom node -> node
+			  | _ -> invalid_arg "binary_to_term"
+		      in
 			if !pos + 4 * n < len then (
 			  let opaque = String.sub s (!pos + 1) (4 * n) in
 			    pos := !pos + 1 + 4 * n;
-			    ErlReference opaque
+			    ErlReference (node, opaque)
 			) else invalid_arg "binary_to_term"
 		  ) else invalid_arg "binary_to_term"
 	      | _ ->
