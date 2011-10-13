@@ -73,6 +73,7 @@ let (exit_waiter, exit_wakener) = Lwt.wait ()
 
 let config_file_path = ref ""
 let pid_file_path = ref ""
+let name = ref "jamler@localhost"
 
 let make_abs_path filename =
   match Filename.is_relative filename with
@@ -104,7 +105,7 @@ let process_pid_file () =
 
 let main () =
   lwt () = process_pid_file () in
-  lwt () = Erl_epmd.start "node" in
+  lwt () = Erl_epmd.start !name in
   lwt () = Jamler_config.read_config !config_file_path in
   lwt () = Jamler_captcha.check_captcha_setup () in
   Jamler_local.start ();
@@ -116,7 +117,8 @@ let main () =
     Cfg.version Cfg.ocaml Cfg.arch Cfg.system Cfg.os in
     exit_waiter
 
-let usage = Printf.sprintf "Usage: %s -c file [-p file]" Sys.argv.(0)
+let usage =
+  Printf.sprintf "Usage: %s -c file [-p file] [-name name]" Sys.argv.(0)
 
 let remove_pid_file () =
   try Sys.remove !pid_file_path
@@ -124,10 +126,15 @@ let remove_pid_file () =
 
 let () = 
   at_exit remove_pid_file;
-  let speclist = [("-c", Arg.String (fun s -> config_file_path := s),
-		   "filename  Path to configuation file");
-		  ("-p", Arg.String (fun s -> pid_file_path := s),
-		   "filename  Path to PID file")] in
+  let speclist =
+    [("-c", Arg.Set_string config_file_path,
+      "filename  Path to configuation file");
+     ("-p", Arg.Set_string pid_file_path,
+      "filename  Path to PID file");
+     ("-name", Arg.Set_string name,
+      "name  Name of the node in the form of node@domain");
+    ]
+  in
     Arg.parse speclist (fun _ -> ()) usage;
     match !config_file_path with
       | "" ->
