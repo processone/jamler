@@ -10,12 +10,21 @@ module GenIQHandler = Jamler_gen_iq_handler
 
 type broadcast =
     [ `RosterItem of LJID.t * [ `None | `From | `To | `Both | `Remove ] ]
-type msg = [ Router.msg | `Broadcast of broadcast | `Replaced ]
+type msg =
+    [ Router.msg | `Broadcast of broadcast | `Replaced
+    | `Node_up of string
+    | `Node_down of string ]
 type info = [ `TODO ] list
+
+let node_up_hook : string Hooks.plain_hook = Hooks.create_plain ()
+let node_down_hook : string Hooks.plain_hook = Hooks.create_plain ()
 
 module Session :
 sig
-  type sid = float * msg pid
+  type owner =
+    | Local of msg pid
+    | External of Erlang.pid
+  type sid = float * owner
 
   type session =
       {usr : LJID.t;
@@ -34,18 +43,31 @@ sig
 end
   =
 struct
-  type sid = float * msg pid
+  type owner =
+    | Local of msg pid
+    | External of Erlang.pid
+  type sid = float * owner
 
   module HashedSID =
   struct
     type t = sid
-    let equal (t1, p1) (t2, p2) =
-      let p1 = pid_to_proc p1
-      and p2 = pid_to_proc p2 in
-        t1 = t2 && p1.id = p2.id
+    let equal ((t1 : float), p1) (t2, p2) =
+      t1 = t2 &&
+      (match p1, p2 with
+	 | Local p1, Local p2 ->
+             Pid.equal p1 p2
+	 | External p1, External p2 ->
+	     p1 = p2
+	 | Local _, External _
+	 | External _, Local _ ->
+	     false
+      )
     let hash (t, p) =
-      let p = pid_to_proc p in
-        Hashtbl.hash t lxor Hashtbl.hash p.id
+      Hashtbl.hash t lxor
+	(match p with
+	   | Local p -> Pid.hash p
+	   | External p -> Hashtbl.hash p
+	)
   end
   module HashtblSID = Hashtbl.Make(HashedSID)
 
@@ -167,6 +189,33 @@ struct
     with
       | Not_found -> []
 
+  let node_up node =
+    HashtblSID.iter
+      (fun (_ts, owner) _ ->
+	 match owner with
+	   | Local pid ->
+               pid $! `Node_up node
+	   | External _ ->
+	       ()
+      ) sessions;
+    Jamler_hooks.OK
+
+  let node_down node =
+    HashtblSID.iter
+      (fun ((_ts, owner) as sid) _ ->
+	 match owner with
+           | Local pid ->
+               pid $! `Node_down node
+	   | External _ ->
+	       remove sid
+      ) sessions;
+    Jamler_hooks.OK
+
+  let () =
+    let global_host = Jlib.nameprep_exn "" in
+      Jamler_hooks.add_plain node_up_hook global_host node_up 50;
+      Jamler_hooks.add_plain node_down_hook global_host node_down 50
+
   let dump_tables () =
     let string_of_sid (f, p) = Printf.sprintf "(%f, %d)" f (Obj.magic p) in
       HashtblSID.iter
@@ -180,15 +229,15 @@ struct
            Printf.eprintf "%s:\n" (s :> string);
            Hashtbl.iter
              (fun (u : Jlib.nodepreped) r_idx ->
-      	  Printf.eprintf "  %s:\n" (u :> string);
-      	  Hashtbl.iter
-      	    (fun (r : Jlib.resourcepreped) sids ->
-      	       Printf.eprintf "    %s:\n" (r :> string);
-      	       List.iter
-      		 (fun sid ->
-      		    Printf.eprintf "      sid:%s\n" (string_of_sid sid)
-      		 ) sids
-      	    ) r_idx;
+      		Printf.eprintf "  %s:\n" (u :> string);
+      		Hashtbl.iter
+      		  (fun (r : Jlib.resourcepreped) sids ->
+      		     Printf.eprintf "    %s:\n" (r :> string);
+      		     List.iter
+      		       (fun sid ->
+      			  Printf.eprintf "      sid:%s\n" (string_of_sid sid)
+      		       ) sids
+      		  ) r_idx;
              ) ur_idx;
         ) usr_idx;
       flush stderr;
@@ -197,9 +246,26 @@ end
 include Session
 
 
-let set_session sid user server resource priority info =
+let send_owner owner msg =
+  match owner with
+    | Local pid ->
+	pid $! msg
+    | External pid ->
+	(* TODO *)
+	()
+
+let cluster_store =
+  ref (fun _nodes _user _server _resource _ts _priority _owner -> ())
+
+let cluster_remove =
+  ref (fun _nodes _user _server _resource _ts _owner -> ())
+
+let set_session sid user server resource priority info nodes =
   let usr = (user, server, resource) in
-    add sid {usr; priority; info}
+    add sid {usr; priority; info};
+    let (ts, owner) = sid in
+      !cluster_store nodes user server resource ts priority owner
+;dump_tables ()
 
 let check_existing_resources user server resource =
   (* A connection exist with the same resource. We replace it: *)
@@ -209,9 +275,9 @@ let check_existing_resources user server resource =
       | s :: sids' ->
           let max_sid = List.fold_left max s sids' in
             List.iter
-      	(fun ((_, pid) as s) ->
+      	(fun ((_, owner) as s) ->
       	   if s != max_sid then (
-      	     pid $! `Replaced
+      	     send_owner owner `Replaced
       	   )
       	) sids
 
@@ -255,25 +321,21 @@ let check_for_sessions_to_replace user server resource =
   check_existing_resources user server resource;
   check_max_sessions user server
 
-let open_session sid user server resource priority info =
-  set_session sid user server resource priority info;
+let open_session sid user server resource priority info nodes =
+  set_session sid user server resource priority info nodes;
   check_for_sessions_to_replace user server resource
   (*JID = jlib:make_jid(User, Server, Resource),
   ejabberd_hooks:run(sm_register_connection_hook, JID#jid.lserver,
       	       [SID, JID, Info]).*)
 
-let do_close_session sid =
-  remove sid
-  (*
-  Info = case mnesia:dirty_read({session, SID}) of
-             [] -> [];
-             [#session{info=I}] -> I
-         end,
-  drop_session(SID),
-  Info.*)
+let do_close_session sid user server resource nodes =
+  remove sid;
+  let (ts, owner) = sid in
+    !cluster_remove nodes user server resource ts owner
+;dump_tables ()
 
-let close_session sid _user _server _resource =
-  do_close_session sid
+let close_session sid user server resource _info nodes =
+  do_close_session sid user server resource nodes
   (*Info = do_close_session(SID),
   US = {jlib:nodeprep(User), jlib:nameprep(Server)},
   case ejabberd_cluster:get_node_new(US) of
@@ -287,18 +349,18 @@ let close_session sid _user _server _resource =
       	       [SID, JID, Info]).
   *)
 
-let close_session_unset_presence sid user server resource _status =
-  close_session sid user server resource
+let close_session_unset_presence sid user server resource _status info nodes =
+  close_session sid user server resource info nodes
   (*ejabberd_hooks:run(unset_presence_hook, jlib:nameprep(Server),
       	       [User, Server, Resource, Status]).*)
 
-let set_presence sid user server resource priority _presence info =
-  set_session sid user server resource priority info
+let set_presence sid user server resource priority _presence info nodes =
+  set_session sid user server resource priority info nodes
   (*ejabberd_hooks:run(set_presence_hook, jlib:nameprep(Server),
       	       [User, Server, Resource, Presence]).*)
 
-let unset_presence sid user server resource status info =
-  set_session sid user server resource (-1) info
+let unset_presence sid user server resource status info nodes =
+  set_session sid user server resource (-2) info nodes
   (*ejabberd_hooks:run(unset_presence_hook, jlib:nameprep(Server),
       	       [User, Server, Resource, Status]).*)
 
@@ -329,9 +391,12 @@ let get_user_present_resources luser lserver =
   let sids = find_sids_by_us luser lserver in
   let sessions = List.map (fun s -> (s, find_exn s)) sids in
   let sessions = clean_session_list sessions in
-    List.map
-      (fun (sid, {priority; usr = (_, _, r); _}) -> (priority, r, sid))
-      sessions
+    List.fold_left
+      (fun acc (sid, {priority; usr = (_, _, r); _}) ->
+	 if priority >= -1
+	 then (priority, r, sid) :: acc
+	 else acc
+      ) [] sessions
 
 let bounce_offline_message from to' packet =
   let err = Jlib.make_error_reply packet Jlib.err_service_unavailable in
@@ -359,9 +424,9 @@ let route_message from to' packet =
           List.iter
             (fun (p, _r, sid) ->
       	       if p = priority then (
-      		 let (_, pid) = sid in
+      		 let (_, owner) = sid in
       		   (*?DEBUG("sending to process ~p~n", [Pid]),*)
-      		   pid $! `Route (from, to', packet)
+      		   send_owner owner (`Route (from, to', packet))
       	       )
             ) prio_res
       | _ -> (
@@ -552,9 +617,9 @@ let rec do_route from to' packet =
 	      )
 	    | s :: sids ->
 		let sid = List.fold_left max s sids in
-		let (_, pid) = sid in
+		let (_, owner) = sid in
 		  (*?DEBUG("sending to process ~p~n", [Pid]),*)
-		  pid $! `Route (from, to', packet)
+		  send_owner owner (`Route (from, to', packet))
 	)
 
 let route from to' packet =
@@ -583,7 +648,7 @@ let broadcast to' data =
 	    | [] -> ()
 	    | s :: sids ->
 		let sid = List.fold_left max s sids in
-		let (_, pid) = sid in
-		  pid $! packet
+		let (_, owner) = sid in
+		  send_owner owner packet
       ) (get_user_resources luser lserver)
 

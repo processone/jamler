@@ -30,6 +30,16 @@ val ( $!! ) : string -> univ_msg -> unit
 val dist_send_ref : (Erlang.pid -> Erlang.erl_term -> unit) ref
 val ( $!!! ) : Erlang.pid -> Erlang.erl_term -> unit
 
+val dist_send_by_name_ref : (string -> string -> Erlang.erl_term -> unit) ref
+val dist_send_by_name : string -> string -> Erlang.erl_term -> unit
+
+module Pid :
+sig
+  type 'a t = 'a pid
+  val equal : 'a t -> 'a t -> bool
+  val hash : 'a t -> int
+end
+
 type monitor_nodes_msg =
     [ `Node_up of string
     | `Node_down of string

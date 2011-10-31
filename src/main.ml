@@ -106,6 +106,7 @@ let process_pid_file () =
 let main () =
   lwt () = process_pid_file () in
   lwt () = Erl_epmd.start !name in
+  Jamler_cluster.start ();
   lwt () = Jamler_config.read_config !config_file_path in
   lwt () = Jamler_captcha.check_captcha_setup () in
   Jamler_local.start ();

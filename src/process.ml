@@ -159,6 +159,11 @@ let dist_send_ref : (Erlang.pid -> Erlang.erl_term -> unit) ref =
 
 let ($!!!) pid term = !dist_send_ref pid term
 
+let dist_send_by_name_ref : (string -> string -> Erlang.erl_term -> unit) ref =
+  ref (fun _name _node _term -> ())
+
+let dist_send_by_name name node term = !dist_send_by_name_ref name node term
+
 type monitor_nodes_msg =
     [ `Node_up of string
     | `Node_down of string
@@ -193,6 +198,23 @@ let format_pid () pid = pid_to_string pid
 
 type empty
 external any_pid : 'a pid -> empty pid = "%identity"
+
+module Pid :
+sig
+  type 'a t = 'a pid
+  val equal : 'a t -> 'a t -> bool
+  val hash : 'a t -> int
+end
+  =
+struct
+  type 'a t = 'a pid
+  let equal p1 p2 =
+    let p1 = (Obj.magic p1 : int)
+    and p2 = (Obj.magic p2 : int) in
+      p1 = p2
+  let hash p =
+    Hashtbl.hash p
+end
 
 type timer = unit Lwt.t
 type 'a timer_msg = [ `TimerTimeout of timer * 'a ]

@@ -81,6 +81,7 @@ struct
        aux_fields = [],
        fsm_limit_opts,*)
        lang : string;
+       dht_nodes : string list;
       }
 
   type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
@@ -91,6 +92,7 @@ struct
 
   let c2s_open_timeout = 60.0
   let c2s_hibernate_timeout = 90.0
+  let dht_dups = 3
 
   let fsm_next_state state =
     let res =
@@ -156,7 +158,7 @@ struct
 		 server = Jlib.nameprep_exn "";
 		 resource = Jlib.resourceprep_exn "";
 		 jid = Jlib.make_jid_exn "" "" "";
-		 sid = (0.0, (self :> SM.msg pid));
+		 sid = (0.0, SM.Local (self :> SM.msg pid));
 		 pres_t = LJIDSet.empty;
 		 pres_f = LJIDSet.empty;
 		 pres_a = LJIDSet.empty;
@@ -167,6 +169,7 @@ struct
 		 privacy_list = Privacy.new_userlist ();
 		 ip = Unix.inet_addr_any;	(* TODO *)
 		 lang = "";
+		 dht_nodes = [];
 		}
     in
       fsm_next_state state
@@ -352,7 +355,7 @@ struct
     let info = [] in
       SM.set_presence
 	state.sid state.user state.server state.resource
-	priority packet info
+	priority packet info state.dht_nodes
 
 
   let get_priority_from_presence presence_packet =
@@ -360,7 +363,10 @@ struct
       | None -> 0
       | Some sub_el -> (
 	  try
-	    int_of_string (Xml.get_tag_cdata sub_el)
+	    let priority = int_of_string (Xml.get_tag_cdata sub_el) in
+	      if priority < 0
+	      then -1
+	      else priority
 	  with
 	    | Failure "int_of_string" -> 0
 	)
@@ -565,7 +571,7 @@ struct
 	    let info = [] in
 	      SM.unset_presence
 		state.sid state.user state.server state.resource
-		status info;
+		status info state.dht_nodes;
 	      presence_broadcast state from state.pres_a packet;
 	      presence_broadcast state from state.pres_i packet;
 	      {state with
@@ -692,7 +698,7 @@ struct
   let process_privacy_iq from to' iq state =
     lwt res, subel, state =
       match iq with
-	| {Jlib.iq_type = `Get subel} as iq ->
+	| {Jlib.iq_type = `Get subel; _} as iq ->
 	    lwt res =
 	      Hooks.run_fold
 		Privacy.privacy_iq_get
@@ -701,7 +707,7 @@ struct
 		(from, to', iq, state.privacy_list)
 	    in
 	      Lwt.return (res, subel, state)
-	| {Jlib.iq_type = `Set subel} as iq -> (
+	| {Jlib.iq_type = `Set subel; _} as iq -> (
 	    match_lwt (Hooks.run_fold Privacy.privacy_iq_set state.server
 			 (`Error Jlib.err_feature_not_implemented)
 			 (from, to', iq)) with
@@ -744,6 +750,8 @@ struct
 		    else false
 	)
 
+  let (--) xs ys = List.filter (fun x -> not (List.mem x ys)) xs
+
   let maybe_migrate state =
     (*PackedStateData = pack(StateData),*)
     let {user = u; server = s; resource = r; sid = sid; _} = state in
@@ -756,10 +764,15 @@ struct
     let presence = state.pres_last in
     let priority =
       match presence with
-        | None -> -1
+        | None -> -2
         | Some presence -> get_priority_from_presence presence
     in
-      SM.open_session sid u s r priority info;
+    let hash = Jamler_cluster.hash_user state.user state.server in
+    let module Cluster = Jamler_cluster.JamlerCluster in
+    let dht_nodes = Cluster.get_nodes_by_hash hash dht_dups in
+    let new_dht_nodes = dht_nodes -- state.dht_nodes in
+    let state = {state with dht_nodes = new_dht_nodes @ state.dht_nodes} in
+      SM.open_session sid u s r priority info new_dht_nodes;
       fsm_next_state state
 	(*Node ->
 	    fsm_migrate(StateName, PackedStateData, Node, 0)
@@ -1035,7 +1048,7 @@ struct
 	                          | None ->
                                       let sid =
 					(Unix.gettimeofday (),
-					 (state.pid :> SM.msg pid))
+					 SM.Local (state.pid :> SM.msg pid))
 				      in
 				      (*Conn = get_conn_type(StateData),*)
                                       let res = Jlib.make_result_iq_reply el in
@@ -1532,7 +1545,8 @@ struct
                             (jid.Jlib.luser, state.server)
 			in
                         let sid =
-			  (Unix.gettimeofday (), (state.pid :> SM.msg pid))
+			  (Unix.gettimeofday (),
+			   SM.Local (state.pid :> SM.msg pid))
 			in
 		    (*Conn = get_conn_type(StateData),
 		    %% Info = [{ip, StateData#state.ip}, {conn, Conn},
@@ -1939,6 +1953,75 @@ session_established(timeout, StateData) ->
 	fsm_next_state state
       )
 
+  let node_up node state =
+    match state.state with
+      | Session_established -> (
+	  let {user = u; server = s; resource = r; sid = sid; _} = state in
+	  let info = [] in
+	  let presence = state.pres_last in
+	  let priority =
+	    match presence with
+              | None -> -2
+              | Some presence -> get_priority_from_presence presence
+	  in
+	  let hash = Jamler_cluster.hash_user state.user state.server in
+	  let module Cluster = Jamler_cluster.JamlerCluster in
+	  let dht_nodes = Cluster.get_nodes_by_hash hash dht_dups in
+	  let new_dht_nodes = dht_nodes -- state.dht_nodes in
+	    match new_dht_nodes with
+	      | [] ->
+		  fsm_next_state state
+	      | _ ->
+		  let state =
+		    {state with dht_nodes = new_dht_nodes @ state.dht_nodes}
+		  in
+		    SM.open_session sid u s r priority info new_dht_nodes;
+		    fsm_next_state state
+	)
+      | _ ->
+	  fsm_next_state state
+
+  let node_down node state =
+    match state.state with
+      | Session_established -> (
+	  if List.mem node state.dht_nodes &&
+	    List.length state.dht_nodes <= dht_dups
+	  then (
+	    let {user = u; server = s; resource = r; sid = sid; _} = state in
+	  let info = [] in
+	  let presence = state.pres_last in
+	  let priority =
+	    match presence with
+              | None -> -2
+              | Some presence -> get_priority_from_presence presence
+	  in
+	  let hash = Jamler_cluster.hash_user state.user state.server in
+	  let module Cluster = Jamler_cluster.JamlerCluster in
+	  let dht_nodes = Cluster.get_nodes_by_hash hash dht_dups in
+	  let old_dht_nodes =
+	    List.filter (fun n -> n <> node) state.dht_nodes
+	  in
+	  let new_dht_nodes = dht_nodes -- state.dht_nodes in
+	    match new_dht_nodes with
+	      | [] ->
+		  let state = {state with dht_nodes = old_dht_nodes} in
+		    fsm_next_state state
+	      | _ ->
+		  let state =
+		    {state with dht_nodes = new_dht_nodes @ old_dht_nodes}
+		  in
+		    SM.open_session sid u s r priority info new_dht_nodes;
+		    fsm_next_state state
+	  ) else (
+	    let dht_nodes = List.filter (fun n -> n <> node) state.dht_nodes in
+	    let state = {state with dht_nodes} in
+	      fsm_next_state state
+	  )
+	)
+      | _ ->
+	  fsm_next_state state
+
+
   let handle msg state =
     match msg with
       | `Tcp_data (socket, data) when socket == state.socket ->
@@ -1971,6 +2054,10 @@ session_established(timeout, StateData) ->
 	    Jlib.serr_conflict (*Lang, "Replaced by new connection"*);
 	  send_trailer state;
 	  Lwt.return (`StopReason (state, `Replaced))
+      | `Node_up node ->
+          node_up node state
+      | `Node_down node ->
+          node_down node state
       | #GenServer.system_msg -> assert false
 
   let terminate state reason =
@@ -1996,10 +2083,13 @@ session_established(timeout, StateData) ->
 			  ("status", [],
 			   [`XmlCdata "Replaced by new connection"])])
 		  in
+		  let info = [] in
 		    SM.close_session_unset_presence
 		      state.sid
 		      state.user state.server state.resource
-		      "Replaced by new connection";
+		      "Replaced by new connection"
+		      info
+		      state.dht_nodes;
 		    presence_broadcast
 		      state from state.pres_a packet;
 		    presence_broadcast
@@ -2020,17 +2110,21 @@ session_established(timeout, StateData) ->
 			  pres_invis = false; _} when
 			   (LJIDSet.is_empty pres_a &&
 			      LJIDSet.is_empty pres_i) ->
-			   SM.close_session
-			     state.sid state.user state.server state.resource;
+			   let info = [] in
+			     SM.close_session
+			       state.sid state.user state.server state.resource
+			       info state.dht_nodes;
 		       | _ ->
 			   let from = state.jid in
 			   let packet =
 			     `XmlElement ("presence",
 					  [("type", "unavailable")], [])
 			   in
+			   let info = [] in
 			     SM.close_session_unset_presence
 			       state.sid
-			       state.user state.server state.resource "";
+			       state.user state.server state.resource ""
+			       info state.dht_nodes;
 			     presence_broadcast state from state.pres_a packet;
 			     presence_broadcast state from state.pres_i packet
 		    );

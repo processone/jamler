@@ -5,13 +5,15 @@ let section = Jamler_log.new_section "erl_epmd"
 module Packet = Jamler_packet
 module GenServer = Gen_server
 
-let full_nodename = ref "jamler"	(* TODO *)
+let full_nodename = ref "jamler@localhost" (* TODO *)
 let nodename = ref "jamler"		(* TODO *)
 let nodehost = ref "localhost"		(* TODO *)
 let node_creation = ref 0
 let node_port = ref 0
 let epmd_port = 4369
 let cookie = ref "YDZZQPNLWAMUSODVCMLA"	(* TODO *)
+
+let node () = !full_nodename
 
 (* TODO: move somewhere *)
 let add_int8 buf x =
@@ -267,7 +269,10 @@ let dflag_dist_hdr_atom_cache = 0x2000
 let dflag_small_atom_tags = 0x4000
 
 
-type node_connection_msg = [ `Send of Erlang.pid * Erlang.erl_term ]
+type node_connection_msg =
+    [ `Send of Erlang.pid * Erlang.erl_term
+    | `SendName of string * Erlang.erl_term
+    ]
 let nodes = Hashtbl.create 100
 let add_node_connection node pid =
   Hashtbl.replace nodes node pid
@@ -278,6 +283,8 @@ let find_node_connection node =
     Some (Hashtbl.find nodes node)
   with
     | Not_found -> None
+let get_nodes () =
+  Hashtbl.fold (fun n _ acc -> n :: acc) nodes []
 
 module ErlNodeConnection :
 sig
@@ -334,7 +341,8 @@ struct
     let flags =
       dflag_published lor
 	dflag_extended_references lor
-	dflag_extended_pids_ports
+	dflag_extended_pids_ports lor
+	dflag_new_floats
     in
     let b = Buffer.create 20 in
       Buffer.add_char b 'n';
@@ -348,7 +356,8 @@ struct
     let flags =
       dflag_published lor
 	dflag_extended_references lor
-	dflag_extended_pids_ports
+	dflag_extended_pids_ports lor
+	dflag_new_floats
     in
     let b = Buffer.create 20 in
       Buffer.add_char b 'n';
@@ -606,6 +615,23 @@ struct
 	  in
 	    send_packet state (Buffer.contents b);
 	    Lwt.return (`Continue state)
+    | `SendName (name, term), Connection_established ->
+	let open Erlang in
+	let control =
+	  ErlTuple [| ErlInt 6; ErlAtom ""; ErlAtom ""; ErlAtom name |]
+	in
+	let b = Buffer.create 10 in
+	  Buffer.add_char b 'p';
+	  term_to_buffer b control;
+	  term_to_buffer b term;
+	  lwt () =
+	    Lwt_log.notice_f ~section
+	      "%a send %S"
+	      format_pid state.pid
+	      (Buffer.contents b)
+	  in
+	    send_packet state (Buffer.contents b);
+	    Lwt.return (`Continue state)
 
   let handle (msg : msg) state =
     match msg with
@@ -658,6 +684,14 @@ end
 
 module ErlNodeConnectionServer = GenServer.Make(ErlNodeConnection)
 
+let try_connect node =
+  match find_node_connection node with
+    | Some conn ->
+	()
+    | None ->
+	let _conn = ErlNodeConnectionServer.start (`Out node) in
+	  ()
+
 let dist_send pid term =
   let node = Erlang.node_of_pid pid in
     match find_node_connection node with
@@ -666,6 +700,14 @@ let dist_send pid term =
       | None ->
 	  let conn = ErlNodeConnectionServer.start (`Out node) in
 	    conn $! `Send (pid, term)
+
+let dist_send_by_name name node term =
+  match find_node_connection node with
+    | Some conn ->
+	conn $! `SendName (name, term)
+    | None ->
+	let conn = ErlNodeConnectionServer.start (`Out node) in
+	  conn $! `SendName (name, term)
 
 module ErlListener =
 struct
@@ -706,6 +748,7 @@ struct
 
   let start _self =
     Process.dist_send_ref := dist_send;
+    Process.dist_send_by_name_ref := dist_send_by_name;
     let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
     let addr = Unix.ADDR_INET (Unix.inet_addr_any, 0) in
       Lwt_unix.setsockopt socket Unix.SO_REUSEADDR true;
