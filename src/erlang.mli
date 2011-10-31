@@ -18,3 +18,18 @@ val term_to_string : erl_term -> string
 val term_to_buffer : Buffer.t -> erl_term -> unit
 val term_to_binary : erl_term -> string
 val binary_to_term : string -> int -> erl_term * int
+
+module ErlType :
+sig
+  type 'a repr
+  val int : int repr
+  val string : string repr
+  val binary : string repr
+  val atom : string repr
+  val ( * ) : 'a repr -> 'b repr -> ('a * 'b) repr
+  val list : 'a repr -> 'a list repr
+
+  val from_term : 'a repr -> erl_term -> 'a
+  val to_term : 'a repr -> 'a -> erl_term
+end
+

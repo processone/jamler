@@ -69,13 +69,11 @@ let term_to_string term =
 	    done;
 	    Buffer.add_string b "]";
       | ErlString x ->
-	  Buffer.add_string b "\"";
-	  Buffer.add_string b x;
-	  Buffer.add_string b "\""
+	  Buffer.add_string b (Printf.sprintf "%S" x);
       | ErlBinary x ->
-	  Buffer.add_string b "<<\"";
-	  Buffer.add_string b x;
-	  Buffer.add_string b "\">>"
+	  Buffer.add_string b "<<";
+	  Buffer.add_string b (Printf.sprintf "%S" x);
+	  Buffer.add_string b ">>"
   in
   let b = Buffer.create 10 in
     aux b term;
@@ -425,5 +423,175 @@ let binary_to_term s pos =
       let res = parse s pos in
 	(res, !pos)
     ) else invalid_arg "binary_to_term"
+
+(* based on http://okmij.org/ftp/ML/first-class-modules/generics.ml *)
+module ErlType =
+struct
+  module type Interpretation =
+  sig
+    type 'a tc
+
+    val int : int tc
+    val string : string tc
+    val binary : string tc
+    val atom : string tc
+
+    val ( * ) : 'a tc -> 'b tc -> ('a * 'b) tc
+
+    val list : 'a tc -> 'a list tc
+  end
+
+  module type Repr =
+  sig
+    type a
+    module Interpret (I : Interpretation) :
+    sig
+      val result : a I.tc
+    end
+  end
+
+  type 'a repr = (module Repr with type a = 'a)
+
+  let int : int repr =
+    (module
+     struct
+       type a = int
+       module Interpret (I : Interpretation) =
+       struct
+         let result = I.int
+       end
+     end : Repr with type a = int)
+
+  let string : string repr =
+    (module
+     struct
+       type a = string
+       module Interpret (I : Interpretation) =
+       struct
+         let result = I.string
+       end
+     end : Repr with type a = string)
+
+  let binary : string repr =
+    (module
+     struct
+       type a = string
+       module Interpret (I : Interpretation) =
+       struct
+         let result = I.binary
+       end
+     end : Repr with type a = string)
+
+  let atom : string repr =
+    (module
+     struct
+       type a = string
+       module Interpret (I : Interpretation) =
+       struct
+         let result = I.atom
+       end
+     end : Repr with type a = string)
+
+  let ( * ) : 'a 'b. 'a repr -> 'b repr -> ('a * 'b) repr
+    = fun (type a') (type b') arepr brepr ->
+      (module
+       struct
+         type a = a' * b'
+         module A = (val arepr : Repr with type a = a')
+         module B = (val brepr : Repr with type a = b')
+         module Interpret (I : Interpretation) =
+         struct
+           module AI = A.Interpret(I)
+           module BI = B.Interpret(I)
+           open I
+           let result = AI.result * BI.result
+         end
+       end : Repr with type a = a' * b')
+
+  let list : 'a. 'a repr -> 'a list repr
+    = fun (type a') arepr ->
+      (module
+       struct
+         type a = a' list
+         module A = (val arepr : Repr with type a = a')
+         module Interpret (I : Interpretation) =
+         struct
+           module AI = A.Interpret(I)
+           open I
+           let result = list AI.result
+         end
+       end : Repr with type a = a' list)
+
+
+  module FromTerm
+    : Interpretation with type 'a tc = erl_term -> 'a =
+  struct
+    type 'a tc = erl_term -> 'a
+
+    let int =
+      function
+	| ErlInt x -> x
+	| _ -> invalid_arg "from_term"
+
+    let string =
+      function
+	| ErlString x -> x
+	| _ -> invalid_arg "from_term"
+
+    let binary =
+      function
+	| ErlBinary x -> x
+	| _ -> invalid_arg "from_term"
+
+    let atom =
+      function
+	| ErlAtom x -> x
+	| _ -> invalid_arg "from_term"
+
+    let ( * ) f g =
+      function
+	| ErlTuple [| a; b |] ->
+	    (f a, g b)
+	| _ -> invalid_arg "from_term"
+
+    let rec list f =
+      function
+	| ErlNil -> []
+	| ErlCons (x, t) ->
+	    f x :: list f t
+	| _ -> invalid_arg "from_term"
+
+  end
+
+  let from_term : 'a . 'a repr -> erl_term -> 'a =
+    fun (type a) repr term -> 
+      let module R = (val repr : Repr with type a = a) in 
+      let module N = R.Interpret (FromTerm) in
+	N.result term
+
+  module ToTerm
+    : Interpretation with type 'a tc = 'a -> erl_term =
+  struct
+    type 'a tc = 'a -> erl_term
+
+    let int x = ErlInt x
+    let string x = ErlString x
+    let binary x = ErlBinary x
+    let atom x = ErlAtom x
+
+    let ( * ) f g (a, b) = ErlTuple [| f a; g b |]
+
+    let list f xs =
+      List.fold_right
+	(fun x t -> ErlCons (f x, t)) xs ErlNil
+  end
+
+  let to_term : 'a . 'a repr -> 'a -> erl_term =
+    fun (type a) repr term -> 
+      let module R = (val repr : Repr with type a = a) in 
+      let module N = R.Interpret (ToTerm) in
+	N.result term
+
+end
 
 
