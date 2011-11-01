@@ -1,5 +1,6 @@
 open Process
 module GenServer = Gen_server
+module Hooks = Jamler_hooks
 
 (* Wont' work on 32-bit arch *)
 let hash s =
@@ -44,6 +45,12 @@ let hash_user (luser : Jlib.nodepreped) (lserver : Jlib.namepreped) =
     h := !h land 0x3fffffff;
     !h
 
+let node_up_hook : string Hooks.plain_hook = Hooks.create_plain ()
+let node_down_hook : string Hooks.plain_hook = Hooks.create_plain ()
+
+let sm_store = ref (fun _u _s _r _ts _priority _pid -> ())
+let sm_remove = ref (fun _u _s _r _ts _pid -> ())
+
 
 module JamlerCluster :
 sig
@@ -53,6 +60,7 @@ sig
     and type stop_reason = GenServer.reason
 
   val get_nodes_by_hash : int -> int -> string list
+  val get_node_by_hash : int -> string
 end =
 struct
   type msg = [ univ_msg | monitor_nodes_msg | GenServer.msg ]
@@ -96,7 +104,7 @@ struct
     if not (Hashtbl.mem cluster_nodes node) then (
       Hashtbl.replace cluster_nodes node ();
       nodes_hash := IntMap.add (hash node) node !nodes_hash;
-      Jamler_hooks.run_plain Jamler_sm.node_up_hook global_host node
+      Jamler_hooks.run_plain node_up_hook global_host node
 ; dump_nodes ()
     )
 
@@ -104,7 +112,7 @@ struct
     if Hashtbl.mem cluster_nodes node then (
       Hashtbl.remove cluster_nodes node;
       nodes_hash := IntMap.remove (hash node) !nodes_hash;
-      Jamler_hooks.run_plain Jamler_sm.node_down_hook global_host node
+      Jamler_hooks.run_plain node_down_hook global_host node
 ; dump_nodes ()
     )
 
@@ -123,6 +131,9 @@ struct
       | Some nh ->
 	  nh
 
+  let get_node_by_hash hash =
+    snd (get_next_node hash)
+
   let rec get_nodes_by_hash hash k =
     if k = 0
     then []
@@ -135,84 +146,8 @@ struct
 
   open Erlang
 
-  let store nodes user server resource ts priority owner =
-    let module SM = Jamler_sm in
-      match owner, nodes with
-	| SM.External _, _
-	| SM.Local _, [] ->
-	    ()
-	| SM.Local _pid, _ ->
-	    let user = (user : Jlib.nodepreped :> string) in
-	    let server = (server : Jlib.namepreped :> string) in
-	    let resource = (resource : Jlib.resourcepreped :> string) in
-	    let usr =
-	      ErlTuple [| ErlString user;
-			  ErlString server;
-			  ErlString resource;
-		       |]
-	    in
-	    let priority =
-	      if priority >= -1
-	      then ErlInt priority
-	      else ErlAtom "undefined"
-	    in
-	    let owner =
-	      ErlTuple [| ErlAtom (Erl_epmd.node ());
-			  ErlTuple [| ErlFloat ts;
-				      ErlBinary user;
-				      ErlBinary server;
-				      ErlBinary resource;
-				   |]
-		       |]
-	    in
-	      List.iter
-		(fun node ->
-		   dist_send_by_name name node
-		     (ErlTuple [| ErlAtom "store";
-				  usr;
-				  ErlFloat ts;
-				  priority;
-				  owner |])
-		) nodes
-
-  let remove nodes user server resource ts owner =
-    let module SM = Jamler_sm in
-      match owner, nodes with
-	| SM.External _, _
-	| SM.Local _, [] ->
-	    ()
-	| SM.Local _pid, _ ->
-	    let user = (user : Jlib.nodepreped :> string) in
-	    let server = (server : Jlib.namepreped :> string) in
-	    let resource = (resource : Jlib.resourcepreped :> string) in
-	    let usr =
-	      ErlTuple [| ErlString user;
-			  ErlString server;
-			  ErlString resource;
-		       |]
-	    in
-	    let owner =
-	      ErlTuple [| ErlAtom (Erl_epmd.node ());
-			  ErlTuple [| ErlFloat ts;
-				      ErlBinary user;
-				      ErlBinary server;
-				      ErlBinary resource;
-				   |]
-		       |]
-	    in
-	      List.iter
-		(fun node ->
-		   dist_send_by_name name node
-		     (ErlTuple [| ErlAtom "remove";
-				  usr;
-				  ErlFloat ts;
-				  owner |])
-		) nodes
-
   let init () self =
     register (self :> univ_msg Process.pid) name;
-    Jamler_sm.cluster_store := store;
-    Jamler_sm.cluster_remove := remove;
     add_node (Erl_epmd.node ());
     monitor_nodes (self :> monitor_nodes_msg Process.pid) true;
     List.iter
@@ -284,19 +219,7 @@ struct
 	    Lwt_log.notice_f ~section
 	      "store %s" (Erlang.term_to_string term)
 	  in
-	  let module SM = Jamler_sm in
-	  let sid = (ts, SM.External pid) in
-	  let user = Jlib.nodeprep_exn u in
-	  let server = Jlib.nameprep_exn s in
-	  let resource = Jlib.resourceprep_exn r in
-	  let priority =
-	    match priority with
-	      | ErlInt p when p >= 0 -> p
-	      | ErlInt _ -> -1
-	      | _ -> -2
-	  in
-	  let info = [] in
-	    SM.open_session sid user server resource priority info [];
+	    !sm_store u s r ts priority pid;
 	    Lwt.return (`Continue state)
 	)
       | `Erl (ErlTuple
@@ -308,13 +231,7 @@ struct
 	    Lwt_log.notice_f ~section
 	      "remove %s" (Erlang.term_to_string term)
 	  in
-	  let module SM = Jamler_sm in
-	  let sid = (ts, SM.External pid) in
-	  let user = Jlib.nodeprep_exn u in
-	  let server = Jlib.nameprep_exn s in
-	  let resource = Jlib.resourceprep_exn r in
-	  let info = [] in
-	    SM.close_session sid user server resource info [];
+	    !sm_remove u s r ts pid;
 	    Lwt.return (`Continue state)
 	)
       | `Node_up node ->

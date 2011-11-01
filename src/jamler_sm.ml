@@ -7,6 +7,7 @@ module Hooks = Jamler_hooks
 module Auth = Jamler_auth
 module Router = Jamler_router
 module GenIQHandler = Jamler_gen_iq_handler
+module GenServer = Gen_server
 
 type broadcast =
     [ `RosterItem of LJID.t * [ `None | `From | `To | `Both | `Remove ] ]
@@ -15,9 +16,6 @@ type msg =
     | `Node_up of string
     | `Node_down of string ]
 type info = [ `TODO ] list
-
-let node_up_hook : string Hooks.plain_hook = Hooks.create_plain ()
-let node_down_hook : string Hooks.plain_hook = Hooks.create_plain ()
 
 module Session :
 sig
@@ -213,8 +211,10 @@ struct
 
   let () =
     let global_host = Jlib.nameprep_exn "" in
-      Jamler_hooks.add_plain node_up_hook global_host node_up 50;
-      Jamler_hooks.add_plain node_down_hook global_host node_down 50
+      Jamler_hooks.add_plain
+	Jamler_cluster.node_up_hook global_host node_up 50;
+      Jamler_hooks.add_plain
+	Jamler_cluster.node_down_hook global_host node_down 50
 
   let dump_tables () =
     let string_of_sid (f, p) = Printf.sprintf "(%f, %d)" f (Obj.magic p) in
@@ -246,25 +246,125 @@ end
 include Session
 
 
+let jid_to_term jid =
+  let open Erlang in
+    ErlTuple [| ErlAtom "jid";
+		ErlString jid.Jlib.user;
+		ErlString jid.Jlib.server;
+		ErlString jid.Jlib.resource;
+		ErlString (jid.Jlib.luser :> string);
+		ErlString (jid.Jlib.lserver :> string);
+		ErlString (jid.Jlib.lresource :> string);
+	     |]
+
 let send_owner owner msg =
   match owner with
     | Local pid ->
 	pid $! msg
     | External pid ->
-	(* TODO *)
-	()
+	let open Erlang in
+	let msg =
+	  match msg with
+	    | `Route (from, to', packet) ->
+		ErlTuple [| ErlAtom "route";
+			    jid_to_term from;
+			    jid_to_term to';
+			    ErlType.(to_term xml packet)
+			 |]
+	    | `Broadcast _->
+		ErlNil			(* TODO *)
+	    | `Node_down _
+	    | `Node_up _ ->
+		ErlNil
+	    | `Replaced ->
+		ErlAtom "replaced"
+	in
+	  match msg with
+	    | ErlNil -> ()
+	    | _ -> pid $!!! msg
 
-let cluster_store =
-  ref (fun _nodes _user _server _resource _ts _priority _owner -> ())
+let cluster_store nodes user server resource ts priority owner =
+  let open Erlang in
+  let name = "ejabberd_cluster" in
+    match owner, nodes with
+      | External _, _
+      | Local _, [] ->
+	  ()
+      | Local _pid, _ ->
+	  let user = (user : Jlib.nodepreped :> string) in
+	  let server = (server : Jlib.namepreped :> string) in
+	  let resource = (resource : Jlib.resourcepreped :> string) in
+	  let usr =
+	    ErlTuple [| ErlString user;
+			ErlString server;
+			ErlString resource;
+		     |]
+	  in
+	  let priority =
+	    if priority >= -1
+	    then ErlInt priority
+	    else ErlAtom "undefined"
+	  in
+	  let owner =
+	    ErlTuple [| ErlAtom (Erl_epmd.node ());
+			ErlTuple [| ErlFloat ts;
+				    ErlBinary user;
+				    ErlBinary server;
+				    ErlBinary resource;
+				 |]
+		     |]
+	  in
+	    List.iter
+	      (fun node ->
+		 dist_send_by_name name node
+		   (ErlTuple [| ErlAtom "store";
+				usr;
+				ErlFloat ts;
+				priority;
+				owner |])
+	      ) nodes
 
-let cluster_remove =
-  ref (fun _nodes _user _server _resource _ts _owner -> ())
+let cluster_remove nodes user server resource ts owner =
+  let open Erlang in
+  let name = "ejabberd_cluster" in
+    match owner, nodes with
+      | External _, _
+      | Local _, [] ->
+	  ()
+      | Local _pid, _ ->
+	  let user = (user : Jlib.nodepreped :> string) in
+	  let server = (server : Jlib.namepreped :> string) in
+	  let resource = (resource : Jlib.resourcepreped :> string) in
+	  let usr =
+	    ErlTuple [| ErlString user;
+			ErlString server;
+			ErlString resource;
+		     |]
+	  in
+	  let owner =
+	    ErlTuple [| ErlAtom (Erl_epmd.node ());
+			ErlTuple [| ErlFloat ts;
+				    ErlBinary user;
+				    ErlBinary server;
+				    ErlBinary resource;
+				 |]
+		     |]
+	  in
+	    List.iter
+	      (fun node ->
+		 dist_send_by_name name node
+		   (ErlTuple [| ErlAtom "remove";
+				usr;
+				ErlFloat ts;
+				owner |])
+	      ) nodes
+
 
 let set_session sid user server resource priority info nodes =
   let usr = (user, server, resource) in
     add sid {usr; priority; info};
     let (ts, owner) = sid in
-      !cluster_store nodes user server resource ts priority owner
+      cluster_store nodes user server resource ts priority owner
 ;dump_tables ()
 
 let check_existing_resources user server resource =
@@ -331,7 +431,7 @@ let open_session sid user server resource priority info nodes =
 let do_close_session sid user server resource nodes =
   remove sid;
   let (ts, owner) = sid in
-    !cluster_remove nodes user server resource ts owner
+    cluster_remove nodes user server resource ts owner
 ;dump_tables ()
 
 let close_session sid user server resource _info nodes =
@@ -515,7 +615,7 @@ is_privacy_allow(From, To, Packet, PrivacyList) ->
 
 let roster_in_subscription = Hooks.create_fold ()
 
-let rec do_route from to' packet =
+let rec do_route1 from to' packet =
   let {Jlib.luser = luser;
        Jlib.lserver = lserver;
        Jlib.lresource = lresource; _} = to' in
@@ -575,7 +675,7 @@ let rec do_route from to' packet =
 			in
 			  List.iter
 			    (fun (_, r, _sid) ->
-			       do_route
+			       do_route1
 				 from (Jlib.jid_replace_resource' to' r) packet
 			    ) presources
 		      )
@@ -589,7 +689,7 @@ let rec do_route from to' packet =
 	    | "broadcast" ->
 		List.iter
 		  (fun r ->
-		     do_route from (Jlib.jid_replace_resource' to' r) packet
+		     do_route1 from (Jlib.jid_replace_resource' to' r) packet
 		  ) (get_user_resources luser lserver)
 	    | _ ->
 		()
@@ -622,6 +722,49 @@ let rec do_route from to' packet =
 		  send_owner owner (`Route (from, to', packet))
 	)
 
+let do_route from to' packet =
+  let {Jlib.luser = luser;
+       Jlib.lserver = lserver;
+       Jlib.lresource = lresource; _} = to' in
+  let hash = Jamler_cluster.hash_user luser lserver in
+  let node = Jamler_cluster.JamlerCluster.get_node_by_hash hash in
+  let open Erlang in
+    if node <> Erl_epmd.node () then (
+      match (lresource :> string) with
+	| "" -> (
+	    let `XmlElement (name, attrs, _els) = packet in
+	      match name with
+		| "iq" ->
+		    ignore (process_iq from to' packet)
+		| _ ->
+		    dist_send_by_name "ejabberd_sm" node
+		      (ErlTuple [| ErlAtom "route";
+				   jid_to_term from;
+				   jid_to_term to';
+				   ErlType.(to_term xml packet)
+				|])
+	  )
+	| _ -> (
+	    match find_sids_by_usr luser lserver lresource with
+	      | [] -> (
+		  dist_send_by_name "ejabberd_sm" node
+		    (ErlTuple [| ErlAtom "route";
+				 jid_to_term from;
+				 jid_to_term to';
+				 ErlType.(to_term xml packet)
+			      |])
+		)
+	      | s :: sids ->
+		  let sid = List.fold_left max s sids in
+		  let (_, owner) = sid in
+		    (*?DEBUG("sending to process ~p~n", [Pid]),*)
+		    send_owner owner (`Route (from, to', packet))
+	  )
+    ) else (
+      do_route1 from to' packet
+    )
+
+
 let route from to' packet =
   try
     do_route from to' packet
@@ -651,4 +794,159 @@ let broadcast to' data =
 		let (_, owner) = sid in
 		  send_owner owner packet
       ) (get_user_resources luser lserver)
+
+let get_sid_by_usr luser lserver lresource =
+  match find_sids_by_usr luser lserver lresource with
+    | [] -> None
+    | s :: sids ->
+	Some (List.fold_left max s sids)
+
+let sm_store u s r ts priority pid =
+  let open Erlang in
+  let sid = (ts, External pid) in
+  let user = Jlib.nodeprep_exn u in
+  let server = Jlib.nameprep_exn s in
+  let resource = Jlib.resourceprep_exn r in
+  let priority =
+    match priority with
+      | ErlInt p when p >= 0 -> p
+      | ErlInt _ -> -1
+      | _ -> -2
+  in
+  let info = [] in
+    open_session sid user server resource priority info []
+
+let sm_remove u s r ts pid =
+  let open Erlang in
+  let sid = (ts, External pid) in
+  let user = Jlib.nodeprep_exn u in
+  let server = Jlib.nameprep_exn s in
+  let resource = Jlib.resourceprep_exn r in
+  let info = [] in
+    close_session sid user server resource info []
+
+let _ =
+  Jamler_cluster.sm_store := sm_store;
+  Jamler_cluster.sm_remove := sm_remove
+
+module JamlerSM :
+sig
+  include GenServer.Type with
+    type msg = [ univ_msg | GenServer.msg ]
+    and type init_data = unit
+    and type stop_reason = GenServer.reason
+end =
+struct
+  type msg = [ univ_msg | GenServer.msg ]
+
+  type init_data = unit
+
+  type stop_reason = GenServer.reason
+
+  type state =
+      {pid : msg pid;
+      }
+
+  let init () self =
+    register (self :> univ_msg pid) "ejabberd_sm";
+    Lwt.return (`Continue {pid = self})
+
+  open Erlang
+
+  let route_from_term =
+    function
+      | ErlTuple [| ErlAtom "route";
+		    ErlTuple [| ErlAtom "jid";
+				from_user; from_server; from_resource;
+				_; _; _ |];
+		    ErlTuple [| ErlAtom "jid";
+				to_user; to_server; to_resource;
+				_; _; _ |];
+		    msg |] -> (
+	  let from_user = ErlType.(from_term string from_user) in
+	  let from_server = ErlType.(from_term string from_server) in
+	  let from_resource = ErlType.(from_term string from_resource) in
+	  let to_user = ErlType.(from_term string to_user) in
+	  let to_server = ErlType.(from_term string to_server) in
+	  let to_resource = ErlType.(from_term string to_resource) in
+	  let from = Jlib.make_jid_exn from_user from_server from_resource in
+	  let to' = Jlib.make_jid_exn to_user to_server to_resource in
+	  let msg = ErlType.(from_term xml msg) in
+	    `Route (from, to', msg)
+	)
+      | _ -> invalid_arg "route_from_term"
+
+  let handle (msg : msg) state =
+    match msg with
+      | `Erl (ErlTuple [| ErlAtom "route"; _; _; _ |] as term) -> (
+	  try
+	    let `Route (from, to', msg) = route_from_term term in
+	      route from to' msg;
+	      Lwt.return (`Continue state)
+	  with
+	    | exn ->
+		lwt () =
+		  Lwt_log.error_f
+		    ~section
+		    ~exn:exn
+		    "exception on processing packet\npacket: %s\nexception"
+		    (Erlang.term_to_string term)
+		in
+		  Lwt.return (`Continue state)
+	)
+      | `Erl (ErlTuple
+		[| ErlAtom "send";
+		   ErlTuple [| ErlFloat ts;
+			       ErlBinary user;
+			       ErlBinary server;
+			       ErlBinary resource |];
+		   msg |] as term) -> (
+	  try
+	    let user = Jlib.nodeprep_exn user in
+	    let server = Jlib.nameprep_exn server in
+	    let resource = Jlib.resourceprep_exn resource in
+	      (match get_sid_by_usr user server resource with
+		 | None ->
+		     ()
+		 | Some (ts', owner) when ts' <> ts ->
+		     ()
+		 | Some (_ts, External _) ->
+		     ()
+		 | Some (_ts, Local pid) -> (
+		     match msg with
+		       | ErlTuple [| ErlAtom "route"; _; _; _ |] ->
+			   let route_msg = route_from_term msg in
+			     pid $! route_msg;
+		       | _ -> invalid_arg "unknown message"
+		   )
+	      );
+	      Lwt.return (`Continue state)
+	  with
+	    | exn ->
+		lwt () =
+		  Lwt_log.error_f
+		    ~section
+		    ~exn:exn
+		    "exception on processing packet\npacket: %s\nexception"
+		    (Erlang.term_to_string term)
+		in
+		  Lwt.return (`Continue state)
+	)
+      | `Erl term ->
+	  lwt () =
+	    Lwt_log.notice_f ~section
+	      "unexpected packet %s" (Erlang.term_to_string term)
+	  in
+	    Lwt.return (`Continue state)
+      | #GenServer.msg -> assert false
+
+  let terminate state _reason =
+    Lwt.return ()
+
+end
+
+module JamlerSMServer = GenServer.Make(JamlerSM)
+
+let _ =
+  JamlerSMServer.start ();
 

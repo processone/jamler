@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 82451e31b2f60983837e03f69b46b167)
+# DO NOT EDIT (digest: fb0fdc2fbafc0832fb51ac1f7101e27e)
 # Library pa_sql
 # Library pa_jlib
 "src": include
@@ -81,10 +81,22 @@
 "src/stringprepwrap.c": pkg_cryptokit
 "src/stringprepwrap.c": pkg_camlp4.quotations.o
 # Executable test
+"src/test.native": oasis_executable_test_cclib
+"src/libtest.lib": oasis_executable_test_cclib
+"src/dlltest.dll": oasis_executable_test_cclib
+"src/libtest.a": oasis_executable_test_cclib
+"src/dlltest.so": oasis_executable_test_cclib
 "src/test.native": oasis_executable_test_byte
 <src/*.ml{,i}>: oasis_executable_test_byte
+"src/idnawrap.c": oasis_executable_test_byte
+"src/expatwrap.c": oasis_executable_test_byte
+"src/stringprepwrap.c": oasis_executable_test_byte
+"src/test.native": use_libtest
 "src/test.native": pkg_oUnit
 <src/*.ml{,i}>: pkg_oUnit
+"src/idnawrap.c": pkg_oUnit
+"src/expatwrap.c": pkg_oUnit
+"src/stringprepwrap.c": pkg_oUnit
 # OASIS_STOP
 <src/*.ml{,i}>: syntax_camlp4o, pkg_camlp4
 <src/*.ml{,i}>: pa_jlib, pa_sql

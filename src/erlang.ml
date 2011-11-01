@@ -436,6 +436,8 @@ struct
     val binary : string tc
     val atom : string tc
 
+    val xml : Xml.element tc
+
     val ( * ) : 'a tc -> 'b tc -> ('a * 'b) tc
 
     val list : 'a tc -> 'a list tc
@@ -492,6 +494,16 @@ struct
        end
      end : Repr with type a = string)
 
+  let xml : Xml.element repr =
+    (module
+     struct
+       type a = Xml.element
+       module Interpret (I : Interpretation) =
+       struct
+         let result = I.xml
+       end
+     end : Repr with type a = Xml.element)
+
   let ( * ) : 'a 'b. 'a repr -> 'b repr -> ('a * 'b) repr
     = fun (type a') (type b') arepr brepr ->
       (module
@@ -536,6 +548,7 @@ struct
     let string =
       function
 	| ErlString x -> x
+	| ErlNil -> ""
 	| _ -> invalid_arg "from_term"
 
     let binary =
@@ -561,6 +574,56 @@ struct
 	    f x :: list f t
 	| _ -> invalid_arg "from_term"
 
+
+    let rec iolist' b =
+      function
+	| ErlNil -> ()
+	| ErlString x
+	| ErlBinary x -> Buffer.add_string b x
+	| ErlInt x when x >= 0 && x < 256 -> Buffer.add_char b (Char.chr x)
+	| ErlCons (x, t) ->
+	    iolist' b x;
+	    iolist' b t
+	| _ -> invalid_arg "from_term"
+
+    let iolist =
+      function
+	| ErlNil -> ""
+	| ErlString x
+	| ErlBinary x -> x
+	| (ErlCons _) as x ->
+	    let b = Buffer.create 10 in
+	      iolist' b x;
+	      Buffer.contents b
+	| _ -> invalid_arg "from_term"
+
+    let attrs_type = list (string * string)
+
+    let rec xml_cdata =
+      function
+	| ErlTuple [| ErlAtom "xmlelement";
+		      ErlString name;
+		      attrs;
+		      els |] ->
+	    let attrs = attrs_type attrs in
+	    let els = list xml_cdata els in
+	      `XmlElement (name, attrs, els)
+	| ErlTuple [| ErlAtom "xmlcdata";
+		      cdata |] ->
+	    `XmlCdata (iolist cdata)
+	| _ -> invalid_arg "from_term"
+
+    let xml =
+      function
+	| ErlTuple [| ErlAtom "xmlelement";
+		      ErlString name;
+		      attrs;
+		      subels |] ->
+	    let attrs = attrs_type attrs in
+	    let subels = list xml_cdata subels in
+	      `XmlElement (name, attrs, subels)
+	| _ -> invalid_arg "from_term"
+
   end
 
   let from_term : 'a . 'a repr -> erl_term -> 'a =
@@ -584,6 +647,22 @@ struct
     let list f xs =
       List.fold_right
 	(fun x t -> ErlCons (f x, t)) xs ErlNil
+
+    let attrs_type = list (string * string)
+
+    let rec xml_cdata =
+      function
+	| `XmlElement (name, attrs, els) ->
+	    ErlTuple [| ErlAtom "xmlelement";
+			ErlString name;
+			attrs_type attrs;
+			list xml_cdata els |]
+	| `XmlCdata x ->
+	    ErlTuple [| ErlAtom "xmlcdata";
+			ErlBinary x |]
+
+    let xml el = xml_cdata (el :> Xml.element_cdata)
+
   end
 
   let to_term : 'a . 'a repr -> 'a -> erl_term =

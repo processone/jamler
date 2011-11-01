@@ -1,5 +1,5 @@
 (* OASIS_START *)
-(* DO NOT EDIT (digest: 58d049d9ec19e9b4d76e44814d1dc2ad) *)
+(* DO NOT EDIT (digest: 5fec2db3f1abf38f63e66abf2084687d) *)
 module OASISGettext = struct
 # 21 "/tmp/buildd/oasis-0.2.0/src/oasis/OASISGettext.ml"
   
@@ -453,7 +453,11 @@ let package_default =
   {
      MyOCamlbuildBase.lib_ocaml =
        [("src/pa_sql", ["src"]); ("src/pa_jlib", ["src"])];
-     lib_c = [("jamler", "src", ["src/uni_data.h"; "src/uni_norm.h"])];
+     lib_c =
+       [
+          ("jamler", "src", ["src/uni_data.h"; "src/uni_norm.h"]);
+          ("test", "src", ["src/uni_data.h"; "src/uni_norm.h"])
+       ];
      flags =
        [
           (["oasis_executable_jamler_cclib"; "link"],
@@ -469,6 +473,13 @@ let package_default =
             [(OASISExpr.EBool true, S [A "-w"; A "A"])]);
           (["oasis_executable_jamler_native"; "ocaml"; "compile"; "native"],
             [(OASISExpr.EBool true, S [A "-w"; A "A"])]);
+          (["oasis_executable_test_cclib"; "link"],
+            [
+               (OASISExpr.EBool true,
+                 S [A "-cclib"; A "-lexpat"; A "-cclib"; A "-lidn"])
+            ]);
+          (["oasis_executable_test_cclib"; "ocamlmklib"; "c"],
+            [(OASISExpr.EBool true, S [A "-lexpat"; A "-lidn"])]);
           (["oasis_executable_test_byte"; "ocaml"; "link"; "byte"],
             [(OASISExpr.EBool true, S [A "-w"; A "A"])]);
           (["oasis_executable_test_byte"; "ocaml"; "ocamldep"; "byte"],

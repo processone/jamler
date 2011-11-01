@@ -42,12 +42,3 @@ val roster_in_subscription :
 
 val broadcast : Jlib.jid -> broadcast -> unit
 
-val cluster_store :
-  (string list -> Jlib.nodepreped -> Jlib.namepreped -> Jlib.resourcepreped ->
-     float -> int -> owner -> unit) ref
-val cluster_remove :
-  (string list -> Jlib.nodepreped -> Jlib.namepreped -> Jlib.resourcepreped ->
-     float -> owner -> unit) ref
-
-val node_up_hook : string Jamler_hooks.plain_hook
-val node_down_hook : string Jamler_hooks.plain_hook

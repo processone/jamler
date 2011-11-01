@@ -26,6 +26,7 @@ sig
   val string : string repr
   val binary : string repr
   val atom : string repr
+  val xml : Xml.element repr
   val ( * ) : 'a repr -> 'b repr -> ('a * 'b) repr
   val list : 'a repr -> 'a list repr
 

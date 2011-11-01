@@ -82,6 +82,8 @@ Executable test
   Build$: flag(tests)
   BuildDepends: oUnit (>= 1.1.0)
   ByteOpt: -w A
+  CSources: idnawrap.c, expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
+  CCLib: -lexpat -lidn
 
 Test main
   Run$: flag(tests)
