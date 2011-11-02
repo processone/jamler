@@ -974,7 +974,7 @@ struct
   let handle_timer (`TimerTimeout (timer, ())) state =
     if state.timer == timer then (
       match state.state with
-	| wait_before_retry ->
+	| Wait_before_retry ->
 	    lwt () =
 	      Lwt_log.notice_f ~section
 		"reconnect delay expired: will now retry to connect to %s when needed"
