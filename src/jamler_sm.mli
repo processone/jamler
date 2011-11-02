@@ -9,9 +9,12 @@ type msg =
     | `Node_up of string
     | `Node_down of string ]
 type info = [ `TODO ] list
+type external_owner =
+  | ExternalPid of Erlang.pid
+  | ExternalNode of string * Erlang.erl_term
 type owner =
   | Local of msg pid
-  | External of Erlang.pid
+  | External of external_owner
 type sid = float * owner
 
 val route : Jamler_router.t

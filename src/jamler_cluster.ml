@@ -214,24 +214,26 @@ struct
 		   ErlTuple [| ErlString u; ErlString s; ErlString r |];
 		   ErlFloat ts;
 		   priority;
-		   ErlPid pid (* TODO *) |] as term) -> (
+		   (ErlPid _ | ErlTuple [| ErlAtom _; _ |] ) as owner
+		|] as term) -> (
 	  lwt () =
 	    Lwt_log.notice_f ~section
 	      "store %s" (Erlang.term_to_string term)
 	  in
-	    !sm_store u s r ts priority pid;
+	    !sm_store u s r ts priority owner;
 	    Lwt.return (`Continue state)
 	)
       | `Erl (ErlTuple
 		[| ErlAtom "remove";
 		   ErlTuple [| ErlString u; ErlString s; ErlString r |];
 		   ErlFloat ts;
-		   ErlPid pid (* TODO *) |] as term) -> (
+		   (ErlPid _ | ErlTuple [| ErlAtom _; _ |] ) as owner
+		|] as term) -> (
 	  lwt () =
 	    Lwt_log.notice_f ~section
 	      "remove %s" (Erlang.term_to_string term)
 	  in
-	    !sm_remove u s r ts pid;
+	    !sm_remove u s r ts owner;
 	    Lwt.return (`Continue state)
 	)
       | `Node_up node ->

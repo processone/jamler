@@ -19,9 +19,12 @@ type info = [ `TODO ] list
 
 module Session :
 sig
+  type external_owner =
+    | ExternalPid of Erlang.pid
+    | ExternalNode of string * Erlang.erl_term
   type owner =
     | Local of msg pid
-    | External of Erlang.pid
+    | External of external_owner
   type sid = float * owner
 
   type session =
@@ -41,9 +44,12 @@ sig
 end
   =
 struct
+  type external_owner =
+    | ExternalPid of Erlang.pid
+    | ExternalNode of string * Erlang.erl_term
   type owner =
     | Local of msg pid
-    | External of Erlang.pid
+    | External of external_owner
   type sid = float * owner
 
   module HashedSID =
@@ -204,8 +210,12 @@ struct
 	 match owner with
            | Local pid ->
                pid $! `Node_down node
-	   | External _ ->
-	       remove sid
+	   | External (ExternalPid pid) ->
+	       if Erlang.node_of_pid pid = node
+	       then remove sid
+	   | External (ExternalNode (node', _opaque)) ->
+	       if node = node'
+	       then remove sid
       ) sessions;
     Jamler_hooks.OK
 
@@ -261,7 +271,7 @@ let send_owner owner msg =
   match owner with
     | Local pid ->
 	pid $! msg
-    | External pid ->
+    | External owner ->
 	let open Erlang in
 	let msg =
 	  match msg with
@@ -281,7 +291,15 @@ let send_owner owner msg =
 	in
 	  match msg with
 	    | ErlNil -> ()
-	    | _ -> pid $!!! msg
+	    | _ -> (
+		match owner with
+		  | ExternalPid pid ->
+		      pid $!!! msg
+		  | ExternalNode (node, opaque) ->
+		      dist_send_by_name "ejabberd_sm" node
+			(ErlTuple [| ErlAtom "send"; opaque; msg |])
+
+	      )
 
 let cluster_store nodes user server resource ts priority owner =
   let open Erlang in
@@ -801,9 +819,16 @@ let get_sid_by_usr luser lserver lresource =
     | s :: sids ->
 	Some (List.fold_left max s sids)
 
-let sm_store u s r ts priority pid =
+let sm_store u s r ts priority owner =
   let open Erlang in
-  let sid = (ts, External pid) in
+  let owner =
+    match owner with
+      | ErlPid pid -> External (ExternalPid pid)
+      | ErlTuple [| ErlAtom node; opaque |] ->
+	  External (ExternalNode (node, opaque))
+      | _ -> assert false
+  in
+  let sid = (ts, owner) in
   let user = Jlib.nodeprep_exn u in
   let server = Jlib.nameprep_exn s in
   let resource = Jlib.resourceprep_exn r in
@@ -816,9 +841,16 @@ let sm_store u s r ts priority pid =
   let info = [] in
     open_session sid user server resource priority info []
 
-let sm_remove u s r ts pid =
+let sm_remove u s r ts owner =
   let open Erlang in
-  let sid = (ts, External pid) in
+  let owner =
+    match owner with
+      | ErlPid pid -> External (ExternalPid pid)
+      | ErlTuple [| ErlAtom node; opaque |] ->
+	  External (ExternalNode (node, opaque))
+      | _ -> assert false
+  in
+  let sid = (ts, owner) in
   let user = Jlib.nodeprep_exn u in
   let server = Jlib.nameprep_exn s in
   let resource = Jlib.resourceprep_exn r in
