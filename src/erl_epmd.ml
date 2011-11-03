@@ -180,13 +180,14 @@ end
 
 module ErlEPMDServer = GenServer.Make(ErlEPMD)
 
-let start node =
+let start node cookie' =
   let idx = String.index node '@' in
   let nodename' = String.sub node 0 idx in
   let hostname' = String.sub node (idx + 1) (String.length node - idx - 1) in
     nodename := nodename';
     nodehost := hostname';
     full_nodename := node;
+    cookie := cookie';
     let (waiter, wakener) = Lwt.wait () in
       ignore (ErlEPMDServer.start wakener);
       waiter

@@ -74,6 +74,7 @@ let (exit_waiter, exit_wakener) = Lwt.wait ()
 let config_file_path = ref ""
 let pid_file_path = ref ""
 let name = ref "jamler@localhost"
+let cookie = ref ""
 
 let make_abs_path filename =
   match Filename.is_relative filename with
@@ -105,7 +106,7 @@ let process_pid_file () =
 
 let main () =
   lwt () = process_pid_file () in
-  lwt () = Erl_epmd.start !name in
+  lwt () = Erl_epmd.start !name !cookie in
   Jamler_cluster.start ();
   lwt () = Jamler_config.read_config !config_file_path in
   lwt () = Jamler_captcha.check_captcha_setup () in
@@ -119,7 +120,8 @@ let main () =
     exit_waiter
 
 let usage =
-  Printf.sprintf "Usage: %s -c file [-p file] [-name name]" Sys.argv.(0)
+  Printf.sprintf "Usage: %s -c file [-p file] [-name name] [-cookie cookie]"
+    Sys.argv.(0)
 
 let remove_pid_file () =
   try Sys.remove !pid_file_path
@@ -134,6 +136,8 @@ let () =
       "filename  Path to PID file");
      ("-name", Arg.Set_string name,
       "name  Name of the node in the form of node@domain");
+     ("-cookie", Arg.Set_string cookie,
+      "cookie  Erlang cookie");
     ]
   in
     Arg.parse speclist (fun _ -> ()) usage;
