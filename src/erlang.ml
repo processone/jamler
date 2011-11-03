@@ -18,6 +18,8 @@ type erl_term =
 
 let node_of_pid (node, _, _) = node
 
+let make_pid node id creation = (node, id, creation)
+
 let term_to_string term =
   let rec aux b term =
     match term with

@@ -13,6 +13,7 @@ type erl_term =
   | ErlBinary of string
 
 val node_of_pid : pid -> string
+val make_pid : string -> int -> int -> pid
 
 val term_to_string : erl_term -> string
 val term_to_buffer : Buffer.t -> erl_term -> unit

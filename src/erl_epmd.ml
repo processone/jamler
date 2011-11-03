@@ -618,8 +618,9 @@ struct
 	    Lwt.return (`Continue state)
     | `SendName (name, term), Connection_established ->
 	let open Erlang in
+	let pid = make_pid (node ()) 0 0 in
 	let control =
-	  ErlTuple [| ErlInt 6; ErlAtom ""; ErlAtom ""; ErlAtom name |]
+	  ErlTuple [| ErlInt 6; ErlPid pid; ErlAtom ""; ErlAtom name |]
 	in
 	let b = Buffer.create 10 in
 	  Buffer.add_char b 'p';
