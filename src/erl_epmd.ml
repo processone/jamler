@@ -96,6 +96,7 @@ struct
       add_int16_be b 5;
       add_int16_be b (String.length name);
       Buffer.add_string b name;
+      add_int16_be b 0;
       Buffer.contents b
 
   let handle_msg msg state =
