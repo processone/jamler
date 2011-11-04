@@ -5,13 +5,13 @@ let section = Jamler_log.new_section "erl_epmd"
 module Packet = Jamler_packet
 module GenServer = Gen_server
 
-let full_nodename = ref "jamler@localhost" (* TODO *)
-let nodename = ref "jamler"		(* TODO *)
-let nodehost = ref "localhost"		(* TODO *)
+let full_nodename = ref "jamler@localhost"
+let nodename = ref "jamler"
+let nodehost = ref "localhost"
 let node_creation = ref 0
 let node_port = ref 0
 let epmd_port = 4369
-let cookie = ref "YDZZQPNLWAMUSODVCMLA"	(* TODO *)
+let cookie = ref ""
 
 let node () = !full_nodename
 
@@ -552,7 +552,7 @@ struct
 	  ) else if data.[0] = 'p' then (
 	    let (control, pos) = Erlang.binary_to_term data 1 in
 	    lwt () =
-	      Lwt_log.notice_f ~section
+	      Lwt_log.debug_f ~section
 		"%a control message %s"
 		format_pid state.pid (Erlang.term_to_string control)
 	    in
@@ -561,14 +561,14 @@ struct
 		| ErlTuple [| ErlInt 2; _; _ |] ->
 		    let (message, pos) = Erlang.binary_to_term data pos in
 		    lwt () =
-		      Lwt_log.notice_f ~section
+		      Lwt_log.debug_f ~section
 			"message %s" (Erlang.term_to_string message)
 		    in
 		      Lwt.return (`Continue state)
 		| ErlTuple [| ErlInt 6; _; _; ErlAtom name |] ->
 		    let (message, pos) = Erlang.binary_to_term data pos in
 		    lwt () =
-		      Lwt_log.notice_f ~section
+		      Lwt_log.debug_f ~section
 			"message %s" (Erlang.term_to_string message)
 		    in
 		      (try
@@ -610,7 +610,7 @@ struct
 	  term_to_buffer b control;
 	  term_to_buffer b term;
 	  lwt () =
-	    Lwt_log.notice_f ~section
+	    Lwt_log.debug_f ~section
 	      "%a send %S"
 	      format_pid state.pid
 	      (Buffer.contents b)
@@ -628,7 +628,7 @@ struct
 	  term_to_buffer b control;
 	  term_to_buffer b term;
 	  lwt () =
-	    Lwt_log.notice_f ~section
+	    Lwt_log.debug_f ~section
 	      "%a send %S"
 	      format_pid state.pid
 	      (Buffer.contents b)
@@ -640,7 +640,7 @@ struct
     match msg with
       | `Tcp_data (socket, data) -> (
 	  lwt () =
-	    Lwt_log.notice_f ~section
+	    Lwt_log.debug_f ~section
 	      "%a tcp data %d %S"
 	      format_pid state.pid
 	      (String.length data) data
@@ -656,7 +656,7 @@ struct
       | #packet_msg as m ->
 	  lwt () =
 	    let `Packet data = m in
-	    Lwt_log.notice_f ~section
+	    Lwt_log.debug_f ~section
 	      "packet %S" data
 	  in
 	  handle_msg m state

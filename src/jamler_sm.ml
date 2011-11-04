@@ -383,7 +383,6 @@ let set_session sid user server resource priority info nodes =
     add sid {usr; priority; info};
     let (ts, owner) = sid in
       cluster_store nodes user server resource ts priority owner
-;dump_tables ()
 
 let check_existing_resources user server resource =
   (* A connection exist with the same resource. We replace it: *)
@@ -450,7 +449,6 @@ let do_close_session sid user server resource nodes =
   remove sid;
   let (ts, owner) = sid in
     cluster_remove nodes user server resource ts owner
-;dump_tables ()
 
 let close_session sid user server resource _info nodes =
   do_close_session sid user server resource nodes
