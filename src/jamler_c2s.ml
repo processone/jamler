@@ -26,14 +26,16 @@ sig
   include GenServer.Type with
     type msg =
         [ Socket.msg | XMLReceiver.msg | GenServer.msg
-        | SM.msg ]
-    and type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
+        | SM.msg | `Activate ]
+    and type init_data = (Lwt_unix.file_descr *
+			    bool Jamler_acl.access_rule *
+			    string Jamler_acl.access_rule)
     and type stop_reason = [ GenServer.reason | `Replaced ]
 end =
 struct
   type msg =
       [ Socket.msg | XMLReceiver.msg | GenServer.msg
-      | SM.msg ]
+      | SM.msg | `Activate ]
 
   type c2s_state =
     | Wait_for_stream
@@ -52,8 +54,8 @@ struct
        state : c2s_state;
        streamid : string;
        access : bool Jamler_acl.access_rule;
-       (*	(* TODO *)
-       shaper,*)
+       shaper_rule : string Jamler_acl.access_rule;
+       mutable shaper : Jamler_shaper.shaper;
        zlib : bool;
        tls : bool;
        tls_required : bool;
@@ -84,7 +86,10 @@ struct
        dht_nodes : string list;
       }
 
-  type init_data = Lwt_unix.file_descr * bool Jamler_acl.access_rule
+  type init_data =
+      Lwt_unix.file_descr *
+	bool Jamler_acl.access_rule *
+	string Jamler_acl.access_rule
 
   type stop_reason = [ GenServer.reason | `Replaced ]
 
@@ -110,15 +115,12 @@ struct
     in
       Lwt.return res
 
-  let init (socket, access) self =
+  let init (socket, access, shaper_rule) self =
     let socket = Socket.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
+    let shaper = Jamler_shaper.make "none" in
       (* TODO *)
       (*
-    Shaper = case lists:keysearch(shaper, 1, Opts) of
-		 {value, {_, S}} -> S;
-		 _ -> none
-	     end,
     Zlib = lists:member(zlib, Opts),
     StartTLS = lists:member(starttls, Opts),
     StartTLSRequired = lists:member(starttls_required, Opts),
@@ -153,6 +155,8 @@ struct
 		 tls_options;
 		 streamid = "";
 		 access;
+		 shaper_rule;
+		 shaper;
 		 authenticated = false;
 		 user = Jlib.nodeprep_exn "";
 		 server = Jlib.nameprep_exn "";
@@ -181,6 +185,13 @@ struct
   let invalid_from = Jlib.serr_invalid_from
   let policy_violation_err _lang _text = Jlib.serr_policy_violation (* TODO *)
 
+
+  let change_shaper state jid =
+    let shaper_name =
+      Jamler_acl.match_rule state.server state.shaper_rule jid "none"
+    in
+    let shaper = Jamler_shaper.make shaper_name in
+      state.shaper <- shaper
 
   let send_text state text =
     (*Printf.printf "Send XML on stream = %S\n" text; flush stdout;*)
@@ -803,7 +814,8 @@ struct
 				""
 			      )
 			  in
-			    (*change_shaper(StateData, jlib:make_jid("", Server, "")),*)
+			    change_shaper state
+			      (Jlib.make_jid_exn "" (server :> string) "");
 			    match Xml.get_attr_s "version" attrs with
 			      | "1.0" -> (
 				  send_header state (server :> string) "1.0" default_lang;
@@ -1054,7 +1066,7 @@ struct
                                       let res = Jlib.make_result_iq_reply el in
 					(*Res = setelement(4, Res1, []),*)
 					send_element state res;
-					(*change_shaper(StateData, JID),*)
+					change_shaper state jid;
 					lwt (fs, ts) =
 					  Hooks.run_fold
 					    Roster.roster_get_subscription_lists
@@ -1524,7 +1536,7 @@ struct
 		      in
 		      let res = Jlib.make_result_iq_reply el in
 			send_element state res;
-		    (*change_shaper(StateData, JID),*)
+			change_shaper state jid;
 			lwt (fs, ts) =
 			  Hooks.run_fold
 			    Roster.roster_get_subscription_lists
@@ -2030,7 +2042,15 @@ session_established(timeout, StateData) ->
 	      "tcp data %d %S" (String.length data) data
 	  in
             XMLReceiver.parse state.xml_receiver data;
-            let receiver = Socket.activate state.socket state.pid in
+	    let pause =
+	      Jamler_shaper.update state.shaper (String.length data)
+	    in
+            let receiver =
+	      if pause > 0.0 then (
+		send_after pause state.pid `Activate;
+		Lwt.return ()
+	      ) else Socket.activate state.socket state.pid
+	    in
               fsm_next_state {state with receiver}
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
@@ -2040,6 +2060,10 @@ session_established(timeout, StateData) ->
             Gc.print_stat stdout; flush stdout;*)
             Lwt.return (`Stop state)
       | `Tcp_close _socket -> assert false
+      | `Activate ->
+	  Lwt.cancel state.receiver;
+	  let receiver = Socket.activate state.socket state.pid in
+            fsm_next_state {state with receiver}
       | (#XMLReceiver.msg | `Timeout) as m ->
 	  handle_xml m state
       | #Router.msg as m ->
@@ -2161,7 +2185,22 @@ struct
 		   | Not_found ->
 		       Jamler_acl.all
 	       in
-		 (fun socket -> any_pid (C2SServer.start (socket, access)))
+	       let shaper =
+		 try
+		   match List.assoc "shaper" assoc with
+		     | `String access_name ->
+			 Jamler_acl.(get_rule access_name string)
+		     | json ->
+			 raise (Error
+				  (Printf.sprintf
+				     "shaper value must be a string, got %s"
+				     (JSON.to_string json)))
+		 with
+		   | Not_found ->
+		       Jamler_acl.none_string
+	       in
+		 (fun socket ->
+		    any_pid (C2SServer.start (socket, access, shaper)))
 	   | json ->
 	       raise (Error
 			(Printf.sprintf "expected JSON object value, got %s"

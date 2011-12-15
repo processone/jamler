@@ -151,3 +151,8 @@ let none =
    (fun _ -> [])
   )
 
+let none_string =
+  ((fun () -> [((fun () -> [fun _ _ -> true]), (fun _ -> []), "none")]),
+   (fun _ -> [])
+  )
+

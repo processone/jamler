@@ -7,4 +7,5 @@ val match_global_rule : 'a access_rule -> Jlib.jid -> 'a -> 'a
 val access : bool Jamler_config.p
 val all : bool access_rule
 val none : bool access_rule
+val none_string : string access_rule
 
