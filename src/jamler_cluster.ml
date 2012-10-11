@@ -211,7 +211,7 @@ struct
 	)
       | `Erl (ErlTuple
 		[| ErlAtom "store";
-		   ErlTuple [| ErlString u; ErlString s; ErlString r |];
+		   ErlTuple [| ErlBinary u; ErlBinary s; ErlBinary r |];
 		   ErlFloat ts;
 		   priority;
 		   (ErlPid _ | ErlTuple [| ErlAtom _; _ |] ) as owner
@@ -225,7 +225,7 @@ struct
 	)
       | `Erl (ErlTuple
 		[| ErlAtom "remove";
-		   ErlTuple [| ErlString u; ErlString s; ErlString r |];
+		   ErlTuple [| ErlBinary u; ErlBinary s; ErlBinary r |];
 		   ErlFloat ts;
 		   (ErlPid _ | ErlTuple [| ErlAtom _; _ |] ) as owner
 		|] as term) -> (

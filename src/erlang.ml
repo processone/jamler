@@ -426,6 +426,17 @@ let binary_to_term s pos =
 	(res, !pos)
     ) else invalid_arg "binary_to_term"
 
+let jid_to_term jid =
+  ErlTuple [| ErlAtom "jid";
+	      ErlBinary jid.Jlib.user;
+	      ErlBinary jid.Jlib.server;
+	      ErlBinary jid.Jlib.resource;
+	      ErlBinary (jid.Jlib.luser :> string);
+	      ErlBinary (jid.Jlib.lserver :> string);
+	      ErlBinary (jid.Jlib.lresource :> string);
+	   |]
+
+
 (* based on http://okmij.org/ftp/ML/first-class-modules/generics.ml *)
 module ErlType =
 struct
@@ -599,12 +610,12 @@ struct
 	      Buffer.contents b
 	| _ -> invalid_arg "from_term"
 
-    let attrs_type = list (string * string)
+    let attrs_type = list (binary * binary)
 
     let rec xml_cdata =
       function
-	| ErlTuple [| ErlAtom "xmlelement";
-		      ErlString name;
+	| ErlTuple [| ErlAtom "xmlel";
+		      ErlBinary name;
 		      attrs;
 		      els |] ->
 	    let attrs = attrs_type attrs in
@@ -617,8 +628,8 @@ struct
 
     let xml =
       function
-	| ErlTuple [| ErlAtom "xmlelement";
-		      ErlString name;
+	| ErlTuple [| ErlAtom "xmlel";
+		      ErlBinary name;
 		      attrs;
 		      subels |] ->
 	    let attrs = attrs_type attrs in
@@ -650,13 +661,13 @@ struct
       List.fold_right
 	(fun x t -> ErlCons (f x, t)) xs ErlNil
 
-    let attrs_type = list (string * string)
+    let attrs_type = list (binary * binary)
 
     let rec xml_cdata =
       function
 	| `XmlElement (name, attrs, els) ->
-	    ErlTuple [| ErlAtom "xmlelement";
-			ErlString name;
+	    ErlTuple [| ErlAtom "xmlel";
+			ErlBinary name;
 			attrs_type attrs;
 			list xml_cdata els |]
 	| `XmlCdata x ->
@@ -675,4 +686,27 @@ struct
 
 end
 
+
+let term_to_route =
+  function
+    | ErlTuple [| ErlAtom "route";
+		  ErlTuple [| ErlAtom "jid";
+			      from_user; from_server; from_resource;
+			      _; _; _ |];
+		  ErlTuple [| ErlAtom "jid";
+			      to_user; to_server; to_resource;
+			      _; _; _ |];
+		  msg |] -> (
+	let from_user = ErlType.(from_term binary from_user) in
+	let from_server = ErlType.(from_term binary from_server) in
+	let from_resource = ErlType.(from_term binary from_resource) in
+	let to_user = ErlType.(from_term binary to_user) in
+	let to_server = ErlType.(from_term binary to_server) in
+	let to_resource = ErlType.(from_term binary to_resource) in
+	let from = Jlib.make_jid_exn from_user from_server from_resource in
+	let to' = Jlib.make_jid_exn to_user to_server to_resource in
+	let msg = ErlType.(from_term xml msg) in
+	  `Route (from, to', msg)
+      )
+    | _ -> invalid_arg "route_from_term"
 

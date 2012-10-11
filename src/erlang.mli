@@ -20,6 +20,9 @@ val term_to_buffer : Buffer.t -> erl_term -> unit
 val term_to_binary : erl_term -> string
 val binary_to_term : string -> int -> erl_term * int
 
+val jid_to_term : Jlib.jid -> erl_term
+val term_to_route : erl_term -> [> `Route of Jlib.jid * Jlib.jid * Xml.element ]
+
 module ErlType :
 sig
   type 'a repr
