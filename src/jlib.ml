@@ -355,7 +355,7 @@ type iq_response =
     | `Error of Xml.element * Xml.element option ]
 type iq_query_response = [ iq_query | iq_response ]
 
-type 'a iq =
+type +'a iq =
     {iq_id : string;
      iq_type : [< iq_query_response ] as 'a;
      iq_xmlns : string;

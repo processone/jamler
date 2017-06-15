@@ -15,6 +15,7 @@ type msg =
     [ Router.msg | `Broadcast of broadcast | `Replaced
     | `Node_up of string
     | `Node_down of string ]
+type sm_msg = msg
 type info = [ `TODO ] list
 
 module Session :
@@ -255,17 +256,6 @@ struct
 end
 include Session
 
-
-let jid_to_term jid =
-  let open Erlang in
-    ErlTuple [| ErlAtom "jid";
-		ErlString jid.Jlib.user;
-		ErlString jid.Jlib.server;
-		ErlString jid.Jlib.resource;
-		ErlString (jid.Jlib.luser :> string);
-		ErlString (jid.Jlib.lserver :> string);
-		ErlString (jid.Jlib.lresource :> string);
-	     |]
 
 let send_owner owner msg =
   match owner with
@@ -883,34 +873,11 @@ struct
 
   open Erlang
 
-  let route_from_term =
-    function
-      | ErlTuple [| ErlAtom "route";
-		    ErlTuple [| ErlAtom "jid";
-				from_user; from_server; from_resource;
-				_; _; _ |];
-		    ErlTuple [| ErlAtom "jid";
-				to_user; to_server; to_resource;
-				_; _; _ |];
-		    msg |] -> (
-	  let from_user = ErlType.(from_term string from_user) in
-	  let from_server = ErlType.(from_term string from_server) in
-	  let from_resource = ErlType.(from_term string from_resource) in
-	  let to_user = ErlType.(from_term string to_user) in
-	  let to_server = ErlType.(from_term string to_server) in
-	  let to_resource = ErlType.(from_term string to_resource) in
-	  let from = Jlib.make_jid_exn from_user from_server from_resource in
-	  let to' = Jlib.make_jid_exn to_user to_server to_resource in
-	  let msg = ErlType.(from_term xml msg) in
-	    `Route (from, to', msg)
-	)
-      | _ -> invalid_arg "route_from_term"
-
   let handle (msg : msg) state =
     match msg with
       | `Erl (ErlTuple [| ErlAtom "route"; _; _; _ |] as term) -> (
 	  try
-	    let `Route (from, to', msg) = route_from_term term in
+	    let `Route (from, to', msg) = term_to_route term in
 	      route from to' msg;
 	      Lwt.return (`Continue state)
 	  with
@@ -945,7 +912,7 @@ struct
 		 | Some (_ts, Local pid) -> (
 		     match msg with
 		       | ErlTuple [| ErlAtom "route"; _; _; _ |] ->
-			   let route_msg = route_from_term msg in
+			   let route_msg = term_to_route msg in
 			     pid $! route_msg;
 		       | _ -> invalid_arg "unknown message"
 		   )

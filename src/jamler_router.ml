@@ -6,8 +6,15 @@ type t = Jlib.jid -> Jlib.jid -> Xml.element -> unit
 
 type msg = [ `Route of Jlib.jid * Jlib.jid * Xml.element ]
 
+type external_owner =
+  | ExternalPid of Erlang.pid
+  | ExternalNode of string * Erlang.erl_term
+type owner =
+  | Local of msg pid
+  | External of external_owner
+
 type route =
-    {pid : msg pid;
+    {owner : owner;
      local_hint : t option;
     }
 
@@ -16,7 +23,8 @@ let route_table = Hashtbl.create 10
 let register_route ?(local_hint = None) domain pid =
           (*case get_component_number(LDomain) of
       	undefined ->*)
-  Hashtbl.replace route_table domain {pid; local_hint}
+  let owner = Local pid in
+    Hashtbl.replace route_table domain {owner; local_hint}
       	(*N ->
       	    F = fun() ->
       			case mnesia:wread({route, LDomain}) of
@@ -103,27 +111,39 @@ let do_route orig_from orig_to orig_packet =
           let ldstdomain = to'.Jlib.lserver in
           let r =
             try
-      	Some (Hashtbl.find route_table ldstdomain)
+              Some (Hashtbl.find route_table ldstdomain)
             with
-      	| Not_found -> None
+              | Not_found -> None
           in
             match r with
-      	| None ->
-      	    !s2s_route from to' packet
-      	| Some r ->
-      	    let pid = r.pid in
-      	    (*if
-      		node(Pid) == node() ->*)
-      	      match r.local_hint with
-      		| Some f ->
-      			f from to' packet
-      		| None ->
-      		    pid $! `Route (from, to', packet)
-      		(*is_pid(Pid) ->
-      		    Pid ! {route, From, To, Packet};
-      		true ->
-      		    drop
-      	    end;*)
+              | None ->
+                  !s2s_route from to' packet
+              | Some r -> (
+		  match r.owner with
+		    | Local pid -> (
+			match r.local_hint with
+			  | Some f ->
+			      f from to' packet
+			  | None ->
+			      pid $! `Route (from, to', packet)
+		      )
+		    | External owner -> (
+			let open Erlang in
+			let msg =
+			  ErlTuple [| ErlAtom "route";
+				      jid_to_term from;
+				      jid_to_term to';
+				      ErlType.(to_term xml packet)
+				   |]
+			in
+			  match owner with
+			    | ExternalPid pid ->
+				pid $!!! msg
+			    | ExternalNode (node, opaque) ->
+				dist_send_by_name "ejabberd_router" node
+				  (ErlTuple [| ErlAtom "send"; opaque; msg |])
+		      )
+		)
       	(*Rs ->
       	    Value = case ejabberd_config:get_local_option(
       			   {domain_balancing, LDstDomain}) of
@@ -206,3 +226,106 @@ let dirty_get_all_routes () =
 	   | true -> acc
 	   | false -> route :: acc)
       route_table []
+
+module GenServer = Gen_server
+
+module JamlerRouter :
+sig
+  include GenServer.Type with
+    type msg = [ univ_msg | GenServer.msg ]
+    and type init_data = unit
+    and type stop_reason = GenServer.reason
+end =
+struct
+  type msg = [ univ_msg | GenServer.msg ]
+
+  type init_data = unit
+
+  type stop_reason = GenServer.reason
+
+  type state =
+      {pid : msg pid;
+      }
+
+  let init () self =
+    register (self :> univ_msg pid) "ejabberd_router";
+    Lwt.return (`Continue {pid = self})
+
+  open Erlang
+
+  let handle (msg : msg) state =
+    match msg with
+      | `Erl (ErlTuple [| ErlAtom "route"; _; _; _ |] as term) -> (
+	  try
+	    let `Route (from, to', msg) = term_to_route term in
+	      route from to' msg;
+	      Lwt.return (`Continue state)
+	  with
+	    | exn ->
+		lwt () =
+		  Lwt_log.error_f
+		    ~section
+		    ~exn:exn
+		    "exception on processing packet\npacket: %s\nexception"
+		    (Erlang.term_to_string term)
+		in
+		  Lwt.return (`Continue state)
+	)
+(*      | `Erl (ErlTuple
+		[| ErlAtom "send";
+		   ErlTuple [| ErlFloat ts;
+			       ErlBinary user;
+			       ErlBinary server;
+			       ErlBinary resource |];
+		   msg |] as term) -> (
+	  try
+	    let user = Jlib.nodeprep_exn user in
+	    let server = Jlib.nameprep_exn server in
+	    let resource = Jlib.resourceprep_exn resource in
+	      (match get_sid_by_usr user server resource with
+		 | None ->
+		     ()
+		 | Some (ts', owner) when ts' <> ts ->
+		     ()
+		 | Some (_ts, External _) ->
+		     ()
+		 | Some (_ts, Local pid) -> (
+		     match msg with
+		       | ErlTuple [| ErlAtom "route"; _; _; _ |] ->
+			   let route_msg = term_to_route msg in
+			     pid $! route_msg;
+		       | _ -> invalid_arg "unknown message"
+		   )
+	      );
+	      Lwt.return (`Continue state)
+	  with
+	    | exn ->
+		lwt () =
+		  Lwt_log.error_f
+		    ~section
+		    ~exn:exn
+		    "exception on processing packet\npacket: %s\nexception"
+		    (Erlang.term_to_string term)
+		in
+		  Lwt.return (`Continue state)
+	)
+*)
+      | `Erl term ->
+	  lwt () =
+	    Lwt_log.notice_f ~section
+	      "unexpected packet %s" (Erlang.term_to_string term)
+	  in
+	    Lwt.return (`Continue state)
+      | #GenServer.msg -> assert false
+
+  let terminate state _reason =
+    Lwt.return ()
+
+end
+
+module JamlerRouterServer = GenServer.Make(JamlerRouter)
+
+let _ =
+  JamlerRouterServer.start ();
+
+

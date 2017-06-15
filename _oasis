@@ -66,7 +66,7 @@ Executable jamler
   MainIs:     main.ml
   CompiledObject: native
 #  BuildDepends: jamler-lib, jamler-plugins
-  BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, lwt.ssl, threads, lwt.extra, lwt.syntax, lwt.syntax.log, cryptokit, pgocaml, yojson
+  BuildDepends: pa_jlib, pa_sql, lwt, lwt.unix, lwt_ssl, threads, lwt.syntax, lwt.syntax.log, cryptokit, pgocaml, yojson
   CSources: idnawrap.c, expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
   CCLib: -lexpat -lidn
   NativeOpt: -w A
@@ -80,7 +80,7 @@ Executable test
   CompiledObject: native
   Install: false
   Build$: flag(tests)
-  BuildDepends: oUnit (>= 1.1.0)
+  BuildDepends: oUnit (>= 1.1.0), cryptokit
   ByteOpt: -w A
   CSources: idnawrap.c, expatwrap.c, stringprepwrap.c, uni_data.h, uni_norm.h
   CCLib: -lexpat -lidn

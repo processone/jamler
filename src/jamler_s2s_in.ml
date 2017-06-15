@@ -274,20 +274,22 @@ struct
 	    lwt () = Lwt_log.debug_f ~section
 		       "verify key: to = %s, from = %s, id = %s, key =%s"
 		       to' from id key in
-	    let type' = match (Jlib.nameprep to', Jlib.nameprep from) with
-	      | Some lto, Some lfrom -> (
-		match Jamler_s2s_lib.has_key (lto, lfrom) key with
-		  | true -> "valid"
-		  | false -> "invalid")
-	      | _, _ ->
-		"invalid" in
-	    send_element state (`XmlElement ("db:verify",
-					     [("from", to');
-					      ("to", from);
-					      ("id", id);
-					      ("type", type')],
-					     []));
-	    Lwt.return (`Continue state) (* timer = Timer *)
+	    let type' =
+	      match (Jlib.nameprep to', Jlib.nameprep from) with
+		| Some lto, Some lfrom -> (
+		    match Jamler_s2s_lib.has_key (lto, lfrom) key with
+		      | true -> "valid"
+		      | false -> "invalid")
+		| _, _ ->
+		    "invalid"
+	    in
+	      send_element state (`XmlElement ("db:verify",
+					       [("from", to');
+						("to", from);
+						("id", id);
+						("type", type')],
+					       []));
+	      Lwt.return (`Continue state) (* timer = Timer *)
 	  | None ->
 	    let newel = Jlib.remove_attr "xmlns" el in
 	    let `XmlElement (name, attrs, _els) = newel in

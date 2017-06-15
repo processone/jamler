@@ -4,6 +4,7 @@ struct
   let return x = Lwt.return x
   let (>>=) = Lwt.bind
   let fail = Lwt.fail
+  let catch = Lwt.catch
  
   type in_channel = Lwt_io.input_channel
   type out_channel = Lwt_io.output_channel

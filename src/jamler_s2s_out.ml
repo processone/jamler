@@ -273,7 +273,7 @@ struct
 
   let get_addr_port ascii_addr =
     (* TODO: srv *)
-    lwt h = Lwt_lib.gethostbyname ascii_addr in
+    lwt h = Lwt_unix.gethostbyname ascii_addr in
     let res =
       List.map
 	(fun addr -> (addr, 5269))

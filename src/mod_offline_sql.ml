@@ -32,7 +32,7 @@ struct
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
       <:sql<
-	select @()d count(*) from spool
+	select @()d count( * ) from spool
 	where username=%(username)s
       >>
     in

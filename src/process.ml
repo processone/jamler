@@ -1,6 +1,6 @@
 let section = Jamler_log.new_section "process"
 
-type -'a pid
+type -'a pid = private int
 
 type 'a proc = {id : int;
 		queue : 'a Queue.t;
@@ -14,6 +14,7 @@ type 'a proc = {id : int;
 let max_processes = 65536
 
 let processes : 'a proc option array = Array.make max_processes None
+
 let free_pids = Array.init (max_processes + 1) (fun i -> i)
 let free_pid_start = ref 0
 let free_pid_end = ref max_processes
@@ -46,9 +47,9 @@ external pid_to_proc : 'a pid -> 'a proc = "%identity"
 external proc_to_pid : 'a proc -> 'a pid = "%identity"
 *)
 
-let pid_to_proc : 'a pid -> 'a proc =
+let pid_to_proc : type a. a pid -> a proc =
   fun pid ->
-    let pid = (Obj.magic pid : int) in
+    let pid = (pid : _ pid :> int) in
       match processes.(pid) with
 	| Some proc -> Obj.magic proc
 	| None -> raise Not_found
@@ -172,7 +173,7 @@ type monitor_nodes_msg =
 let monitor_nodes_pids : (monitor_nodes_msg pid, unit) Hashtbl.t =
   Hashtbl.create 10
 
-let monitor_nodes pid flag =
+let monitor_nodes (pid : monitor_nodes_msg pid) flag =
   let proc = pid_to_proc pid in
     if proc.monitor_nodes <> flag then (
       proc.monitor_nodes <- flag;

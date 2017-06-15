@@ -193,7 +193,7 @@ let start node cookie' =
       waiter
 
 let get_addr_exn ascii_addr =
-  lwt h = Lwt_lib.gethostbyname ascii_addr in
+  lwt h = Lwt_unix.gethostbyname ascii_addr in
     match Array.to_list h.Unix.h_addr_list with
       | [] -> raise Not_found
       | addr :: _ -> Lwt.return addr
