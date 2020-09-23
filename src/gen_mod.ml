@@ -22,7 +22,7 @@ let start_module host mod_name =
   try
     let m = Hashtbl.find mods mod_name in
     let module M = (val m : Module) in
-    lwt mod_info = M.start host in
+    let%lwt mod_info = M.start host in
       (* TODO: store mod_info *)
       List.iter (fun (f, _) -> f ()) mod_info;
       Lwt_log.notice_f ~section

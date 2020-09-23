@@ -33,21 +33,21 @@ struct
   let get_roster_query server username =
     let username = (username : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql:
 	select @(jid)s, @(nick)s, @(subscription)s, @(ask)s, @(askmessage)s
         from rosterusers
         where username=%(username)s
-      >>
+      ]
     in
       Sql.query server query
 
   let get_roster_jid_groups_query server username =
     let username = (username : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql:
 	select @(jid)s, @(grp)s from rostergroups
 	where username=%(username)s
-      >>
+      ]
     in
       Sql.query server query
 
@@ -55,17 +55,17 @@ struct
     let username = (username : Jlib.nodepreped :> string) in
     let sjid = Jlib.LJID.to_string ljid in
     let query =
-      <:sql<
+      [%sql:
 	select @(grp)s from rostergroups
 	where username=%(username)s and jid=%(sjid)s
-      >>
+      ]
     in
       Sql.query_t query
 
   let read_roster user server =
-    try_lwt
-      lwt items = get_roster_query server user in
-      lwt jid_groups = get_roster_jid_groups_query server user in
+    try%lwt
+      let%lwt items = get_roster_query server user in
+      let%lwt jid_groups = get_roster_jid_groups_query server user in
       let groups_ht = Hashtbl.create (List.length jid_groups) in
       let _ =
 	List.iter
@@ -99,12 +99,12 @@ struct
     let username = (username : Jlib.nodepreped :> string) in
     let sjid = Jlib.LJID.to_string ljid in
     let query =
-      <:sql<
+      [%sql:
 	select @(jid)s, @(nick)s, @(subscription)s, @(ask)s, @(askmessage)s
         from rosterusers
         where username=%(username)s and jid=%(sjid)s
         for update
-      >>
+      ]
     in
       Sql.query_t query
 
@@ -151,40 +151,40 @@ struct
     in
     let askmessage = item.askmessage in
     let insert_user =
-      <:sql<
+      [%sql:
 	insert into rosterusers(username, jid, nick, subscription, ask,
 				askmessage)
 	values (%(username)s, %(sjid)s, %(name)s, %(ssubscription)s, %(sask)s,
                 %(askmessage)s)
-      >>
+      ]
     in
     let update_user =
-      <:sql<
+      [%sql:
 	update rosterusers
 	set nick = %(name)s,
             subscription = %(ssubscription)s,
             ask = %(sask)s,
             askmessage = %(askmessage)s
 	where username = %(username)s and jid = %(sjid)s
-      >>
+      ]
     in
-    lwt () = Sql.update_t insert_user update_user in
+    let%lwt () = Sql.update_t insert_user update_user in
     let delete_groups =
-      <:sql<
+      [%sql:
 	delete from rostergroups
         where username=%(username)s and jid=%(sjid)s
-      >>
+      ]
     in
-    lwt _ = Sql.query_t delete_groups in
+    let%lwt _ = Sql.query_t delete_groups in
       Lwt_list.iter_s
 	(fun group ->
 	   let insert_group =
-	     <:sql<
+	     [%sql:
 	       insert into rostergroups(username, jid, grp)
 	       values (%(username)s, %(sjid)s, %(group)s)
-	     >>
+	     ]
 	   in
-	   lwt _ = Sql.query_t insert_group in
+	   let%lwt _ = Sql.query_t insert_group in
 	     Lwt.return ()
 	) item.groups
 
@@ -192,25 +192,25 @@ struct
     let username = (username : Jlib.nodepreped :> string) in
     let sjid = Jlib.LJID.to_string ljid in
     let query1 =
-      <:sql<
+      [%sql:
 	delete from rosterusers
         where username=%(username)s and jid=%(sjid)s
-      >>
+      ]
     in
     let query2 =
-      <:sql<
+      [%sql:
 	delete from rostergroups
         where username=%(username)s and jid=%(sjid)s
-      >>
+      ]
     in
-    lwt _ = Sql.query_t query1 in
-    lwt _ = Sql.query_t query2 in
+    let%lwt _ = Sql.query_t query1 in
+    let%lwt _ = Sql.query_t query2 in
       Lwt.return ()
 
   let item_set_transaction' luser _lserver jid1 attrs els =
     let jid = (jid1.Jlib.user, jid1.Jlib.server, jid1.Jlib.resource) in
     let ljid = Jlib.jid_tolower jid1 in
-    lwt res = read_roster_item_t luser ljid in
+    let%lwt res = read_roster_item_t luser ljid in
     let item' =
       match res with
 	| [] ->
@@ -233,7 +233,7 @@ struct
     in
     let item = process_item_attrs item attrs in
     let item = process_item_els item els in
-    lwt () =
+    let%lwt () =
       match item with
 	| {subscription = `Remove; _} ->
 	    delete_roster_item_t luser ljid
@@ -258,8 +258,8 @@ struct
 
   let subscription_transaction' direction luser _lserver jid1 type' reason =
     let ljid = Jlib.jid_tolower jid1 in
-    lwt item =
-      match_lwt read_roster_item_t luser ljid with
+    let%lwt item =
+      match%lwt read_roster_item_t luser ljid with
 	| [] ->
 	    let jid =
 	      (jid1.Jlib.user, jid1.Jlib.server, jid1.Jlib.resource)
@@ -273,7 +273,7 @@ struct
 		}
 	| [item] ->
 	    let r = raw_to_record item in
-	    lwt groups = get_roster_groups_query_t luser ljid in
+	    let%lwt groups = get_roster_groups_query_t luser ljid in
 	      Lwt.return {r with groups}
 	| _ -> assert false
     in
@@ -298,7 +298,7 @@ struct
 	| None ->
 	    Lwt.return (None, autoreply)
 	| Some (`None `None) when item.subscription = `None `In ->
-	    lwt () = delete_roster_item_t luser ljid in
+	    let%lwt () = delete_roster_item_t luser ljid in
 	      Lwt.return (None, autoreply)
 	| Some subscription ->
 	    let new_item =
@@ -306,7 +306,7 @@ struct
 		 subscription = subscription;
 		 askmessage = ask_message}
 	    in
-	    lwt () = write_roster_item_t luser ljid new_item in
+	    let%lwt () = write_roster_item_t luser ljid new_item in
 	      (*case roster_version_on_db(LServer) of
 		true -> mnesia:write(#roster_version{us = {LUser, LServer}, version = sha:sha(term_to_binary(now()))});
 		false -> ok

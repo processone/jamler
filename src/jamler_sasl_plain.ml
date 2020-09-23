@@ -49,7 +49,7 @@ struct
       | Some (authzid, user, password) -> (
 	  match Jlib.nodeprep user with
 	    | Some user' -> (
-		match_lwt check_password user' password with
+		match%lwt check_password user' password with
 		  | Some auth_module ->
 		      Lwt.return (
 			SASL.Done [(`Username, user);

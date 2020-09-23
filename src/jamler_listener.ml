@@ -93,10 +93,10 @@ let sockaddr_to_string addr =
     nameinfo.Unix.ni_hostname ^ ":" ^ nameinfo.Unix.ni_service
 
 let rec accept start listen_socket =
-  lwt (socket, _) = Lwt_unix.accept listen_socket in
+  let%lwt (socket, _) = Lwt_unix.accept listen_socket in
   let peername = Lwt_unix.getpeername socket in
   let sockname = Lwt_unix.getsockname socket in
-  lwt () =
+  let%lwt () =
     Lwt_log.notice_f
       ~section
       "accepted connection %s -> %s"
@@ -104,7 +104,7 @@ let rec accept start listen_socket =
       (sockaddr_to_string sockname)
   in
   let pid = start socket in
-  lwt () =
+  let%lwt () =
     Lwt_log.notice_f
       ~section
       "%a is handling connection %s -> %s"

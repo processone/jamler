@@ -244,7 +244,7 @@ struct
   (* Returns a list that may contain an xmlelement with the XEP-237 feature if it's enabled. *)
   let get_versioning_feature acc host =
     if roster_versioning_enabled host then (
-      let feature = `XmlElement ("ver", [("xmlns", <:ns<ROSTER_VER>>)], []) in
+      let feature = `XmlElement ("ver", [("xmlns", [%ns:ROSTER_VER])], []) in
 	feature :: acc
     ) else []
 
@@ -316,8 +316,8 @@ struct
     let luser = from.Jlib.luser in
     let lserver = from.Jlib.lserver in
     let us = (luser, lserver) in
-      try_lwt
-	lwt to_send =
+      try%lwt
+	let%lwt to_send =
 	  match Xml.get_tag_attr "ver" subel, 
 	    roster_versioning_enabled lserver,
 	    roster_version_on_db lserver with
@@ -340,7 +340,7 @@ struct
 		    Lwt.return (Some ([], Some roster_version))
 
 	      | Some requested_version, true, false ->
-		  lwt roster_items =
+		  let%lwt roster_items =
 		    Hooks.run_fold roster_get to'.Jlib.lserver [] us
 		  in
 		  let hash = roster_hash roster_items in
@@ -351,7 +351,7 @@ struct
 		    )
 
 	      | _ ->
-		  lwt roster_items =
+		  let%lwt roster_items =
 		    Hooks.run_fold roster_get to'.Jlib.lserver [] us
 		  in
 		    Lwt.return (Some (List.map item_to_xml' roster_items, None))
@@ -360,10 +360,10 @@ struct
 	  match to_send with
 	    | None -> None
 	    | Some (items, None) ->
-		Some (`XmlElement ("query", [("xmlns", <:ns<ROSTER>>)],
+		Some (`XmlElement ("query", [("xmlns", [%ns:ROSTER])],
 				   (items :> Xml.element_cdata list)))
 	    | Some (items, Some version) ->
-		Some (`XmlElement ("query", [("xmlns", <:ns<ROSTER>>);
+		Some (`XmlElement ("query", [("xmlns", [%ns:ROSTER]);
 					     ("ver", version)],
 				   (items :> Xml.element_cdata list)))
 	in
@@ -375,7 +375,7 @@ struct
 					      Some subel)}
 
   let get_user_roster acc (u, s) =
-    lwt items = RS.read_roster u s in
+    let%lwt items = RS.read_roster u s in
     let items =
       List.filter
 	(function
@@ -393,9 +393,9 @@ struct
     let resiq =
       {Jlib.iq_type =
 	  `Set (`XmlElement ("query",
-			     ("xmlns", <:ns<ROSTER>>) :: extra_attrs,
+			     ("xmlns", [%ns:ROSTER]) :: extra_attrs,
 			     [(item_to_xml item :> Xml.element_cdata)]));
-       Jlib.iq_xmlns = <:ns<ROSTER>>;
+       Jlib.iq_xmlns = [%ns:ROSTER];
        Jlib.iq_id = "push" ^ Jlib.get_random_string ();
        Jlib.iq_lang = "";
       }
@@ -482,7 +482,7 @@ push_item_version(Server, User, From, Item, RosterVersion)  ->
 	      | None ->
 		  Lwt.return ()
 	      | Some jid1 -> (
-		  match_lwt RS.item_set_transaction luser lserver jid1 attrs els with
+		  match%lwt RS.item_set_transaction luser lserver jid1 attrs els with
 		    | (old_item, item, ljid) -> (
 			push_item luser lserver to' item ljid;
 			(match item.subscription with
@@ -504,7 +504,7 @@ push_item_version(Server, User, From, Item, RosterVersion)  ->
   let process_iq_set from to' iq =
     let `Set subel = iq.Jlib.iq_type in
     let `XmlElement (_name, _attrs, els) = subel in
-    lwt () = Lwt_list.iter_s (fun el -> process_item_set from to' el) els in
+    let%lwt () = Lwt_list.iter_s (fun el -> process_item_set from to' el) els in
       Lwt.return {iq with Jlib.iq_type = `Result None}
 
 
@@ -518,7 +518,7 @@ push_item_version(Server, User, From, Item, RosterVersion)  ->
   let process_iq from to' iq =
     let (`Set sub_el | `Get sub_el) = iq.Jlib.iq_type in
     let lserver = from.Jlib.lserver in
-    lwt iq_res =
+    let%lwt iq_res =
       if List.mem lserver (Jamler_config.myhosts ())
       then
 	process_local_iq from to' iq
@@ -547,12 +547,12 @@ push_item_version(Server, User, From, Item, RosterVersion)  ->
 	  (f, t)
 
   let get_subscription_lists _ (user, server) =
-    lwt items = RS.read_roster user server in
+    let%lwt items = RS.read_roster user server in
       Lwt.return (Hooks.OK, fill_subscription_lists items [] [])
 
 
   let process_subscription direction luser lserver jid1 type' reason =
-    match_lwt (RS.subscription_transaction
+    match%lwt (RS.subscription_transaction
 		 direction luser lserver jid1 type' reason) with
       | (push, auto_reply) -> (
 	  (match auto_reply with
@@ -584,11 +584,11 @@ push_item_version(Server, User, From, Item, RosterVersion)  ->
 	)
 
   let in_subscription _ (user, server, jid, type', reason) =
-    lwt res = process_subscription `In user server jid type' reason in
+    let%lwt res = process_subscription `In user server jid type' reason in
       Lwt.return (Hooks.OK, res)
 
   let out_subscription (user, server, jid, type') =
-    lwt _ = process_subscription `Out user server jid type' "" in
+    let%lwt _ = process_subscription `Out user server jid type' "" in
       Lwt.return Hooks.OK
 
 
@@ -956,7 +956,7 @@ webadmin_user(Acc, _User, _Server, Lang) ->
 		       ?MODULE, webadmin_page, 50),
     ejabberd_hooks:add(webadmin_user, Host,
 		       ?MODULE, webadmin_user, 50),*)
-       Gen_mod.iq_handler `SM host <:ns<ROSTER>> process_iq ();
+       Gen_mod.iq_handler `SM host [%ns:ROSTER] process_iq ();
       ]
     )
 

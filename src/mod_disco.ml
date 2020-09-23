@@ -252,8 +252,8 @@ struct
 	    | Items its -> its
 	    | IEmpty -> []
 	  in
-	  lwt items1 =
-	    match_lwt is_presence_subscribed from to' with
+	  let%lwt items1 =
+	    match%lwt is_presence_subscribed from to' with
 	      | true ->
 		  Lwt.return (get_user_resources to')
 	      | false ->
@@ -285,7 +285,7 @@ struct
   let get_sm_identity acc (_from,
 			   {Jlib.luser = luser; Jlib.lserver = lserver; _},
 			   _node, _lang) =
-    match_lwt Auth.does_user_exist luser lserver with
+    match%lwt Auth.does_user_exist luser lserver with
       | true ->
 	  Lwt.return
 	    (Hooks.OK, acc @
@@ -359,7 +359,7 @@ struct
 	  let node = Xml.get_tag_attr_s "node" subel in
 	  let host = to'.Jlib.lserver in
 	  let lang = iq.Jlib.iq_lang in
-	    match_lwt Hooks.run_fold disco_local_items
+	    match%lwt Hooks.run_fold disco_local_items
 	      host IEmpty (from, to', node, lang) with
 		| Items items ->
 		    let anode = match node with
@@ -372,7 +372,7 @@ struct
 			     `Result
 			       (Some (`XmlElement
 					("query",
-					 ("xmlns", <:ns<DISCO_ITEMS>>) :: anode,
+					 ("xmlns", [%ns:DISCO_ITEMS]) :: anode,
 					 (items :> Xml.element_cdata list))))})
 		| IError error ->
 		    Lwt.return (`IQ {iq with
@@ -389,11 +389,11 @@ struct
 	  let host = to'.Jlib.lserver in
 	  let node = Xml.get_tag_attr_s "node" subel in
 	  let lang = iq.Jlib.iq_lang in
-	  lwt identity = Hooks.run_fold disco_local_identity
+	  let%lwt identity = Hooks.run_fold disco_local_identity
 	    host [] (from, to', node, lang) in
-	  lwt info = Hooks.run_fold disco_info
+	  let%lwt info = Hooks.run_fold disco_info
 	    host [] (host, Some name, node, lang) in
-	    match_lwt Hooks.run_fold disco_local_features
+	    match%lwt Hooks.run_fold disco_local_features
 	      host FEmpty (from, to', node, lang) with
 		| Features features ->
 		    let anode = match node with
@@ -407,7 +407,7 @@ struct
 			     `Result
 			       (Some (`XmlElement
 					("query",
-					 ("xmlns", <:ns<DISCO_INFO>>) :: anode,
+					 ("xmlns", [%ns:DISCO_INFO]) :: anode,
 					 (res_els :> Xml.element_cdata list))))})
 		| FError error ->
 		    Lwt.return (`IQ {iq with
@@ -421,12 +421,12 @@ struct
                              Jlib.iq_type =
                           `Error (Jlib.err_not_allowed, Some subel)})
       | `Get subel ->
-	  match_lwt is_presence_subscribed from to' with
+	  match%lwt is_presence_subscribed from to' with
 	    | true -> (
 		let host = to'.Jlib.lserver in
 		let node = Xml.get_tag_attr_s "node" subel in
 		let lang = iq.Jlib.iq_lang in
-		  match_lwt Hooks.run_fold disco_sm_items
+		  match%lwt Hooks.run_fold disco_sm_items
 		    host IEmpty (from, to', node, lang) with
 		      | Items items ->
 			  let anode = match node with
@@ -439,7 +439,7 @@ struct
 				   `Result
 				     (Some (`XmlElement
 					      ("query",
-					       ("xmlns", <:ns<DISCO_ITEMS>>)
+					       ("xmlns", [%ns:DISCO_ITEMS])
 					       :: anode,
 					       (items :> Xml.element_cdata list)
 					      )))})
@@ -460,14 +460,14 @@ struct
                              Jlib.iq_type =
                           `Error (Jlib.err_not_allowed, Some subel)})
       | `Get subel ->
-	  match_lwt is_presence_subscribed from to' with
+	  match%lwt is_presence_subscribed from to' with
 	    | true -> (
 		let host = to'.Jlib.lserver in
 		let node = Xml.get_tag_attr_s "node" subel in
 		let lang = iq.Jlib.iq_lang in
-		lwt identity = Hooks.run_fold disco_sm_identity
+		let%lwt identity = Hooks.run_fold disco_sm_identity
 		  host [] (from, to', node, lang) in
-		  match_lwt Hooks.run_fold disco_sm_features
+		  match%lwt Hooks.run_fold disco_sm_features
 		    host FEmpty (from, to', node, lang) with
 		      | Features features ->
 			  let anode = match node with
@@ -481,7 +481,7 @@ struct
 				   `Result
 				     (Some (`XmlElement
 					      ("query",
-					       ("xmlns", <:ns<DISCO_INFO>>)
+					       ("xmlns", [%ns:DISCO_INFO])
 					       :: anode,
 					       (res_els :> Xml.element_cdata list))))})
 		      | FError error ->
@@ -499,14 +499,14 @@ struct
     register_feature host "iq";
     register_feature host "presence";
     register_feature host "presence-invisible";
-    register_feature host <:ns<DISCO_ITEMS>>;
-    register_feature host <:ns<DISCO_INFO>>;
+    register_feature host [%ns:DISCO_ITEMS];
+    register_feature host [%ns:DISCO_INFO];
     List.iter (fun domain -> register_extra_domain host domain) (extra_domains host);
     Lwt.return (
-      [Gen_mod.iq_handler `Local host <:ns<DISCO_ITEMS>> process_local_iq_items ();
-       Gen_mod.iq_handler `Local host <:ns<DISCO_INFO>> process_local_iq_info ();
-       Gen_mod.iq_handler `SM host <:ns<DISCO_ITEMS>> process_sm_iq_items ();
-       Gen_mod.iq_handler `SM host <:ns<DISCO_INFO>> process_sm_iq_info ();
+      [Gen_mod.iq_handler `Local host [%ns:DISCO_ITEMS] process_local_iq_items ();
+       Gen_mod.iq_handler `Local host [%ns:DISCO_INFO] process_local_iq_info ();
+       Gen_mod.iq_handler `SM host [%ns:DISCO_ITEMS] process_sm_iq_items ();
+       Gen_mod.iq_handler `SM host [%ns:DISCO_INFO] process_sm_iq_info ();
        Gen_mod.fold_hook disco_local_items host get_local_services 100;
        Gen_mod.fold_hook disco_local_features host get_local_features 100;
        Gen_mod.fold_hook disco_local_identity host get_local_identity 100;

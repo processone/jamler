@@ -63,7 +63,7 @@ let check_password_with_authmodule user server password =
       | [] -> Lwt.return None
       | m :: mods -> (
 	  let module A = (val m : Auth) in
-	    match_lwt A.check_password user server password with
+	    match%lwt A.check_password user server password with
 	      | true ->
 		  Lwt.return (Some A.name)
 	      | false ->
@@ -79,7 +79,7 @@ let check_password_digest_with_authmodule user server password
       | [] -> Lwt.return None
       | m :: mods -> (
 	  let module A = (val m : Auth) in
-	    match_lwt (A.check_password_digest user server password
+	    match%lwt (A.check_password_digest user server password
 			 digest digest_gen) with
 	      | true ->
 		  Lwt.return (Some A.name)
@@ -96,7 +96,7 @@ let get_password_with_authmodule user server =
       | [] -> Lwt.return None
       | m :: mods -> (
 	  let module A = (val m : Auth) in
-	    match_lwt A.get_password user server with
+	    match%lwt A.get_password user server with
 	      | Some password ->
 		  Lwt.return (Some (password, A.name))
 	      | None ->
@@ -119,7 +119,7 @@ let does_user_exist user server =
       | [] -> Lwt.return false
       | m :: mods -> (
 	  let module A = (val m : Auth) in
-	    match_lwt A.does_user_exist user server with
+	    match%lwt A.does_user_exist user server with
 	      | true ->
 		  Lwt.return true
 	      | false ->
@@ -135,7 +135,7 @@ let set_password user server password =
       | [] -> Lwt.return Not_allowed
       | m :: mods -> (
 	  let module A = (val m : Auth) in
-	    match_lwt A.set_password user server password with
+	    match%lwt A.set_password user server password with
 	      | OK ->
 		  Lwt.return OK
 	      | _ ->
@@ -147,7 +147,7 @@ let set_password user server password =
 let try_register user server password =
   if password = "" then Lwt.return Empty_password
   else
-    match_lwt does_user_exist user server with
+    match%lwt does_user_exist user server with
       | true ->
 	  Lwt.return Exists
       | false ->
@@ -156,16 +156,16 @@ let try_register user server password =
 	      | [] -> Lwt.return Not_allowed
 	      | m :: mods -> (
 		  let module A = (val m : Auth) in
-		    match_lwt A.try_register user server password with
+		    match%lwt A.try_register user server password with
 		      | OK ->
 			  Lwt.return OK
 		      | _ ->
 			  aux user server password mods
 		)
 	    in
-	      match_lwt aux user server password (auth_modules server) with
+	      match%lwt aux user server password (auth_modules server) with
 		| OK ->
-		    lwt _ = Hooks.run register_user server (user, server) in
+		    let%lwt _ = Hooks.run register_user server (user, server) in
 		      Lwt.return OK
 		| res ->
 		    Lwt.return res
@@ -173,21 +173,21 @@ let try_register user server password =
 	    Lwt.return Not_allowed
 
 let remove user server =
-  lwt _ = Lwt_list.iter_s
+  let%lwt _ = Lwt_list.iter_s
     (fun m ->
        let module A = (val m : Auth) in
 	 A.remove user server)
     (auth_modules server) in
-  lwt _ = Hooks.run remove_user server (user, server) in
+  let%lwt _ = Hooks.run remove_user server (user, server) in
     Lwt.return ()
 
 let remove' user server password =
-  lwt _ = Lwt_list.iter_s
+  let%lwt _ = Lwt_list.iter_s
     (fun m ->
        let module A = (val m : Auth) in
 	 A.remove' user server password)
     (auth_modules server) in
-  lwt _ = Hooks.run remove_user server (user, server) in
+  let%lwt _ = Hooks.run remove_user server (user, server) in
     Lwt.return ()
 
 let entropy s =

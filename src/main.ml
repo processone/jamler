@@ -90,14 +90,14 @@ let process_pid_file () =
 	Lwt.return ()
     | _ ->
 	pid_file_path := make_abs_path !pid_file_path;
-	try_lwt
-	  lwt () = Lwt_log.notice_f ~section
+	try%lwt
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "using pid file \"%s\"" !pid_file_path in
-	  lwt fd = Lwt_unix.openfile !pid_file_path
+	  let%lwt fd = Lwt_unix.openfile !pid_file_path
 	    [Unix.O_WRONLY; Unix.O_TRUNC; Unix.O_CREAT] 0o640 in
 	  let ch = Lwt_io.of_fd ~mode:Lwt_io.output fd in
-	  lwt () = Lwt_io.write_line ch (string_of_int (Unix.getpid ())) in
-	  lwt () = Lwt_io.close ch in
+	  let%lwt () = Lwt_io.write_line ch (string_of_int (Unix.getpid ())) in
+	  let%lwt () = Lwt_io.close ch in
 	    Lwt.return ()
 	with
 	  | Unix.Unix_error (err, _,  _) ->
@@ -105,16 +105,16 @@ let process_pid_file () =
 		"\"%s\": %s" !pid_file_path (Unix.error_message err)
 
 let main () =
-  lwt () = process_pid_file () in
-  lwt () = Erl_epmd.start !name !cookie in
+  let%lwt () = process_pid_file () in
+  let%lwt () = Erl_epmd.start !name !cookie in
   Jamler_cluster.start ();
-  lwt () = Jamler_config.read_config !config_file_path in
-  lwt () = Jamler_captcha.check_captcha_setup () in
+  let%lwt () = Jamler_config.read_config !config_file_path in
+  let%lwt () = Jamler_captcha.check_captcha_setup () in
   Jamler_local.start ();
   List.iter Sql.add_pool (Jamler_config.myhosts ());
-  lwt () = start_modules () in
+  let%lwt () = start_modules () in
   let _ = Listener.start_listeners () in
-  lwt () = Lwt_log.notice_f ~section
+  let%lwt () = Lwt_log.notice_f ~section
     "jamler %s started using ocaml-%s @ %s/%s/%s"
     Cfg.version Cfg.ocaml Cfg.arch Cfg.system Cfg.os in
     exit_waiter

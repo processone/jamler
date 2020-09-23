@@ -165,12 +165,12 @@ struct
 		  with
 		    | true, Some lusername -> (
 			let authzid = get_assoc_s "authzid" key_vals in
-			  match_lwt state.get_password lusername with
+			  match%lwt state.get_password lusername with
 			    | None ->
 				Lwt.return (
 				  SASL.ErrorUser ("not-authorized", username))
 			    | Some (passwd, auth_module) -> (
-				match_lwt (state.check_password_digest
+				match%lwt (state.check_password_digest
 					     lusername ""
 					     (get_assoc_s "response" key_vals)
 					     (fun pw ->

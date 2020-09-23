@@ -97,7 +97,7 @@ struct
     send_text state stream_trailer
 
   let init socket self =
-    lwt () = Lwt_log.debug ~secion "started" in
+    let%lwt () = Lwt_log.debug ~secion "started" in
     let socket = Socket.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
     let state = {pid = self;
@@ -180,9 +180,9 @@ struct
 	      if state.tls_enabled then
 		[]
 	      else if (not state.tls_enabled && not state.tls_required) then
-		[`XmlElement ("starttls", [("xmlns", <:ns<TLS>>)], [])]
+		[`XmlElement ("starttls", [("xmlns", [%ns:TLS])], [])]
 	      else if (not state.tls_enabled && state.tls_required) then
-		[`XmlElement ("starttls", [("xmlns", <:ns<TLS>>)],
+		[`XmlElement ("starttls", [("xmlns", [%ns:TLS])],
 			      [`XmlElement ("required", [], [])])]
 	      else
 		assert false in
@@ -197,7 +197,7 @@ struct
 
 		    {stop, normal, StateData};
 		*)
-	    lwt feats = Hooks.run_fold s2s_stream_features lserver [] lserver in
+	    let%lwt feats = Hooks.run_fold s2s_stream_features lserver [] lserver in
 	    send_element state (`XmlElement ("stream:features", [],
 					     sasl @ starttls @ feats));
 	    Lwt.return (`Continue {state
@@ -205,7 +205,7 @@ struct
 				     server = lserver})
 	  | "jabber:server", _, (Some lserver), true when state.authenticated ->
 	    send_text state (stream_header state.streamid " version='1.0'");
-	    lwt feats = Hooks.run_fold s2s_stream_features lserver [] lserver in
+	    let%lwt feats = Hooks.run_fold s2s_stream_features lserver [] lserver in
 	    send_element state (`XmlElement ("stream:features", [], feats));
 	    Lwt.return (`Continue {state
 				   with state = Stream_established;
@@ -239,7 +239,7 @@ struct
 	   Timer = erlang:start_timer(?S2STIMEOUT, self(), []), *)
 	(match is_key_packet el with
 	  | Key (to', from, id, key) ->
-	    lwt () = Lwt_log.debug_f ~section
+	    let%lwt () = Lwt_log.debug_f ~section
 		       "get key: to = %s, from = %s, id = %s, key = %s"
 		       to' from id key
 	    in
@@ -271,7 +271,7 @@ struct
 		send_element state Jlib.serr_host_unknown;
 		Lwt.return (`Stop state))
 	  | Verify (to', from, id, key) ->
-	    lwt () = Lwt_log.debug_f ~section
+	    let%lwt () = Lwt_log.debug_f ~section
 		       "verify key: to = %s, from = %s, id = %s, key =%s"
 		       to' from id key in
 	    let type' =
@@ -295,7 +295,7 @@ struct
 	    let `XmlElement (name, attrs, _els) = newel in
 	    let from_s = Xml.get_attr_s "from" attrs in
 	    let to_s = Xml.get_attr_s "to" attrs in
-	    lwt () =
+	    let%lwt () =
 	      (match (Jlib.string_to_jid from_s, Jlib.string_to_jid to_s) with
 		 | Some from, Some to' ->
 		     let lfrom = from.Jlib.lserver in
@@ -305,7 +305,7 @@ struct
 			     List.mem lto (Router.dirty_get_all_domains ())) then (
 			   if (name = "iq" || name = "message" || name = "presence")
 			   then (
-			     lwt () =
+			     let%lwt () =
 			       Hooks.run s2s_receive_packet lto (from, to', newel)
 			     in
 			       Router.route from to' newel;
@@ -317,7 +317,7 @@ struct
 			   if (Hashtbl.find state.connections (lfrom, lto) = Established
 			       && (name = "iq" || name = "message" || name = "presence"))
 			   then (
-			     lwt () =
+			     let%lwt () =
 			       Hooks.run s2s_receive_packet lto (from, to', newel)
 			     in
         		       Router.route from to' newel;
@@ -329,7 +329,7 @@ struct
 		 | _, _ ->
 		     Lwt.return ())
 	    in
-	    lwt () =
+	    let%lwt () =
 	      Hooks.run s2s_loop_debug state.server (`XmlStreamElement el)
 	    in
 	      Lwt.return (`Continue state)))
@@ -490,7 +490,7 @@ stream_established(closed, StateData) ->
   let handle (msg : msg) state =
     match msg with
       | `Tcp_data (socket, data) when socket == state.socket ->
-	lwt () =
+	let%lwt () =
             Lwt_log.debug_f ~section
               "tcp data %d %S" (String.length data) data
           in
@@ -499,7 +499,7 @@ stream_established(closed, StateData) ->
             Lwt.return (`Continue state)
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
-	lwt () = Lwt_log.debug ~section "tcp close" in
+	let%lwt () = Lwt_log.debug ~section "tcp close" in
         Lwt.return (`Stop state)
       | `Tcp_close _socket -> assert false
       | #XMLReceiver.msg
@@ -508,9 +508,9 @@ stream_established(closed, StateData) ->
       | #GenServer.msg -> assert false
 
   let terminate state _reason =
-    lwt () = Lwt_log.debug ~section "terminated" in
+    let%lwt () = Lwt_log.debug ~section "terminated" in
     XMLReceiver.free state.xml_receiver;
-    lwt () = Socket.close state.socket in
+    let%lwt () = Socket.close state.socket in
       Lwt.return()
 
 end

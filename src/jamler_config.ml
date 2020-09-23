@@ -383,16 +383,16 @@ let process_config cfg =
     Lwt.return ()
 
 let read_config filename =
-  lwt () = Lwt_log.notice_f ~section
+  let%lwt () = Lwt_log.notice_f ~section
     "using config file \"%s\"" filename
   in
-    try_lwt
-      lwt fd = Lwt_unix.openfile filename [Unix.O_RDONLY] 0o640 in
+    try%lwt
+      let%lwt fd = Lwt_unix.openfile filename [Unix.O_RDONLY] 0o640 in
       let ch = Lwt_io.of_fd ~mode:Lwt_io.input fd in
-      lwt content = Lwt_io.read ch in
-      lwt () = Lwt_io.close ch in
+      let%lwt content = Lwt_io.read ch in
+      let%lwt () = Lwt_io.close ch in
       let config = Yojson.Safe.from_string content in
-      lwt () = process_config config in
+      let%lwt () = process_config config in
 	Lwt.return ()
     with
       | exn ->

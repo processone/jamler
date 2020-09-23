@@ -186,7 +186,7 @@ struct
 	  handle_call request from state*)
       | `Erl (ErlTuple [| ErlAtom "node_up"; ErlAtom node;
 			  nodes |] as term) -> (
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "node_up from %s" node
 	  in
@@ -201,7 +201,7 @@ struct
 		Lwt.return (`Continue state)
 	    with
 	      | Invalid_argument "from_term" ->
-		  lwt () =
+		  let%lwt () =
 		    Lwt_log.notice_f ~section
 		      "invalid node_up packet from %s %s"
 		      node
@@ -216,7 +216,7 @@ struct
 		   priority;
 		   (ErlPid _ | ErlTuple [| ErlAtom _; _ |] ) as owner
 		|] as term) -> (
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "store %s" (Erlang.term_to_string term)
 	  in
@@ -229,7 +229,7 @@ struct
 		   ErlFloat ts;
 		   (ErlPid _ | ErlTuple [| ErlAtom _; _ |] ) as owner
 		|] as term) -> (
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "remove %s" (Erlang.term_to_string term)
 	  in
@@ -237,7 +237,7 @@ struct
 	    Lwt.return (`Continue state)
 	)
       | `Node_up node ->
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "node %s goes up" node
 	  in
@@ -251,7 +251,7 @@ struct
 			   ErlType.(to_term (list atom) nodes) |]);
 	    Lwt.return (`Continue state)
       | `Erl (ErlTuple [| ErlAtom "ready"; ErlAtom node |]) ->
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "node %s is ready" node
 	  in
@@ -262,14 +262,14 @@ struct
 			   ErlType.(to_term (list atom) nodes) |]);
 	    Lwt.return (`Continue state)
       | `Node_down node ->
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "node %s goes down" node
 	  in
 	    delete_node node;
 	    Lwt.return (`Continue state)
       | `Erl term ->
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "unexpected packet %s" (Erlang.term_to_string term)
 	  in

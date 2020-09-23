@@ -45,13 +45,13 @@ struct
   let start init_data =
     let rec loop self state timeout =
       if is_overloaded self then (
-	lwt () =
+	let%lwt () =
           Lwt_log.error ~section
 	    "gen_server overloaded"
 	in
           T.terminate state `Normal
       ) else (
-	lwt msg =
+	let%lwt msg =
 	  match timeout with
 	    | None -> receive self
 	    | Some timeout ->
@@ -62,12 +62,12 @@ struct
 	    | #system_msg ->
 		loop self state timeout
 	    | m ->
-		lwt result =
-	          try_lwt
+		let%lwt result =
+	          try%lwt
 		    T.handle m state
 		  with
 		    | exn ->
-			lwt () =
+			let%lwt () =
                           Lwt_log.error ~exn ~section
 			    "gen_server raised an exception"
 			in
@@ -87,7 +87,7 @@ struct
 	    T.terminate state reason
     in
       spawn (fun self ->
-	       lwt result = T.init init_data self in
+	       let%lwt result = T.init init_data self in
 		 match result with
 		   | `Init_failed -> Lwt.return ()
 		   | #plain_result as result -> process_result self result)

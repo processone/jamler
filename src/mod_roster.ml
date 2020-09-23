@@ -181,12 +181,12 @@ struct
 	      askmessage = "";
 	     }
     in
-    lwt () =
+    let%lwt () =
       write_roster_item test.Jlib.luser test.Jlib.lserver
 	(test10.Jlib.luser, test10.Jlib.lserver, test10.Jlib.lresource)
 	i1
     in
-    lwt () =
+    let%lwt () =
       write_roster_item test10.Jlib.luser test10.Jlib.lserver
 	(test.Jlib.luser, test.Jlib.lserver, test.Jlib.lresource)
 	i2

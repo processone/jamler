@@ -7,16 +7,16 @@ struct
   let get_password user server =
     let suser = (user : Jlib.nodepreped :> string) in
     let query =
-      <:sql< SELECT @(password)s from users where username = %(suser)s >>
+      [%sql: SELECT @(password)s from users where username = %(suser)s ]
     in
-      try_lwt
-	lwt res = Sql.query server query in
+      try%lwt
+	let%lwt res = Sql.query server query in
 	  match res with
 	    | [password] -> Lwt.return (Some password)
 	    | _ -> Lwt.return None
       with
 	| exn ->
-	    lwt () =
+	    let%lwt () =
 	      Lwt_log.error
 		~section
 		~exn:exn
@@ -26,13 +26,13 @@ struct
 
   let check_password user server password =
     if password <> "" then (
-      match_lwt get_password user server with
+      match%lwt get_password user server with
 	| Some passwd -> Lwt.return (password = passwd)
 	| None -> Lwt.return false
     ) else Lwt.return false
 
   let check_password_digest user server password digest digest_gen =
-    match_lwt get_password user server with
+    match%lwt get_password user server with
       | Some passwd ->
 	  let dig_res = digest <> "" && digest = digest_gen passwd in
 	    if dig_res
@@ -43,17 +43,17 @@ struct
   let plain_password_required = false
 
   let does_user_exist user server =
-    match_lwt get_password user server with
+    match%lwt get_password user server with
       | Some passwd -> Lwt.return true
       | None -> Lwt.return false
 
   let remove user server =
     let username = (user : Jlib.nodepreped :> string) in
     let query =
-      <:sql<delete from users where username = %(username)s>>
+      [%sql:delete from users where username = %(username)s]
     in
-      try_lwt
-	lwt _ = Sql.query server query in
+      try%lwt
+	let%lwt _ = Sql.query server query in
 	  Lwt.return ()
       with
 	| _ ->
@@ -62,12 +62,12 @@ struct
   let remove' user server password =
     let username = (user : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql:
 	delete from users
 	where username = %(username)s and password = %(password)s
-      >> in
-      try_lwt
-	lwt _ = Sql.query server query in
+      ] in
+      try%lwt
+	let%lwt _ = Sql.query server query in
 	  Lwt.return ()
       with
 	| _ ->
@@ -76,13 +76,13 @@ struct
   let try_register user server password =
     let username = (user : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql:
 	insert into users(username, password)
 	values (%(username)s, %(password)s)
-      >> in
-      try_lwt
+      ] in
+      try%lwt
 	(* TODO: process insert failures *)
-	lwt _ = Sql.query server query in
+	let%lwt _ = Sql.query server query in
 	  Lwt.return Jamler_auth.OK
       with
 	| _ ->
@@ -91,18 +91,18 @@ struct
   let set_password user server password =
     let username = (user : Jlib.nodepreped :> string) in
     let insert_query =
-      <:sql<
+      [%sql:
 	insert into users(username, password)
 	values (%(username)s, %(password)s)
-      >> in
+      ] in
     let update_query =
-      <:sql<
+      [%sql:
 	update users set
 	  password = %(password)s
         where username = %(username)s
-      >> in
-      try_lwt
-	lwt _ = Sql.transaction server
+      ] in
+      try%lwt
+	let%lwt _ = Sql.transaction server
 	  (fun () -> Sql.update_t insert_query update_query) in
 	  Lwt.return Jamler_auth.OK
       with

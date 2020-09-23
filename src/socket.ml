@@ -3,7 +3,7 @@ open Process
 let section = Jamler_log.new_section "socket"
 
 let rec really_write write socket str pos len =
-  lwt n = write socket str pos len in
+  let%lwt n = write socket str pos len in
     if len = n
     then Lwt.return ()
     else really_write write socket str (pos + n) (len - n)
@@ -46,13 +46,13 @@ module SSLSocketMod : SocketMod with type t = Lwt_ssl.socket Lwt.t =
 struct
   type t = Lwt_ssl.socket Lwt.t
   let read sock buf off len =
-    lwt sock = sock in
+    let%lwt sock = sock in
       Lwt_ssl.read sock buf off len
   let write sock buf off len =
-    lwt sock = sock in
+    let%lwt sock = sock in
       Lwt_ssl.write sock buf off len
   let close sock =
-    lwt sock = sock in
+    let%lwt sock = sock in
       Lwt_ssl.close sock
   let get_fd _socket = assert false
   let name = `SSL
@@ -272,7 +272,7 @@ struct
 	  Lwt.return len
 	)
       ) else (
-	lwt n = Lwt_unix.read sock.zfd buf off len in
+	let%lwt n = Lwt_unix.read sock.zfd buf off len in
 	  if n > 0 then (
 	    sock.uncompress#put_substring buf off n;
 	    sock.uncompress#flush;
@@ -293,10 +293,10 @@ struct
   let write sock buf off len =
     sock.compress#put_substring buf off len;
     sock.compress#flush;
-    lwt () =
+    let%lwt () =
       if sock.compress#available_output > 0 then (
 	let (buf, off, len) = sock.compress#get_substring in
-	lwt () = really_write Lwt_unix.write sock.zfd buf off len in
+	let%lwt () = really_write Lwt_unix.write sock.zfd buf off len in
 	  Lwt.return ()
       ) else Lwt.return ()
     in
@@ -327,15 +327,15 @@ let rec writer socket =
     if len > 0 then (
       let data = Buffer.contents socket.buffer in
 	Buffer.reset socket.buffer;
-	lwt () =
-	  try_lwt
+	let%lwt () =
+	  try%lwt
 	    let module S = (val socket.socket : Socket) in
 	      really_write S.SocketMod.write S.socket data 0 len
           with
 	    | exn ->
 		let module S = (val socket.socket : Socket) in
-	        lwt () = S.SocketMod.close S.socket in
-		lwt () =
+	        let%lwt () = S.SocketMod.close S.socket in
+		let%lwt () =
                   Lwt_log.error ~exn ~section "writer raised exception"
                 in
 		let senders = socket.waiters in
@@ -352,7 +352,7 @@ let rec writer socket =
 	if Buffer.length socket.buffer = 0 then (
 	  let waiter, wakener = Lwt.wait () in
 	    socket.writer <- Some wakener;
-	    lwt () = waiter in
+	    let%lwt () = waiter in
 	      socket.writer <- None;
 	      writer socket
         ) else writer socket
@@ -393,7 +393,7 @@ let close' socket =
 
 let close socket =
   let module S = (val socket.socket : Socket) in
-  lwt () =
+  let%lwt () =
     Lwt.catch
       (fun () -> S.SocketMod.close S.socket)
       (fun _ -> Lwt.return ())
@@ -405,9 +405,9 @@ let buf_size = 4096
 let buf = String.make buf_size '\000'
 
 let activate socket pid =
-  try_lwt
+  try%lwt
     let module S = (val socket.socket : Socket) in
-    lwt len = S.SocketMod.read S.socket buf 0 buf_size in
+    let%lwt len = S.SocketMod.read S.socket buf 0 buf_size in
       if len > 0 then (
 	let data = String.sub buf 0 len in
 	  pid $! `Tcp_data (socket, data)
@@ -419,7 +419,7 @@ let activate socket pid =
     | Lwt.Canceled ->
 	Lwt.return ()
     | exn ->
-	lwt () =
+	let%lwt () =
 	  match exn with
 	    | Unix.Unix_error(Unix.EBADF, _, _) ->
 		Lwt.return ()
@@ -427,8 +427,8 @@ let activate socket pid =
 		Lwt_log.error ~exn ~section "reader raised exception"
         in
 	let module S = (val socket.socket : Socket) in
-	lwt () =
-	  try_lwt
+	let%lwt () =
+	  try%lwt
 	    S.SocketMod.close S.socket
 	  with
 	    | Unix.Unix_error(Unix.EBADF, _, _) ->
@@ -484,7 +484,7 @@ let send_async socket data =
     close' socket
   );
   ignore (
-    try_lwt
+    try%lwt
       send socket data
     with
       | Lwt_unix.Timeout as exn ->

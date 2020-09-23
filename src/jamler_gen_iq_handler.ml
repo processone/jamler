@@ -54,8 +54,8 @@ stop_iq_handler(_Module, _Function, Opts) ->
 *)
 
 let process_iq _host f from to' iq =
-  try_lwt
-    lwt res_iq = f from to' iq in
+  try%lwt
+    let%lwt res_iq = f from to' iq in
       match res_iq with
         | `IQ (iq : Jlib.iq_response Jlib.iq) ->
             Router.route to' from
@@ -86,7 +86,7 @@ let handle component host ns from to' iq =
       | Some f -> (
   (*case Opts of
       no_queue ->*)
-          lwt () = process_iq host f from to' iq in
+          let%lwt () = process_iq host f from to' iq in
             Lwt.return true
       (*{one_queue, Pid} ->
           Pid ! {process_iq, From, To, IQ};

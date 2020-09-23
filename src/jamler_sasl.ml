@@ -46,7 +46,7 @@ let rec process_mech_result =
     | Continue (server_out, f) ->
 	Continue (server_out,
 		  fun s ->
-		    lwt res = f s in
+		    let%lwt res = f s in
 		      Lwt.return (process_mech_result res)
 		 )
     | (ErrorUser _ | Error _) as error -> error
@@ -56,7 +56,7 @@ let server_start ~service:_service ~server_fqdn ~user_realm:_user_realm
   try
     let mech_mod = Hashtbl.find mechanisms mech in
     let module Mech = (val mech_mod : SASLMechanism) in
-    lwt mech =
+    let%lwt mech =
       Mech.mech_new server_fqdn
 	get_password check_password check_password_digest client_in
     in
@@ -66,6 +66,6 @@ let server_start ~service:_service ~server_fqdn ~user_realm:_user_realm
 	Lwt.return (Error "no-mechanism")
 
 let server_step f client_in =
-  lwt res = f client_in in
+  let%lwt res = f client_in in
     Lwt.return (process_mech_result res)
 

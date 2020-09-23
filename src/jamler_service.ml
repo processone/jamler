@@ -50,7 +50,7 @@ struct
     Jlib.get_random_string ()
 
   let init socket self =
-    lwt () = Lwt_log.notice_f ~section "external service connected from %s"
+    let%lwt () = Lwt_log.notice_f ~section "external service connected from %s"
       (Jamler_listener.sockaddr_to_string (Lwt_unix.getpeername socket)) in
     let socket = Socket.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
@@ -175,7 +175,7 @@ struct
 	  | "handshake", digest -> (
 	      if Jlib.sha1 (state.streamid ^ state.password) = digest then (
 		send_text state "<handshake/>";
-		lwt () =
+		let%lwt () =
 		  Lwt_list.iter_s
 		    (fun (h : Jlib.namepreped) ->
 		       Router.register_route h (state.pid :> Router.msg pid);
@@ -265,7 +265,7 @@ struct
   let handle msg state =
     match msg with
       | `Tcp_data (socket, data) when socket == state.socket ->
-          lwt () =
+          let%lwt () =
 	    Lwt_log.debug_f ~section
 	      "tcp data %d %S\n" (String.length data) data
 	  in
@@ -274,7 +274,7 @@ struct
             Lwt.return (`Continue state)
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
-          lwt () = Lwt_log.debug ~section "tcp close\n" in
+          let%lwt () = Lwt_log.debug ~section "tcp close\n" in
             (*Gc.print_stat stdout;
             Gc.compact ();
             Gc.print_stat stdout; flush stdout;*)
@@ -288,10 +288,10 @@ struct
 
   let terminate state _reason =
     XMLReceiver.free state.xml_receiver;
-    lwt () = Socket.close state.socket in
+    let%lwt () = Socket.close state.socket in
       match state.state with
 	| Stream_established ->
-	    lwt () =
+	    let%lwt () =
 	      Lwt_list.iter_s
 		(fun (h : Jlib.namepreped) ->
 		   Router.unregister_route h (state.pid :> Router.msg pid);

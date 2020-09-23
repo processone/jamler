@@ -543,7 +543,7 @@ let route_message from to' packet =
             | "headline" ->
       		bounce_offline_message from to' packet
             | _ -> (
-      		match_lwt Auth.does_user_exist luser lserver with
+      		match%lwt Auth.does_user_exist luser lserver with
       		  | true -> (
       		(* TODO *) Lwt.return ()
       		    (*case is_privacy_allow(From, To, Packet) of
@@ -570,7 +570,7 @@ let process_iq from to' packet =
   match Jlib.iq_query_info packet with
     | `IQ ({Jlib.iq_xmlns = xmlns; _} as iq) -> (
         let host = to'.Jlib.lserver in
-	lwt handle_res =
+	let%lwt handle_res =
 	  GenIQHandler.handle `SM host xmlns from to' iq
 	in
           if not handle_res then (
@@ -631,7 +631,7 @@ let rec do_route1 from to' packet =
 	  match name with
 	    | "presence" -> (
 		ignore (
-		  lwt pass =
+		  let%lwt pass =
 		    match Xml.get_attr_s "type" attrs with
 		      | "subscribe" ->
 			  let reason =
@@ -882,7 +882,7 @@ struct
 	      Lwt.return (`Continue state)
 	  with
 	    | exn ->
-		lwt () =
+		let%lwt () =
 		  Lwt_log.error_f
 		    ~section
 		    ~exn:exn
@@ -920,7 +920,7 @@ struct
 	      Lwt.return (`Continue state)
 	  with
 	    | exn ->
-		lwt () =
+		let%lwt () =
 		  Lwt_log.error_f
 		    ~section
 		    ~exn:exn
@@ -930,7 +930,7 @@ struct
 		  Lwt.return (`Continue state)
 	)
       | `Erl term ->
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "unexpected packet %s" (Erlang.term_to_string term)
 	  in

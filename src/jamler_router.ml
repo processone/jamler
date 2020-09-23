@@ -262,7 +262,7 @@ struct
 	      Lwt.return (`Continue state)
 	  with
 	    | exn ->
-		lwt () =
+		let%lwt () =
 		  Lwt_log.error_f
 		    ~section
 		    ~exn:exn
@@ -311,7 +311,7 @@ struct
 	)
 *)
       | `Erl term ->
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "unexpected packet %s" (Erlang.term_to_string term)
 	  in

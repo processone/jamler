@@ -10,7 +10,7 @@ let process_iq from to' packet =
   match Jlib.iq_query_info packet with
     | `IQ ({Jlib.iq_xmlns = xmlns; _} as iq) -> (
         let host = to'.Jlib.lserver in
-	lwt handle_res =
+	let%lwt handle_res =
 	  GenIQHandler.handle `Local host xmlns from to' iq
 	in
           if not handle_res then (

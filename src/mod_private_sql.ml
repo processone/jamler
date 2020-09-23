@@ -21,13 +21,13 @@ struct
 	  let lxmlns = Xml.get_attr_s "xmlns" attrs in
 	  let username = (luser : Jlib.nodepreped :> string) in
 	  let query =
-	    <:sql<
+	    [%sql:
 	      select @(data)s from private_storage
               where username=%(username)s and
               namespace=%(lxmlns)s
-	    >>
+	    ]
 	  in
-	  lwt private_data = Sql.query lserver query in (
+	  let%lwt private_data = Sql.query lserver query in (
 	      match private_data with
 		| [data] -> (
 		    try
@@ -57,20 +57,20 @@ struct
 		let username = (luser : Jlib.nodepreped :> string) in
 		let sdata = Xml.element_to_string el in
 		let insert_private_data =
-		  <:sql<
+		  [%sql:
 		    insert into private_storage(username, namespace, data)
 		    values (%(username)s, %(xmlns)s, %(sdata)s)
-		  >>
+		  ]
 		in
 		let update_private_data =
-		  <:sql<
+		  [%sql:
 		    update private_storage
 		    set data = %(sdata)s
 		    where username = %(username)s and
 		          namespace = %(xmlns)s
-		  >>
+		  ]
 		in
-		lwt () = Sql.update_t insert_private_data update_private_data in
+		let%lwt () = Sql.update_t insert_private_data update_private_data in
 		  Lwt.return ()
 	)
       | _ ->
@@ -86,7 +86,7 @@ struct
 	| true -> (
 	    match iq.Jlib.iq_type with
 	      | `Set (`XmlElement (name, attrs, els)) ->
-		  lwt () = Sql.transaction lserver
+		  let%lwt () = Sql.transaction lserver
 		    (fun() ->
 		       Lwt_list.iter_s
 			 (fun el -> set_data luser lserver el) els) in
@@ -97,8 +97,8 @@ struct
 			     (Some (`XmlElement (name, attrs, [])))})
 	      | `Get subel ->
 		  let `XmlElement (name, attrs, els) = subel in
-		    try_lwt
-		      lwt res_els = get_data luser lserver els in
+		    try%lwt
+		      let%lwt res_els = get_data luser lserver els in
 			Lwt.return
 			  (`IQ {iq with
 				  Jlib.iq_type =
@@ -122,24 +122,24 @@ struct
   let remove_user (luser, lserver) =
     let username = (luser : Jlib.nodepreped :> string) in
     let delete_private_storage =
-      <:sql<
+      [%sql:
 	delete from private_storage
 	where username=%(username)s
-      >>
+      ]
     in
-    lwt _ = Sql.query lserver delete_private_storage in
+    let%lwt _ = Sql.query lserver delete_private_storage in
       Lwt.return (Hooks.OK)
 
   let start host =
-    Mod_disco.register_feature host <:ns<PRIVATE>>;
+    Mod_disco.register_feature host [%ns:PRIVATE];
     Lwt.return (
       [Gen_mod.hook Auth.remove_user host remove_user 50;
-       Gen_mod.iq_handler `SM host <:ns<PRIVATE>> process_sm_iq ();
+       Gen_mod.iq_handler `SM host [%ns:PRIVATE] process_sm_iq ();
       ]
     )
 
   let stop host =
-    Mod_disco.unregister_feature host <:ns<PRIVATE>>;
+    Mod_disco.unregister_feature host [%ns:PRIVATE];
     Lwt.return ()
 
 end

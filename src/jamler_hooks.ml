@@ -26,13 +26,13 @@ let run hook host x =
   let rec aux x =
     function
       | (_, f) :: h ->
-	  (try_lwt
-	     match_lwt f x with
+	  (try%lwt
+	     match%lwt f x with
 	       | OK -> aux x h
 	       | Stop -> Lwt.return ()
 	   with
 	     | exn ->
-		 lwt () =
+		 let%lwt () =
 		   Lwt_log.error_f ~section ~exn:exn "exception running hook"
 		 in
 		   aux x h
@@ -70,13 +70,13 @@ let run_fold hook host v x =
   let rec aux v x =
     function
       | (_, f) :: h ->
-	  (try_lwt
-	     match_lwt f v x with
+	  (try%lwt
+	     match%lwt f v x with
 	       | (OK, v) -> aux v x h
 	       | (Stop, v) -> Lwt.return v
 	   with
 	     | exn ->
-		 lwt () =
+		 let%lwt () =
 		   Lwt_log.error_f ~section ~exn:exn "exception running hook"
 		 in
 		   aux v x h

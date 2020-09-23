@@ -78,7 +78,7 @@ struct
     (*let timeout = 1.0 in*)
     let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
     let addr = Unix.ADDR_INET (addr, port) in
-    lwt () = Lwt_unix.connect socket addr in
+    let%lwt () = Lwt_unix.connect socket addr in
     let tcpsock = Socket.of_fd socket self in
       ignore (Socket.activate tcpsock self);
       Lwt.return tcpsock
@@ -102,12 +102,12 @@ struct
   let handle_msg msg state =
     match state.state, msg with
       | Open_socket wakener, `Init ->
-	  lwt socket =
-	    try_lwt
+	  let%lwt socket =
+	    try%lwt
 	      open_socket Unix.inet_addr_loopback epmd_port state.pid
 	    with
 	      | exn ->
-		  lwt () = Lwt_log.fatal ~exn ~section
+		  let%lwt () = Lwt_log.fatal ~exn ~section
 		    "failed to open epmd connection"
 		  in
 		    Lwt.fail exn
@@ -140,7 +140,7 @@ struct
   let handle (msg : msg) state =
     match msg with
       | `Tcp_data (socket, data) -> (
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "tcp data %d %S" (String.length data) data
 	  in
@@ -150,7 +150,7 @@ struct
 	    Lwt.return (`Continue state)
 	)
       | `Tcp_close _socket -> (
-	  lwt () = Lwt_log.debug ~section "tcp close" in
+	  let%lwt () = Lwt_log.debug ~section "tcp close" in
 	    Lwt.return (`Stop state)
 	)
       | #packet_msg
@@ -166,7 +166,7 @@ struct
 	    Lwt.wakeup_exn wakener (Failure "can't register nodename");
 	| Connection_established _ -> ()
     in
-    lwt () =
+    let%lwt () =
       match state.state with
 	| Open_socket _wakener -> Lwt.return ()
 	| Wait_for_alive2_resp (_, socket)
@@ -193,18 +193,18 @@ let start node cookie' =
       waiter
 
 let get_addr_exn ascii_addr =
-  lwt h = Lwt_unix.gethostbyname ascii_addr in
+  let%lwt h = Lwt_unix.gethostbyname ascii_addr in
     match Array.to_list h.Unix.h_addr_list with
       | [] -> raise Not_found
       | addr :: _ -> Lwt.return addr
 
 let open_socket addr port f =
   let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-    try_lwt
+    try%lwt
       let addr = Unix.ADDR_INET (addr, port) in
-      lwt () = Lwt_unix.connect socket addr in
-      lwt res = f socket in
-      lwt () = Lwt_unix.close socket in
+      let%lwt () = Lwt_unix.connect socket addr in
+      let%lwt res = f socket in
+      let%lwt () = Lwt_unix.close socket in
 	Lwt.return res
     with
       | exn ->
@@ -213,9 +213,9 @@ let open_socket addr port f =
 
 let open_socket' addr port =
   let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-    try_lwt
+    try%lwt
       let addr = Unix.ADDR_INET (addr, port) in
-      lwt () = Lwt_unix.connect socket addr in
+      let%lwt () = Lwt_unix.connect socket addr in
 	Lwt.return (Some socket)
     with
       | _exn ->
@@ -229,16 +229,16 @@ let node_to_namehost node =
       (nodename, hostname)
 
 let lookup_node node =
-  try_lwt
+  try%lwt
     let (nodename, hostname) = node_to_namehost node in
-    lwt addr = get_addr_exn hostname in
+    let%lwt addr = get_addr_exn hostname in
       open_socket addr epmd_port
 	(fun socket ->
 	   let packet = Packet.decorate `BE2 ("\122" ^ nodename) in
-	   lwt _ = Lwt_unix.write socket packet 0 (String.length packet) in
-	   lwt () = Lwt_unix.wait_read socket in
+	   let%lwt _ = Lwt_unix.write socket packet 0 (String.length packet) in
+	   let%lwt () = Lwt_unix.wait_read socket in
 	   let buf = String.make 64 '\000' in
-	   lwt c = Lwt_unix.read socket buf 0 64 in
+	   let%lwt c = Lwt_unix.read socket buf 0 64 in
 	     if c >= 4 && buf.[1] = '\000' then (
 	       Lwt.return
 		 (Some ((Char.code buf.[2] lsl 8) lor Char.code buf.[3]))
@@ -386,12 +386,12 @@ struct
     match node with
       | `Out node -> (
 	  add_node_connection node self;
-	  try_lwt
-	    (match_lwt lookup_node node with
+	  try%lwt
+	    (match%lwt lookup_node node with
 	       | Some port -> (
 		   let (_nodename, hostname) = node_to_namehost node in
-		   lwt addr = get_addr_exn hostname in
-		     match_lwt open_socket' addr port with
+		   let%lwt addr = get_addr_exn hostname in
+		     match%lwt open_socket' addr port with
 		       | Some socket -> (
 			   let socket = Socket.of_fd socket self in
 			     ignore (Socket.activate socket self);
@@ -408,9 +408,9 @@ struct
 			       send_packet state (make_send_name_req ());
 			       Lwt.return (`Continue state)
 			 )
-		       | None -> raise_lwt Not_found
+		       | None -> [%lwt raise ( Not_found)]
 		 )
-	       | None -> raise_lwt Not_found
+	       | None -> [%lwt raise ( Not_found)]
 	    )
 	  with
 	    | _exn ->
@@ -435,7 +435,7 @@ struct
     (*let timeout = 1.0 in*)
     let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
     let addr = Unix.ADDR_INET (addr, port) in
-    lwt () = Lwt_unix.connect socket addr in
+    let%lwt () = Lwt_unix.connect socket addr in
     let tcpsock = Socket.of_fd socket self in
       ignore (Socket.activate tcpsock self);
       Lwt.return tcpsock
@@ -477,10 +477,10 @@ struct
 	      | "snok"
 	      | "snot_allowed"
 	      | _ ->
-		  lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
+		  let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
 		    Lwt.return (`Stop state)
 	  ) else (
-	    lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
+	    let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
 	      Lwt.return (`Stop state)
 	  )
       | Recv_challenge, `Packet data ->
@@ -501,7 +501,7 @@ struct
 	      Lwt.return (`Continue {state with
 				       state = Recv_challenge_ack mychallenge})
 	  ) else (
-	    lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
+	    let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
 	      Lwt.return (`Stop state)
 	  )
       | Recv_challenge_reply mychallenge, `Packet data ->
@@ -524,11 +524,11 @@ struct
 		  add_node_connection state.node state.pid;
 		  switch_to_connection_established state
 	      ) else (
-		lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
+		let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
 		  Lwt.return (`Stop state)
 	      )
 	  ) else (
-	    lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
+	    let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
 	      Lwt.return (`Stop state)
 	  )
       | Recv_challenge_ack mychallenge, `Packet data ->
@@ -538,11 +538,11 @@ struct
 	      if digest = digest' then (
 		switch_to_connection_established state
 	      ) else (
-		lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
+		let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
 		  Lwt.return (`Stop state)
 	      )
 	  ) else (
-	    lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
+	    let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
 	      Lwt.return (`Stop state)
 	  )
       | Connection_established, `Packet data ->
@@ -551,7 +551,7 @@ struct
 	    Lwt.return (`Continue state)
 	  ) else if data.[0] = 'p' then (
 	    let (control, pos) = Erlang.binary_to_term data 1 in
-	    lwt () =
+	    let%lwt () =
 	      Lwt_log.debug_f ~section
 		"%a control message %s"
 		format_pid state.pid (Erlang.term_to_string control)
@@ -560,14 +560,14 @@ struct
 	      match control with
 		| ErlTuple [| ErlInt 2; _; _ |] ->
 		    let (message, pos) = Erlang.binary_to_term data pos in
-		    lwt () =
+		    let%lwt () =
 		      Lwt_log.debug_f ~section
 			"message %s" (Erlang.term_to_string message)
 		    in
 		      Lwt.return (`Continue state)
 		| ErlTuple [| ErlInt 6; _; _; ErlAtom name |] ->
 		    let (message, pos) = Erlang.binary_to_term data pos in
-		    lwt () =
+		    let%lwt () =
 		      Lwt_log.debug_f ~section
 			"message %s" (Erlang.term_to_string message)
 		    in
@@ -580,7 +580,7 @@ struct
 		| _ ->
 		    Lwt.return (`Continue state)
 	  ) else (
-	    lwt () = Lwt_log.error_f "Protocol error from %s" state.node in
+	    let%lwt () = Lwt_log.error_f "Protocol error from %s" state.node in
 	      Lwt.return (`Stop state)
 	  )
 
@@ -609,7 +609,7 @@ struct
 	  Buffer.add_char b 'p';
 	  term_to_buffer b control;
 	  term_to_buffer b term;
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.debug_f ~section
 	      "%a send %S"
 	      format_pid state.pid
@@ -627,7 +627,7 @@ struct
 	  Buffer.add_char b 'p';
 	  term_to_buffer b control;
 	  term_to_buffer b term;
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.debug_f ~section
 	      "%a send %S"
 	      format_pid state.pid
@@ -639,7 +639,7 @@ struct
   let handle (msg : msg) state =
     match msg with
       | `Tcp_data (socket, data) -> (
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.debug_f ~section
 	      "%a tcp data %d %S"
 	      format_pid state.pid
@@ -650,11 +650,11 @@ struct
 	    Lwt.return (`Continue state)
 	)
       | `Tcp_close _socket -> (
-	  lwt () = Lwt_log.debug ~section "tcp close" in
+	  let%lwt () = Lwt_log.debug ~section "tcp close" in
 	    Lwt.return (`Stop state)
 	)
       | #packet_msg as m ->
-	  lwt () =
+	  let%lwt () =
 	    let `Packet data = m in
 	    Lwt_log.debug_f ~section
 	      "packet %S" data
@@ -668,7 +668,7 @@ struct
       | #GenServer.msg -> assert false
 
   let terminate state _reason =
-    lwt () =
+    let%lwt () =
       Lwt_log.notice_f ~section
 	"%a terminated connection to %S" format_pid state.pid state.node
     in
@@ -679,7 +679,7 @@ struct
 	 | _ ->
 	     ()
       );
-      lwt () = Socket.close state.socket in
+      let%lwt () = Socket.close state.socket in
 	Lwt.return ()
 
 
@@ -721,10 +721,10 @@ struct
       nameinfo.Unix.ni_hostname ^ ":" ^ nameinfo.Unix.ni_service
 
   let rec accept start listen_socket =
-    lwt (socket, _) = Lwt_unix.accept listen_socket in
+    let%lwt (socket, _) = Lwt_unix.accept listen_socket in
     let peername = Lwt_unix.getpeername socket in
     let sockname = Lwt_unix.getsockname socket in
-    lwt () =
+    let%lwt () =
       Lwt_log.notice_f
 	~section
 	"accepted connection %s -> %s"
@@ -732,7 +732,7 @@ struct
 	(sockaddr_to_string sockname)
     in
     let pid = ErlNodeConnectionServer.start (`In socket) in
-    lwt () =
+    let%lwt () =
       Lwt_log.notice_f
 	~section
 	"%a is handling connection %s -> %s"
@@ -806,7 +806,7 @@ struct
       | `Erl (ErlTuple [| ErlAtom "$gen_call"; from; request |]) ->
 	  handle_call request from state
       | `Erl term ->
-	  lwt () =
+	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "unexpected packet %s" (Erlang.term_to_string term)
 	  in

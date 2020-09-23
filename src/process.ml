@@ -72,7 +72,7 @@ let spawn f =
   let () = processes.(id) <- Some (Obj.magic proc) in
   let pid = proc_to_pid proc in
   let t =
-    try_lwt
+    try%lwt
       Lwt.finalize (fun () -> f pid)
 	(fun () ->
 	   processes.(id) <- None;
@@ -86,7 +86,7 @@ let spawn f =
 	)
     with
       | exn ->
-	  lwt () =
+	  let%lwt () =
             Lwt_log.error ~exn ~section "process raised an exception:"
 	  in
             Lwt.fail exn
@@ -117,7 +117,7 @@ let receive pid =
     if Queue.is_empty proc.queue then (
       let (waiter, wakener) = Lwt.wait () in
 	proc.wakener <- Some wakener;
-	lwt msg = waiter in
+	let%lwt msg = waiter in
           proc.wakener <- None;
           Lwt.return msg
     ) else (
@@ -227,7 +227,7 @@ let send_after timeout pid msg =
 
 let apply_after timeout f =
   Lwt_unix.sleep timeout >>
-    (lwt () = f () in
+    (let%lwt () = f () in
        Lwt.return ())
 
 let start_timer timeout pid msg =
