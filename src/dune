@@ -1,0 +1,10 @@
+(executable
+ (name main)
+ (libraries yojson lwt lwt_log lwt_ssl cryptokit pgocaml)
+ (preprocess (pps lwt_ppx ppx_sql ppx_jlib))
+ (link_flags :standard -cclib -lexpat -cclib -lidn)
+ (foreign_stubs
+  (language c)
+  (names stringprepwrap idnawrap expatwrap)
+  (flags -O2))
+ )
