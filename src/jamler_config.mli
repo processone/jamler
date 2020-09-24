@@ -1,4 +1,4 @@
-type json = Yojson.Safe.json
+type json = Yojson.Safe.t
 type 'a p = P of (json -> 'a)
 
 exception Error of string

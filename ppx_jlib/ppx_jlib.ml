@@ -1,4 +1,4 @@
-open Camlp4.PreCast
+open Ppxlib
 
 let namespaces =
   [("DISCO_ITEMS", "http://jabber.org/protocol/disco#items");
@@ -79,21 +79,32 @@ let namespaces =
    ("BOB", "urn:xmpp:bob");
   ]
 
-let expr_quotation_expander _loc _loc_name_opt str =
+let expr_expander ~ctxt str =
+  let loc = Expansion_context.Extension.extension_point_loc ctxt in
   let value = List.assoc str namespaces in
-    <:expr< $str:value$ >>
+  Ast_builder.Default.estring ~loc value
 
-let patt_quotation_expander _loc _loc_name_opt str =
+let patt_expander ~ctxt str =
+  let loc = Expansion_context.Extension.extension_point_loc ctxt in
   let value = List.assoc str namespaces in
-    <:patt< $str:value$ >>
+  Ast_builder.Default.pstring ~loc value
 
-let str_item_quotation_expander _loc _loc_name_opt str =
-  <:str_item< $exp: expr_quotation_expander _loc _loc_name_opt str$ >>
+let jlib_expr_extension =
+  Extension.V3.declare
+    "ns"
+    Extension.Context.expression
+    Ast_pattern.(single_expr_payload (estring __))
+    expr_expander
 
-let _ =
-  Syntax.Quotation.add "ns" Syntax.Quotation.DynAst.expr_tag
-    expr_quotation_expander;
-  Syntax.Quotation.add "ns" Syntax.Quotation.DynAst.patt_tag
-    patt_quotation_expander;
-  Syntax.Quotation.add "ns" Syntax.Quotation.DynAst.str_item_tag
-    str_item_quotation_expander
+let jlib_patt_extension =
+  Extension.V3.declare
+    "ns"
+    Extension.Context.pattern
+    Ast_pattern.(single_expr_payload (estring __))
+    patt_expander
+
+let () =
+ Driver.register_transformation
+   ~rules:[Ppxlib.Context_free.Rule.extension jlib_expr_extension;
+           Ppxlib.Context_free.Rule.extension jlib_patt_extension]
+   "jlib"

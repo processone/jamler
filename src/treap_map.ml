@@ -11,6 +11,8 @@ sig
   val next : key -> 'a t -> (key * 'a) option
   val iter : (key -> 'a -> unit) -> 'a t -> unit
   val min_elt : 'a t -> key * 'a
+  val kth_key : 'a t -> int -> key
+  val count : 'a t -> key -> int
 end
 
 module Make (Ord : Map.OrderedType) : S  with type key = Ord.t =
@@ -39,30 +41,30 @@ struct
 
   let balance =
     function
-      | Node (size, key, priority, value,
-	      Node (lsize, lkey, lpriority, lvalue, lleft, lright),
-	      (Node (rsize, rkey, rpriority, rvalue, rleft, rright) as right))
+      | Node (_size, key, priority, value,
+	      Node (_lsize, lkey, lpriority, lvalue, lleft, lright),
+	      (Node (_rsize, _rkey, rpriority, _rvalue, _rleft, _rright) as right))
 	  when lpriority > priority && lpriority > rpriority ->
 	  mknode lkey lpriority lvalue
 	    lleft
 	    (mknode key priority value lright right)
-      | Node (size, key, priority, value,
-	      (Node (lsize, lkey, lpriority, lvalue, lleft, lright) as left),
-	      Node (rsize, rkey, rpriority, rvalue, rleft, rright))
+      | Node (_size, key, priority, value,
+	      (Node (_lsize, _lkey, lpriority, _lvalue, _lleft, _lright) as left),
+	      Node (_rsize, rkey, rpriority, rvalue, rleft, rright))
 	  when rpriority > priority && rpriority > lpriority ->
 	  mknode rkey rpriority rvalue
 	    (mknode key priority value left rleft)
 	    rright
-      | Node (size, key, priority, value,
-	      Node (lsize, lkey, lpriority, lvalue, lleft, lright),
+      | Node (_size, key, priority, value,
+	      Node (_lsize, lkey, lpriority, lvalue, lleft, lright),
 	      (Leaf as right))
 	  when lpriority > priority ->
 	  mknode lkey lpriority lvalue
 	    lleft
 	    (mknode key priority value lright right)
-      | Node (size, key, priority, value,
+      | Node (_size, key, priority, value,
 	      (Leaf as left),
-	      Node (rsize, rkey, rpriority, rvalue, rleft, rright))
+	      Node (_rsize, rkey, rpriority, rvalue, rleft, rright))
 	  when rpriority > priority ->
 	  mknode rkey rpriority rvalue
 	    (mknode key priority value left rleft)
@@ -71,7 +73,7 @@ struct
 
   let rec insert t new_key new_value =
     match t with
-      | Node (size, key, priority, value, left, right) ->
+      | Node (_size, key, priority, value, left, right) ->
 	  let cmp = Ord.compare new_key key in
 	    if cmp = 0
 	    then t
@@ -90,8 +92,8 @@ struct
   let rec root_delete t =
     match t with
       | Node (_size, key, priority, value,
-	      (Node (lsize, lkey, lpriority, lvalue, lleft, lright) as left),
-	      (Node (rsize, rkey, rpriority, rvalue, rleft, rright) as right)) ->
+	      (Node (_lsize, lkey, lpriority, lvalue, lleft, lright) as left),
+	      (Node (_rsize, rkey, rpriority, rvalue, rleft, rright) as right)) ->
 	  if lpriority > rpriority
 	  then
 	    mknode lkey lpriority lvalue
@@ -111,7 +113,7 @@ struct
 
   let rec delete t new_key =
     match t with
-      | Node (size, key, priority, value, left, right) ->
+      | Node (_size, key, priority, value, left, right) ->
 	  let cmp = Ord.compare new_key key in
 	    if cmp = 0
 	    then root_delete t
@@ -129,7 +131,7 @@ struct
 
   let rec find k t =
     match t with
-      | Node (size, key, priority, value, left, right) ->
+      | Node (_size, key, _priority, value, left, right) ->
 	  let cmp = Ord.compare k key in
 	    if cmp < 0
 	    then find k left
@@ -141,7 +143,7 @@ struct
 
   let rec mem k t =
     match t with
-      | Node (size, key, priority, _value, left, right) ->
+      | Node (_size, key, _priority, _value, left, right) ->
 	  let cmp = Ord.compare k key in
 	    if cmp < 0
 	    then mem k left
@@ -153,7 +155,7 @@ struct
 
   let rec kth_key t k =
     match t with
-      | Node (size, key, priority, value, left, right) ->
+      | Node (_size, key, _priority, _value, left, right) ->
 	  let left_size = tree_size left in
 	    if k <= left_size
 	    then kth_key left k
@@ -165,7 +167,7 @@ struct
 
   let rec count t x =
     match t with
-      | Node (size, key, priority, value, left, right) ->
+      | Node (_size, key, _priority, _value, left, right) ->
 	  let left_size = tree_size left in
 	  let cmp = Ord.compare x key in
 	    if cmp = 0
@@ -179,7 +181,7 @@ struct
   let rec next k t =
     let rec aux k t n =
       match t with
-	| Node (_size, key, _priority, value, left, right) as n' ->
+	| Node (_size, key, _priority, _value, left, right) as n' ->
 	    let cmp = Ord.compare k key in
 	      if cmp < 0
 	      then aux k left n'
@@ -193,7 +195,7 @@ struct
 	  )
     in
       match t with
-	| Node (_size, key, _priority, value, left, right) as n ->
+	| Node (_size, key, _priority, _value, left, right) as n ->
 	    let cmp = Ord.compare k key in
 	      if cmp < 0
 	      then aux k left n

@@ -22,15 +22,15 @@ struct
                           `Error (Jlib.err_service_unavailable, Some subel)})
 
   let start host =
-    Mod_disco.register_feature host [%ns:PING];
+    Mod_disco.register_feature host [%ns "PING"];
     Lwt.return (
-      [Gen_mod.iq_handler `Local host [%ns:PING] iq_ping ();
-       Gen_mod.iq_handler `SM host [%ns:PING] iq_ping ();
+      [Gen_mod.iq_handler `Local host [%ns "PING"] iq_ping ();
+       Gen_mod.iq_handler `SM host [%ns "PING"] iq_ping ();
       ]
     )
 
   let stop host =
-    Mod_disco.unregister_feature host [%ns:PING];
+    Mod_disco.unregister_feature host [%ns "PING"];
     Lwt.return ()
 
 end

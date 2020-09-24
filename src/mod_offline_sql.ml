@@ -31,13 +31,13 @@ struct
   let count_offline_messages luser lserver =
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql {|
 	select @()d count( * ) from spool
 	where username=%(username)s
-      >>
+      |}]
     in
-      try_lwt
-	(match_lwt Sql.query lserver query with
+      try%lwt
+	(match%lwt Sql.query lserver query with
 	   | [] -> Lwt.return 0
 	   | count :: _ -> Lwt.return count)
       with
@@ -62,7 +62,7 @@ struct
        User, Host), *)
     let max_offline_msgs = max_int in
     let host = (msg.to').Jlib.lserver in
-    lwt count =
+    let%lwt count =
       if max_offline_msgs <> max_int then (
 	count_offline_messages msg.user host
       ) else Lwt.return 0
@@ -85,12 +85,12 @@ struct
 	  (name, attrs2, els @ (timestamp_els :> Xml.element_cdata list)) in
 	let xml = Xml.element_to_string packet in
 	let query =
-	  <:sql<
+	  [%sql {|
 	    insert into spool(username, xml)
 	    values (%(username)s, %(xml)s)
-	  >>
+	  |}]
 	in
-	lwt _ = Sql.transaction host (fun () -> Sql.query_t query) in
+	let%lwt _ = Sql.transaction host (fun () -> Sql.query_t query) in
 	  Lwt.return ()
       )
 
@@ -102,9 +102,9 @@ struct
 	  find_x_event_chatstates els (a, b, c)
       | ((`XmlElement _) as el) :: els -> (
 	  match Xml.get_tag_attr_s "xmlns" el with
-	    | <:ns<EVENT>> ->
+	    | [%ns "EVENT"] ->
 	      find_x_event_chatstates els (el, b, c)
-	    | <:ns<CHATSTATES>> ->
+	    | [%ns "CHATSTATES"] ->
 	      find_x_event_chatstates els (a, el, c)
 	    | _ ->
 		find_x_event_chatstates els (a, b, `True))
@@ -116,10 +116,10 @@ struct
 	| `False, `False, _ ->
 	    (* There wasn't any x:event or chatstates subelements *)
 	    true
-	| `False, cel, `True when cel <> `False ->
+	| `False, _cel, `True (*when cel <> `False*) ->
 	    (* There a chatstates subelement and other stuff, but no x:event *)
 	    true
-	| `False, cel, `False when cel <> `False ->
+	| `False, _cel, `False (*when cel <> `False*) ->
 	    (* Don't allow offline storage *)
 	    false
 	| ((`XmlElement _) as el), _, _ -> (
@@ -139,7 +139,7 @@ struct
 			    (`XmlElement (name, attrs,
 					  [`XmlElement
 					     ("x",
-					      [("xmlns", <:ns<EVENT>>)],
+					      [("xmlns", [%ns "EVENT"])],
 					      [id;
 					       `XmlElement ("offline", [], [])])]));
 			  true)
@@ -154,7 +154,7 @@ struct
 	  find_x_expire timestamp els
       | ((`XmlElement _) as el) :: els -> (
 	  match Xml.get_tag_attr_s "xmlns" el with
-	    | <:ns<EXPIRE>> ->
+	    | [%ns "EXPIRE"] ->
 	      let val' = Xml.get_tag_attr_s "seconds" el in (
 		  try
 		    let int = int_of_string val' in
@@ -177,7 +177,7 @@ struct
 	      let timestamp = Unix.time () in
 	      let `XmlElement (_name, _attrs, els) = packet in
 	      let expire = find_x_expire timestamp els in
-	      lwt _ = store_packet' {user = luser;
+	      let%lwt _ = store_packet' {user = luser;
 				     timestamp = timestamp;
 				     expire = expire;
 				     from = from;
@@ -192,22 +192,22 @@ struct
   let get_and_del_spool_msg_t luser =
     let euser = (luser : Jlib.nodepreped :> string) in
     let select_query =
-      <:sql<
+      [%sql {|
 	select @(username)s, @(xml)s from spool
 	  where username = %(euser)s order by sec
-      >> in
+      |}] in
     let delete_query =
-      <:sql<delete from spool where username = %(euser)s>>
+      [%sql {|delete from spool where username = %(euser)s|}]
     in
-    lwt res = Sql.query_t select_query in
-    lwt _ = Sql.query_t delete_query in
+    let%lwt res = Sql.query_t select_query in
+    let%lwt _ = Sql.query_t delete_query in
       Lwt.return res
 
   let pop_offline_messages ls (luser, lserver) =
-    try_lwt
-      lwt rs = Sql.transaction lserver
+    try%lwt
+      let%lwt rs = Sql.transaction lserver
 	(fun () -> get_and_del_spool_msg_t luser) in
-      lwt route_msgs =
+      let%lwt route_msgs =
 	Lwt_list.fold_right_s
 	  (fun (_, xml) acc ->
 	     try
@@ -227,11 +227,11 @@ struct
   let remove_user (luser, lserver) =
     let username = (luser : Jlib.nodepreped :> string) in
     let delete_query =
-      <:sql<
+      [%sql {|
 	delete from spool where username = %(username)s
-      >>
+      |}]
     in
-    lwt _ = Sql.query lserver delete_query in
+    let%lwt _ = Sql.query lserver delete_query in
       Lwt.return (Hooks.OK)
 
   let get_sm_features acc (_from, _to, node, _lang) =
@@ -242,8 +242,8 @@ struct
 	      | Features i -> i
 	      | _ -> []
 	  in
-	    Lwt.return (Hooks.OK, Features (feats @ [ <:ns<FEATURE_MSGOFFLINE>>]))
-      | <:ns<FEATURE_MSGOFFLINE>> ->
+	    Lwt.return (Hooks.OK, Features (feats @ [ [%ns "FEATURE_MSGOFFLINE"]]))
+      | [%ns "FEATURE_MSGOFFLINE"] ->
 	(* override all lesser features... *)
 	Lwt.return (Hooks.OK, Features [])
       | _ ->

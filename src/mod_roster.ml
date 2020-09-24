@@ -8,11 +8,11 @@ struct
 		   : (Jlib.nodepreped * Jlib.namepreped,
 		      (LJID.t, subscription roster_item) Hashtbl.t) Hashtbl.t)
 
-  let read_roster' u s =
+  (*let read_roster' u s =
     try
       Some (Hashtbl.find rosters (u, s))
     with
-      | Not_found -> None
+      | Not_found -> None*)
 
   let read_roster' u s =
     try
@@ -28,7 +28,7 @@ struct
   let delete_roster' u s =
     Hashtbl.remove rosters (u, s)
 
-  let delete_roster u s =
+  let _delete_roster u s =
     Lwt.return (delete_roster' u s)
 
   let read_roster_item' u s jid =
@@ -38,7 +38,7 @@ struct
     with
       | Not_found -> None
 
-  let read_roster_item u s jid =
+  let _read_roster_item u s jid =
     Lwt.return (read_roster_item' u s jid)
 
   let write_roster_item' u s jid item =
@@ -67,7 +67,7 @@ struct
       with
 	| Not_found -> ()
 
-  let delete_roster_item u s jid =
+  let _delete_roster_item u s jid =
     Lwt.return (delete_roster_item' u s jid)
 
   let item_set_transaction luser lserver jid1 attrs els =

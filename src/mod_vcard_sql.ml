@@ -19,9 +19,9 @@ struct
   let get_sm_features acc (_from, _to, node, _lang) =
     match acc with
       | Features features when node = "" ->
-	  Lwt.return (Hooks.OK, Features ([%ns:VCARD] :: features))
+	  Lwt.return (Hooks.OK, Features ([%ns "VCARD"] :: features))
       | FEmpty when node = "" ->
-	  Lwt.return (Hooks.OK, Features [ [%ns:VCARD]])
+	  Lwt.return (Hooks.OK, Features [ [%ns "VCARD"]])
       | _ ->
 	  Lwt.return (Hooks.OK, acc)
 
@@ -30,10 +30,10 @@ struct
     let%lwt _ = Sql.transaction lserver
       (fun () ->
 	 let delete_vcard =
-	   [%sql:delete from vcard where username=%(username)s]
+	   [%sql {|delete from vcard where username=%(username)s|}]
 	 in
 	 let delete_vcard_search =
-	   [%sql:delete from vcard_search where lusername=%(username)s]
+	   [%sql {|delete from vcard_search where lusername=%(username)s|}]
 	 in
 	 let%lwt _ = Sql.query_t delete_vcard in
 	 let%lwt _ = Sql.query_t delete_vcard_search in
@@ -55,7 +55,7 @@ struct
                  `Result
                    (Some (`XmlElement
                             ("vCard",
-			     [("xmlns", [%ns:VCARD])],
+			     [("xmlns", [%ns "VCARD"])],
 			     [`XmlElement ("FN", [],
 					   [`XmlCdata Cfg.name]);
 			      `XmlElement ("URL", [],
@@ -97,15 +97,15 @@ struct
 	let username = user in
 	let lusername = (luser : Jlib.nodepreped :> string) in
 	let svcard = Xml.element_to_string vcard in
-	let vcard_insert = [%sql:
+	let vcard_insert = [%sql {|
 	  insert into vcard(username, vcard)
 	  values (%(lusername)s, %(svcard)s)
-	  ] in
-	let vcard_update = [%sql:
+	  |}] in
+	let vcard_update = [%sql {|
 	  update vcard set vcard = %(svcard)s
 	  where username = %(lusername)s
-	  ] in
-	let vcard_search_insert = [%sql:
+	  |}] in
+	let vcard_search_insert = [%sql {|
 	  insert into vcard_search(
 	    username, lusername, fn, lfn, family,
             lfamily, given, lgiven, middle, lmiddle,
@@ -118,8 +118,8 @@ struct
               %(nickname)s, %(lnickname)s, %(bday)s, %(lbday)s, %(ctry)s,
               %(lctry)s, %(locality)s, %(llocality)s, %(email)s, %(lemail)s,
               %(orgname)s, %(lorgname)s, %(orgunit)s, %(lorgunit)s)
-	  ] in
-	let vcard_search_update = [%sql:
+	  |}] in
+	let vcard_search_update = [%sql {|
 	  update vcard_search
 	  set
 	    username = %(username)s,
@@ -146,7 +146,7 @@ struct
 	    orgunit = %(orgunit)s,
 	    lorgunit = %(lorgunit)s
 	  where lusername = %(lusername)s
-	  ] in
+	  |}] in
 	  try%lwt
 	    Sql.transaction lserver
 	      (fun () ->
@@ -162,7 +162,7 @@ struct
   let get_vcard luser lserver =
     let username = (luser : Jlib.nodepreped :> string) in
     let get_vcard =
-      [%sql:select @(vcard)s from vcard where username=%(username)s]
+      [%sql {|select @(vcard)s from vcard where username=%(username)s|}]
     in
       Sql.query lserver get_vcard
 
@@ -212,17 +212,17 @@ struct
     Search = gen_mod:get_opt(search, Opts, true),
     register(gen_mod:get_module_proc(Host, ?PROCNAME),
 	     spawn(?MODULE, init, [MyHost, Host, Search])). *)
-    Mod_disco.register_feature host [%ns:VCARD];
+    Mod_disco.register_feature host [%ns "VCARD"];
     Lwt.return (
       [Gen_mod.hook Auth.remove_user host remove_user 50;
        Gen_mod.fold_hook disco_sm_features host get_sm_features 50;
-       Gen_mod.iq_handler `Local host [%ns:VCARD] process_local_iq ();
-       Gen_mod.iq_handler `SM host [%ns:VCARD] process_sm_iq ();
+       Gen_mod.iq_handler `Local host [%ns "VCARD"] process_local_iq ();
+       Gen_mod.iq_handler `SM host [%ns "VCARD"] process_sm_iq ();
       ]
     )
 
   let stop host =
-    Mod_disco.unregister_feature host [%ns:VCARD];
+    Mod_disco.unregister_feature host [%ns "VCARD"];
     Lwt.return ()
 
 end

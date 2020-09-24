@@ -1,6 +1,8 @@
 (* ACL stub *)
+(*
 type rule = string				(* TODO *)
 type acl = string				(* TODO *)
+*)
 
 open Jamler_config
 module JSON = Yojson.Safe

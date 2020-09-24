@@ -96,7 +96,7 @@ struct
   let section = Jamler_log.new_section "c2s"
 
   let c2s_open_timeout = 60.0
-  let c2s_hibernate_timeout = 90.0
+  let _c2s_hibernate_timeout = 90.0
   let dht_dups = 3
 
   let fsm_next_state state =
@@ -197,8 +197,11 @@ struct
     (*Printf.printf "Send XML on stream = %S\n" text; flush stdout;*)
     Socket.send_async state.socket text
 
+  let send_string state text =
+    send_text state (Bytes.of_string text)
+
   let send_element state el =
-    send_text state (Xml.element_to_string el)
+    send_string state (Xml.element_to_string el)
 
   let send_header state server version lang =
     let version_str =
@@ -224,11 +227,11 @@ struct
 	version_str
 	lang_str
     in
-      send_text state header
+      send_string state header
 
   let send_trailer state =
     let stream_trailer = "</stream:stream>" in
-      send_text state stream_trailer
+      send_string state stream_trailer
 
   let rec get_auth_tags (els : Xml.element_cdata list) u p d r =
     match els with
@@ -249,7 +252,7 @@ struct
   let is_auth_packet el =
     match Jlib.iq_query_info el with
       | `IQ {Jlib.iq_id = id; Jlib.iq_type = (`Set subel | `Get subel) as type';
-	     Jlib.iq_xmlns = <:ns<AUTH>>; _} ->
+	     Jlib.iq_xmlns = [%ns "AUTH"]; _} ->
 	  let `XmlElement (_, _, els) = subel in
 	  let type' =
 	    match type' with
@@ -275,7 +278,7 @@ struct
     in
       match Jlib.iq_query_info el with
 	| `IQ iq -> (
-	    match_lwt Hooks.run_fold c2s_unauthenticated_iq
+	    match%lwt Hooks.run_fold c2s_unauthenticated_iq
 	      state.server None (state.server, iq, state.ip) with
 		| None ->
 		    (* The only reasonable IQ's here are auth and register IQ's
@@ -369,6 +372,7 @@ struct
 	priority packet info state.dht_nodes
 
 
+  [@@@warning "-52"]
   let get_priority_from_presence presence_packet =
     match Xml.get_subtag presence_packet "priority" with
       | None -> 0
@@ -456,7 +460,7 @@ struct
 		   pres_t = tset}
 
 
-  let resend_offline_messages state =
+  let resend_offline_messages _state =
     (* TODO *)
     ()
     (*case ejabberd_hooks:run_fold(
@@ -494,8 +498,8 @@ struct
     end.
     *)
 
-  let resend_subscription_requests ({user = user;
-				     server = server; _} as state) =
+  let resend_subscription_requests ({user = _user;
+				     server = _server; _} as _state) =
     (* TODO *)
     ()
     (*PendingSubscriptions = ejabberd_hooks:run_fold(
@@ -549,7 +553,7 @@ struct
 	    in
 	    if cond1 then (
 	      let packet = pres_last in
-	      let timestamp = state.pres_timestamp in
+	      let _timestamp = state.pres_timestamp in
 		    (*Packet1 = maybe_add_delay(Packet, utc, To, "", Timestamp),*)
 		match privacy_check_packet state to' from packet `Out with
 		  | false ->
@@ -673,26 +677,26 @@ struct
 	    let pres_a = LJIDSet.remove lto state.pres_a in
 	      {state with pres_i; pres_a}
 	| "subscribe" ->
-	    Hooks.run Roster.roster_out_subscription server
-	      (user, server, to', `Subscribe);
+	    ignore (Hooks.run Roster.roster_out_subscription server
+	              (user, server, to', `Subscribe));
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
 	    state
 	| "subscribed" ->
-	    Hooks.run Roster.roster_out_subscription server
-	      (user, server, to', `Subscribed);
+	    ignore (Hooks.run Roster.roster_out_subscription server
+	              (user, server, to', `Subscribed));
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
 	    state
 	| "unsubscribe" ->
-	    Hooks.run Roster.roster_out_subscription server
-	      (user, server, to', `Unsubscribe);
+	    ignore (Hooks.run Roster.roster_out_subscription server
+	              (user, server, to', `Unsubscribe));
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
 	    state
 	| "unsubscribed" ->
-	    Hooks.run Roster.roster_out_subscription server
-	      (user, server, to', `Unsubscribed);
+	    ignore (Hooks.run Roster.roster_out_subscription server
+	              (user, server, to', `Unsubscribed));
 	    check_privacy_route from state (Jlib.jid_remove_resource from)
 	      to' packet;
 	    state
@@ -707,10 +711,10 @@ struct
 	      {state with pres_i; pres_a}
 
   let process_privacy_iq from to' iq state =
-    lwt res, subel, state =
+    let%lwt res, subel, state =
       match iq with
 	| {Jlib.iq_type = `Get subel; _} as iq ->
-	    lwt res =
+	    let%lwt res =
 	      Hooks.run_fold
 		Privacy.privacy_iq_get
 		state.server
@@ -719,7 +723,7 @@ struct
 	    in
 	      Lwt.return (res, subel, state)
 	| {Jlib.iq_type = `Set subel; _} as iq -> (
-	    match_lwt (Hooks.run_fold Privacy.privacy_iq_set state.server
+	    match%lwt (Hooks.run_fold Privacy.privacy_iq_set state.server
 			 (`Error Jlib.err_feature_not_implemented)
 			 (from, to', iq)) with
 	      | `ResultList (res, newprivlist) ->
@@ -795,7 +799,7 @@ struct
       | `XmlStreamStart (_name, attrs) -> (
 	  let default_lang = "en" in	(* TODO *)
 	    match Xml.get_attr_s "xmlns:stream" attrs with
-	      | <:ns<STREAM>> -> (
+	      | [%ns "STREAM"] -> (
 		  let server = Jlib.nameprep (Xml.get_attr_s "to" attrs) in
 		    match server with
 		      | Some server when Jamler_config.is_my_host server -> (
@@ -837,7 +841,7 @@ struct
 					[`XmlElement
 					   ("compression",
 					    [("xmlns",
-					      <:ns<FEATURE_COMPRESS>>)],
+					      [%ns "FEATURE_COMPRESS"])],
 					    [`XmlElement
 					       ("method",
 						[], [`XmlCdata "zlib"])])]
@@ -855,16 +859,16 @@ struct
 					then
 					  [`XmlElement
 					     ("starttls",
-					      [("xmlns", <:ns<TLS>>)],
+					      [("xmlns", [%ns "TLS"])],
 					      [`XmlElement ("required",
 							    [], [])])]
 					else
 					  [`XmlElement
 					     ("starttls",
-					      [("xmlns", <:ns<TLS>>)], [])]
+					      [("xmlns", [%ns "TLS"])], [])]
 				      ) else []
 				    in
-				    lwt stream_feat_els =
+				    let%lwt stream_feat_els =
 				      Hooks.run_fold c2s_stream_features
 					server [] (server) in
 				      send_element
@@ -875,7 +879,7 @@ struct
 					      compress_feature @
 					      [`XmlElement
 						 ("mechanisms",
-						  [("xmlns", <:ns<SASL>>)],
+						  [("xmlns", [%ns "SASL"])],
 						  mechs)] @ stream_feat_els));
 				      fsm_next_state
 					{state with
@@ -892,10 +896,10 @@ struct
 					  let stream_features =
 					    [`XmlElement
 					       ("bind",
-						[("xmlns", <:ns<BIND>>)], []);
+						[("xmlns", [%ns "BIND"])], []);
 					     `XmlElement
 					       ("session",
-						[("xmlns", <:ns<SESSION>>)], [])]
+						[("xmlns", [%ns "SESSION"])], [])]
 					      (*++ RosterVersioningFeature
 						++ ejabberd_hooks:run_fold(
 						c2s_stream_features,
@@ -996,7 +1000,7 @@ struct
 			  `XmlElement
 			    (name, attrs,
 			     [`XmlElement
-				("query", [("xmlns", <:ns<AUTH>>)],
+				("query", [("xmlns", [%ns "AUTH"])],
 				 [`XmlElement ("username", [], ucdata);
 				  `XmlElement ("password", [], []);
 				  `XmlElement ("digest", [], []);
@@ -1006,7 +1010,7 @@ struct
 			  `XmlElement
 			    (name, attrs,
 			     [`XmlElement
-				("query", [("xmlns", <:ns<AUTH>>)],
+				("query", [("xmlns", [%ns "AUTH"])],
 				 [`XmlElement ("username", [], ucdata);
 				  `XmlElement ("password", [], []);
 				  `XmlElement ("resource", [], [])
@@ -1029,7 +1033,7 @@ struct
 		      let dgen pw =
                         Jlib.sha1 (state.streamid ^ pw)
 		      in
-			match_lwt Auth.check_password_digest_with_authmodule
+			match%lwt Auth.check_password_digest_with_authmodule
 			  jid.Jlib.luser state.server p d dgen
 			with
 			  | Some _auth_module -> (
@@ -1037,7 +1041,7 @@ struct
 				"(~w) Accepted legacy authentication for ~s by ~p",
 				[StateData#state.socket,
 				jlib:jid_to_string(JID), AuthModule]),*)
-			      lwt () =
+			      let%lwt () =
 				Lwt_log.notice_f ~section
 				  "%a accepted legacy authentication for %S"
 				  format_pid state.pid
@@ -1050,7 +1054,7 @@ struct
                                     (*?INFO_MSG("(~w) Redirecting ~s to ~s",
                                               [StateData#state.socket,
                                                jlib:jid_to_string(JID), Host]),*)
-				      lwt () = Lwt_log.notice_f ~section "redirecting %s to %s" (Jlib.jid_to_string jid) host in
+				      let%lwt () = Lwt_log.notice_f ~section "redirecting %s to %s" (Jlib.jid_to_string jid) host in
                                         send_element state
 					  (Jlib.serr_see_other_host host);
                                         send_trailer state;
@@ -1067,7 +1071,7 @@ struct
 					(*Res = setelement(4, Res1, []),*)
 					send_element state res;
 					change_shaper state jid;
-					lwt (fs, ts) =
+					let%lwt (fs, ts) =
 					  Hooks.run_fold
 					    Roster.roster_get_subscription_lists
 					    state.server
@@ -1079,7 +1083,7 @@ struct
 					in
 					let fs = ljid :: fs in
 					let ts = ljid :: ts in
-					lwt priv_list =
+					let%lwt priv_list =
                                           Hooks.run_fold
                                             Privacy.privacy_get_user_list
                                             state.server
@@ -1108,7 +1112,7 @@ struct
 					       state = Session_established}
                             )
 			  | _ ->
-			      lwt () =
+			      let%lwt () =
 				Lwt_log.notice_f ~section
 				  "%a failed legacy authentication for %S"
 				  format_pid state.pid
@@ -1122,7 +1126,7 @@ struct
 				  {state with state = Wait_for_auth}
 		    )
 		  | None ->
-		      lwt () =
+		      let%lwt () =
 			Lwt_log.notice_f ~section
 			  "%a forbidden legacy authentication for %S with resource %S"
 			  format_pid state.pid
@@ -1137,7 +1141,7 @@ struct
 			"(~w) Forbidden legacy authentication for ~s",
 			[StateData#state.socket,
 			jlib:jid_to_string(JID)]),*)
-		      lwt () =
+		      let%lwt () =
 			Lwt_log.notice_f ~section
 			  "%a forbidden legacy authentication for %S"
 			  format_pid state.pid
@@ -1149,7 +1153,7 @@ struct
 			fsm_next_state {state with state = Wait_for_auth}
 	      )
 	    | None ->
-		lwt () = process_unauthenticated_stanza state el in
+		let%lwt () = process_unauthenticated_stanza state el in
 		  fsm_next_state {state with state = Wait_for_auth}
 	)
 
@@ -1177,11 +1181,11 @@ struct
 	  let tls_required = state.tls_required in
 	  let sockmod = Socket.get_name state.socket in
 	    match (Xml.get_attr_s "xmlns" attrs), name with
-	      | <:ns<SASL>>, "auth" when (not (sockmod = `Tcp &&
+	      | [%ns "SASL"], "auth" when (not (sockmod = `Tcp &&
 					      tls_required)) -> (
 		  let mech = Xml.get_attr_s "mechanism" attrs in
 		  let client_in = Jlib.decode_base64 (Xml.get_cdata els) in
-		  lwt sasl_result =
+		  let%lwt sasl_result =
 		    SASL.server_start
 		      ~service:"jabber"
 		      ~server_fqdn:state.server
@@ -1209,7 +1213,7 @@ struct
 			    (*AuthModule = xml:get_attr_s(auth_module, Props),*)
 			    (*?INFO_MSG("(~w) Accepted authentication for ~s by ~p",
                               [StateData#state.socket, U, AuthModule]),*)
-			  lwt () =
+			  let%lwt () =
 			    Lwt_log.notice_f ~section
 			      "%a accepted authentication for %S"
 			      format_pid state.pid
@@ -1217,7 +1221,7 @@ struct
 			  in
                             send_element state
                               (`XmlElement ("success",
-                                            [("xmlns", <:ns<SASL>>)], []));
+                                            [("xmlns", [%ns "SASL"])], []));
                             fsm_next_state
 			      {state with
 				 state = Wait_for_stream;
@@ -1230,7 +1234,7 @@ struct
 			  send_element state
 			    (`XmlElement
 			       ("challenge",
-				[("xmlns", <:ns<SASL>>)],
+				[("xmlns", [%ns "SASL"])],
 				[`XmlCdata (Jlib.encode_base64 server_out)]));
 			  fsm_next_state
 			    {state with
@@ -1240,7 +1244,7 @@ struct
 			    "(~w) Failed authentication for ~s@~s",
 			    [StateData#state.socket,
 			    Username, StateData#state.server]),*)
-			  lwt () =
+			  let%lwt () =
 			    Lwt_log.notice_f ~section
 			      "%a failed authentication for %s@%s"
 			      format_pid state.pid
@@ -1249,7 +1253,7 @@ struct
 			    send_element state
 			      (`XmlElement
 				 ("failure",
-				  [("xmlns", <:ns<SASL>>)],
+				  [("xmlns", [%ns "SASL"])],
 				  [`XmlElement (error, [], [])]));
 			    fsm_next_state
 			      {state with
@@ -1258,13 +1262,13 @@ struct
 			  send_element state
 			    (`XmlElement
 			       ("failure",
-				[("xmlns", <:ns<SASL>>)],
+				[("xmlns", [%ns "SASL"])],
 				[`XmlElement (error, [], [])]));
 			  fsm_next_state
 			    {state with
 			       state = Wait_for_feature_request}
 		)
-	      | <:ns<TLS>>, "starttls" when (tls && not tls_enabled &&
+	      | [%ns "TLS"], "starttls" when (tls && not tls_enabled &&
 					       sockmod = `Tcp) ->
 		let tlsopts =		(* TODO *)
 		  (*case ejabberd_config:get_local_option(
@@ -1282,7 +1286,7 @@ struct
 		  XMLReceiver.reset_stream state.xml_receiver;
 		  send_element
 		    state
-		    (`XmlElement ("proceed", [("xmlns", <:ns<TLS>>)], []));
+		    (`XmlElement ("proceed", [("xmlns", [%ns "TLS"])], []));
 		  Socket.starttls socket tlsopts;
 		  let receiver = Socket.activate state.socket state.pid in
 		    fsm_next_state
@@ -1292,14 +1296,14 @@ struct
 			 streamid = new_id();
 			 tls_enabled = true;
 		      }
-	      | <:ns<COMPRESS>>, "compress" when (
+	      | [%ns "COMPRESS"], "compress" when (
 		  zlib && (sockmod = `Tcp (*|| SockMod == tls*))) -> (
 		  match Xml.get_subtag el "method" with
 		    | None ->
 			send_element state
 			  (`XmlElement
 			     ("failure",
-			      [("xmlns", <:ns<COMPRESS>>)],
+			      [("xmlns", [%ns "COMPRESS"])],
 			      [`XmlElement ("setup-failed", [], [])]));
 			fsm_next_state state
 		    | Some method' -> (
@@ -1312,7 +1316,7 @@ struct
 				  state
 				  (`XmlElement
 				     ("compressed",
-				      [("xmlns", <:ns<COMPRESS>>)], []));
+				      [("xmlns", [%ns "COMPRESS"])], []));
 				Socket.compress socket;
 				let receiver =
 				  Socket.activate state.socket state.pid
@@ -1327,7 +1331,7 @@ struct
 			      send_element state
 				(`XmlElement
 				   ("failure",
-				    [("xmlns", <:ns<COMPRESS>>)],
+				    [("xmlns", [%ns "COMPRESS"])],
 				    [`XmlElement
 				       ("unsupported-method",
 					[], [])]));
@@ -1343,7 +1347,7 @@ struct
 		      send_trailer state;
 		      Lwt.return (`Stop state)
 		  ) else (
-		    lwt () = process_unauthenticated_stanza state el in
+		    let%lwt () = process_unauthenticated_stanza state el in
 		      fsm_next_state
 			{state with
 			   state = Wait_for_feature_request}
@@ -1370,16 +1374,16 @@ struct
       | `XmlStreamElement el -> (
 	  let `XmlElement (name, attrs, els) = el in
 	    match Xml.get_attr_s "xmlns" attrs, name with
-	      | <:ns<SASL>>, "response" -> (
+	      | [%ns "SASL"], "response" -> (
 		  let client_in = Jlib.decode_base64 (Xml.get_cdata els) in
-		    match_lwt SASL.server_step sasl_state client_in with
+		    match%lwt SASL.server_step sasl_state client_in with
 		      | SASL.Done props -> (
 			  XMLReceiver.reset_stream state.xml_receiver;
 			  let u = Jlib.nodeprep_exn (List.assoc `Username props) in	(* TODO *)
 			    (*AuthModule = xml:get_attr_s(auth_module, Props),
 			      ?INFO_MSG("(~w) Accepted authentication for ~s by ~p",
 			      [StateData#state.socket, U, AuthModule]),*)
-			  lwt () =
+			  let%lwt () =
 			    Lwt_log.notice_f ~section
 			      "%a accepted authentication for %S"
 			      format_pid state.pid
@@ -1387,7 +1391,7 @@ struct
 			  in
                             send_element state
                               (`XmlElement ("success",
-                                            [("xmlns", <:ns<SASL>>)], []));
+                                            [("xmlns", [%ns "SASL"])], []));
                             fsm_next_state
 			      {state with
 				 state = Wait_for_stream;
@@ -1400,13 +1404,13 @@ struct
 			  send_element state
 			    (`XmlElement
 			       ("challenge",
-				[("xmlns", <:ns<SASL>>)],
+				[("xmlns", [%ns "SASL"])],
 				[`XmlCdata (Jlib.encode_base64 server_out)]));
 			  fsm_next_state
 			    {state with
 			       state = Wait_for_sasl_response sasl_mech}
 		      | SASL.ErrorUser (error, username) ->
-			  lwt () =
+			  let%lwt () =
 			    Lwt_log.notice_f ~section
 			      "%a failed authentication for %S at %s"
 			      format_pid state.pid
@@ -1415,7 +1419,7 @@ struct
 			    send_element state
 			      (`XmlElement
 				 ("failure",
-				  [("xmlns", <:ns<SASL>>)],
+				  [("xmlns", [%ns "SASL"])],
 				  [`XmlElement (error, [], [])]));
 			    fsm_next_state
 			      {state with
@@ -1424,14 +1428,14 @@ struct
 			  send_element state
 			    (`XmlElement
 			       ("failure",
-				[("xmlns", <:ns<SASL>>)],
+				[("xmlns", [%ns "SASL"])],
 				[`XmlElement (error, [], [])]));
 			  fsm_next_state
 			    {state with
 			       state = Wait_for_feature_request}
 		)
 	      | _ ->
-		  lwt () = process_unauthenticated_stanza state el in
+		  let%lwt () = process_unauthenticated_stanza state el in
 		    fsm_next_state
 		      {state with state = Wait_for_feature_request}
 	)
@@ -1456,7 +1460,7 @@ struct
       | `XmlStreamElement el -> (
 	  match Jlib.iq_query_info el with
 	    | `IQ ({Jlib.iq_type = `Set sub_el;
-		    Jlib.iq_xmlns = <:ns<BIND>>; _} as iq) -> (
+		    Jlib.iq_xmlns = [%ns "BIND"]; _} as iq) -> (
 		let u = state.user in
 		let r = Xml.get_path_s sub_el [`Elem "resource"; `Cdata] in
 		let r =
@@ -1485,7 +1489,7 @@ struct
 			      `Result
 				(Some (`XmlElement
 					 ("bind",
-					  [("xmlns", <:ns<BIND>>)],
+					  [("xmlns", [%ns "BIND"])],
 					  [`XmlElement
 					     ("jid", [],
 					      [`XmlCdata
@@ -1521,14 +1525,14 @@ struct
     match msg with
       | `XmlStreamElement el -> (
 	  match Jlib.iq_query_info el with
-	    | `IQ ({Jlib.iq_type = `Set sub_el;
-		    Jlib.iq_xmlns = <:ns<SESSION>>; _} as iq) -> (
+	    | `IQ ({Jlib.iq_type = `Set _sub_el;
+		    Jlib.iq_xmlns = [%ns "SESSION"]; _} as _iq) -> (
 		let u = state.user in
 		let jid = state.jid in
 		  match (Jamler_acl.match_rule
 			   state.server state.access jid false) with
 		    | true ->
-		      lwt () =
+		      let%lwt () =
 			Lwt_log.notice_f ~section
 			  "%a opened session for %s"
 			  format_pid state.pid
@@ -1537,7 +1541,7 @@ struct
 		      let res = Jlib.make_result_iq_reply el in
 			send_element state res;
 			change_shaper state jid;
-			lwt (fs, ts) =
+			let%lwt (fs, ts) =
 			  Hooks.run_fold
 			    Roster.roster_get_subscription_lists
 			    state.server
@@ -1549,7 +1553,7 @@ struct
 			in
 			let fs = ljid :: fs in
 			let ts = ljid :: ts in
-			lwt priv_list =
+			let%lwt priv_list =
                           Hooks.run_fold
                             Privacy.privacy_get_user_list
                             state.server
@@ -1584,7 +1588,7 @@ struct
 		    (*ejabberd_hooks:run(forbidden_session_hook,
 				       StateData#state.server, [JID]),
 		    *)
-			lwt () =
+			let%lwt () =
 			  Lwt_log.notice_f ~section
 			    "%a forbidden session for %s"
 			    format_pid state.pid
@@ -1641,7 +1645,7 @@ struct
 	  )
 	| _ -> el
     in
-    lwt state =
+    let%lwt state =
       match to_jid with
 	| None -> (
 	    match Xml.get_attr_s "type" attrs with
@@ -1677,7 +1681,7 @@ struct
 		)
 	      | "iq" -> (
 		  match Jlib.iq_query_info el with
-		    | `IQ ({Jlib.iq_xmlns = <:ns<PRIVACY>>; _} as iq) ->
+		    | `IQ ({Jlib.iq_xmlns = [%ns "PRIVACY"]; _} as iq) ->
 				(*ejabberd_hooks:run(
 				  user_send_packet,
 				  Server,
@@ -1914,7 +1918,7 @@ session_established(timeout, StateData) ->
       )
 
   let handle_broadcast (`Broadcast data) state =
-    lwt (stop, state) =
+    let%lwt (stop, state) =
       match data with
 	| `RosterItem (ijid, isubscription) ->
 	    let state = roster_change ijid isubscription state in
@@ -1965,7 +1969,7 @@ session_established(timeout, StateData) ->
 	fsm_next_state state
       )
 
-  let node_up node state =
+  let node_up _node state =
     match state.state with
       | Session_established -> (
 	  let {user = u; server = s; resource = r; sid = sid; _} = state in
@@ -2037,7 +2041,7 @@ session_established(timeout, StateData) ->
   let handle msg state =
     match msg with
       | `Tcp_data (socket, data) when socket == state.socket ->
-          lwt () =
+          let%lwt () =
 	    Lwt_log.debug_f ~section
 	      "tcp data %d %S" (String.length data) data
 	  in
@@ -2047,14 +2051,14 @@ session_established(timeout, StateData) ->
 	    in
             let receiver =
 	      if pause > 0.0 then (
-		send_after pause state.pid `Activate;
+		let%lwt () = send_after pause state.pid `Activate in
 		Lwt.return ()
 	      ) else Socket.activate state.socket state.pid
 	    in
               fsm_next_state {state with receiver}
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
-          lwt () = Lwt_log.debug ~section "tcp close" in
+          let%lwt () = Lwt_log.debug ~section "tcp close" in
             (*Gc.print_stat stdout;
             Gc.compact ();
             Gc.print_stat stdout; flush stdout;*)
@@ -2086,13 +2090,13 @@ session_established(timeout, StateData) ->
 
   let terminate state reason =
     XMLReceiver.free state.xml_receiver;
-    lwt () = Socket.close state.socket in
-    lwt () =
+    let%lwt () = Socket.close state.socket in
+    let%lwt () =
       match state.state with
 	| Session_established -> (
 	    match reason with
 	      | `Replaced -> (
-		  lwt () =
+		  let%lwt () =
 		    Lwt_log.notice_f ~section
 		      "%a replaced session for %s"
 		      format_pid state.pid
@@ -2121,7 +2125,7 @@ session_established(timeout, StateData) ->
 		    Lwt.return ()
 		)
 	      | _ -> (
-		  lwt () =
+		  let%lwt () =
 		    Lwt_log.notice_f ~section
 		      "%a close session for %s"
 		      format_pid state.pid

@@ -13,7 +13,7 @@ struct
 	Lwt.return (`IQ {iq with
 			   Jlib.iq_type =
 			`Error (Jlib.err_not_allowed, Some subel)})
-    | {Jlib.iq_type = `Get _subel; iq_xmlns = <:ns<TIME90>>; _} as iq ->
+    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%ns "TIME90"]; _} as iq ->
 	let utc = Jlib.timestamp_to_iso' (Unix.gmtime (Unix.time ())) in
 	  Lwt.return (
 	    `IQ {iq with
@@ -21,10 +21,10 @@ struct
 		`Result
 		  (Some (`XmlElement
 			   ("query",
-			    [("xmlns", <:ns<TIME90>>)],
+			    [("xmlns", [%ns "TIME90"])],
 			    [`XmlElement ("utc", [],
 					  [`XmlCdata utc])])))})
-    | {Jlib.iq_type = `Get _subel; iq_xmlns = <:ns<TIME>>; _} as iq ->
+    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%ns "TIME"]; _} as iq ->
 	let utc, tzo = Jlib.timestamp_to_iso (Unix.time ()) (Jlib.get_tzo ()) in
 	  Lwt.return (
 	    `IQ {iq with
@@ -32,7 +32,7 @@ struct
 		`Result
 		  (Some (`XmlElement
 			   ("query",
-			    [("xmlns", <:ns<TIME>>)],
+			    [("xmlns", [%ns "TIME"])],
 			    [`XmlElement ("time", [],
 					  [`XmlElement ("tzo", [],
 							[`XmlCdata tzo]);
@@ -44,17 +44,17 @@ struct
 			`Error (Jlib.err_service_unavailable, Some subel)})
 
   let start host =
-    Mod_disco.register_feature host <:ns<TIME>>;
-    Mod_disco.register_feature host <:ns<TIME90>>;
+    Mod_disco.register_feature host [%ns "TIME"];
+    Mod_disco.register_feature host [%ns "TIME90"];
     Lwt.return (
-      [Gen_mod.iq_handler `Local host <:ns<TIME>> process_local_iq ();
-       Gen_mod.iq_handler `Local host <:ns<TIME90>> process_local_iq ();
+      [Gen_mod.iq_handler `Local host [%ns "TIME"] process_local_iq ();
+       Gen_mod.iq_handler `Local host [%ns "TIME90"] process_local_iq ();
       ]
     )
 
   let stop host =
-    Mod_disco.unregister_feature host <:ns<TIME>>;
-    Mod_disco.unregister_feature host <:ns<TIME90>>;
+    Mod_disco.unregister_feature host [%ns "TIME"];
+    Mod_disco.unregister_feature host [%ns "TIME90"];
     Lwt.return ()
 
 end

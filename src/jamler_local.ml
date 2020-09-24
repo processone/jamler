@@ -76,7 +76,7 @@ let route from to' packet =
 	)
 
 let start () =
-  let pid = spawn (fun s -> Lwt.return ()) in
+  let pid = spawn (fun _s -> Lwt.return ()) in
     List.iter
       (fun host ->
          Router.register_route ~local_hint:(Some route) host pid

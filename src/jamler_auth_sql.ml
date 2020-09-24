@@ -7,7 +7,7 @@ struct
   let get_password user server =
     let suser = (user : Jlib.nodepreped :> string) in
     let query =
-      [%sql: SELECT @(password)s from users where username = %(suser)s ]
+      [%sql {|SELECT @(password)s from users where username = %(suser)s|}]
     in
       try%lwt
 	let%lwt res = Sql.query server query in
@@ -44,13 +44,13 @@ struct
 
   let does_user_exist user server =
     match%lwt get_password user server with
-      | Some passwd -> Lwt.return true
+      | Some _passwd -> Lwt.return true
       | None -> Lwt.return false
 
   let remove user server =
     let username = (user : Jlib.nodepreped :> string) in
     let query =
-      [%sql:delete from users where username = %(username)s]
+      [%sql {|delete from users where username = %(username)s|}]
     in
       try%lwt
 	let%lwt _ = Sql.query server query in
@@ -62,10 +62,10 @@ struct
   let remove' user server password =
     let username = (user : Jlib.nodepreped :> string) in
     let query =
-      [%sql:
+      [%sql {|
 	delete from users
 	where username = %(username)s and password = %(password)s
-      ] in
+      |}] in
       try%lwt
 	let%lwt _ = Sql.query server query in
 	  Lwt.return ()
@@ -76,10 +76,10 @@ struct
   let try_register user server password =
     let username = (user : Jlib.nodepreped :> string) in
     let query =
-      [%sql:
+      [%sql {|
 	insert into users(username, password)
 	values (%(username)s, %(password)s)
-      ] in
+      |}] in
       try%lwt
 	(* TODO: process insert failures *)
 	let%lwt _ = Sql.query server query in
@@ -91,16 +91,16 @@ struct
   let set_password user server password =
     let username = (user : Jlib.nodepreped :> string) in
     let insert_query =
-      [%sql:
+      [%sql {|
 	insert into users(username, password)
 	values (%(username)s, %(password)s)
-      ] in
+      |}] in
     let update_query =
-      [%sql:
+      [%sql {|
 	update users set
 	  password = %(password)s
         where username = %(username)s
-      ] in
+      |}] in
       try%lwt
 	let%lwt _ = Sql.transaction server
 	  (fun () -> Sql.update_t insert_query update_query) in

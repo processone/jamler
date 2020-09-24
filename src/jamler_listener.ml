@@ -125,7 +125,7 @@ let start_listener (port, family, start) _self =
 	  Unix.ADDR_INET (Unix.inet6_addr_any, port)
   in
     Lwt_unix.setsockopt socket Unix.SO_REUSEADDR true;
-    Lwt_unix.bind socket addr;
+    let%lwt () = Lwt_unix.bind socket addr in
     Lwt_unix.listen socket 1024;
     accept start socket
 

@@ -72,17 +72,17 @@ let add_pool host =
   let pool =
     Lwt_pool.create 10
       (fun () ->
-	 lwt dbh =
+	 let%lwt dbh =
 	   PG.connect
 	     ~host:"localhost"
 	     ~user:"ejabberd"
 	     ~password:"ejabberd"
 	     ~database:"ejabberd" ()
 	 in
-	 lwt () = PG.prepare dbh
+	 let%lwt () = PG.prepare dbh
 	   ~query:"SET default_transaction_isolation TO SERIALIZABLE" ()
 	 in
-	 lwt _ = PG.execute dbh ~params:[] () in
+	 let%lwt _ = PG.execute dbh ~params:[] () in
 	   Lwt.return {dbh; queries = Hashtbl.create 10}
       )
   in
@@ -120,31 +120,31 @@ let is_exn_unique_violation =
 let qcounter = ref 0
 
 let query' q st =
-  lwt name =
-    try_lwt
+  let%lwt name =
+    try%lwt
       Lwt.return (Hashtbl.find st.queries q.query)
     with
       | Not_found ->
 	  incr qcounter;
 	  let name = "q" ^ string_of_int !qcounter in
 	    Hashtbl.add st.queries q.query name;
-	    lwt () =
+	    let%lwt () =
 	      PG.prepare st.dbh
 		~query:q.query ~name:name ()
 	    in
 	      Lwt.return name
   in
-  lwt rows = PG.execute st.dbh ~name:name ~params:q.params () in
+  let%lwt rows = PG.execute st.dbh ~name:name ~params:q.params () in
     Lwt.return (process_results rows q.handler)
 
 let query host q =
   match Lwt.get state_key with
     | Some _ ->
-	lwt () =
+	let%lwt () =
 	  Lwt_log.error ~section
 	    "Sql.query called inside transaction"
 	in
-	  raise_lwt (Aborted "Sql.query called inside transaction")
+	  raise (Aborted "Sql.query called inside transaction")
     | None ->
 	let pool = get_pool host in
 	  Lwt_pool.use pool (query' q)
@@ -154,11 +154,11 @@ let query_t q =
     | Some st ->
 	query' q st
     | None ->
-	lwt () =
+	let%lwt () =
 	  Lwt_log.error ~section
 	    "Sql.query_t called outside transaction"
 	in
-	  raise_lwt (Aborted "Sql.query_t called outside transaction")
+	  raise (Aborted "Sql.query_t called outside transaction")
 
 let max_transaction_restarts = 10
 
@@ -169,26 +169,26 @@ let transaction host f =
     | None ->
 	let transaction' f st =
 	  let rec loop f n () =
-	    lwt () = PG.begin_work st.dbh in
-	      try_lwt
-		lwt res = f () in
-		lwt () = PG.commit st.dbh in
+	    let%lwt () = PG.begin_work st.dbh in
+	      try%lwt
+		let%lwt res = f () in
+		let%lwt () = PG.commit st.dbh in
 		  Lwt.return res
 	      with
 		| Error _ as exn when is_exn_rollback exn ->
-		    lwt () = PG.rollback st.dbh in
+		    let%lwt () = PG.rollback st.dbh in
 		      if n > 0 then (
 			loop f (n - 1) ()
 		      ) else (
-			lwt () =
+			let%lwt () =
 			  Lwt_log.error ~section ~exn
 			    "sql transaction restarts exceeded"
 			in
-			  raise_lwt (Aborted "sql transaction restarts exceeded")
+			  raise (Aborted "sql transaction restarts exceeded")
 		      )
 		| exn ->
-		    lwt () = PG.rollback st.dbh in
-		    lwt () =
+		    let%lwt () = PG.rollback st.dbh in
+		    let%lwt () =
 		      Lwt_log.error ~section ~exn "sql transaction failed"
 		    in
 		      Lwt.fail exn
@@ -201,26 +201,26 @@ let transaction host f =
 let update_t insert_query update_query =
   match Lwt.get state_key with
     | Some st -> (
-	lwt () = PG.prepare st.dbh ~query:"SAVEPOINT update_sp" () in
-	lwt _ = PG.execute st.dbh ~params:[] () in
-	  try_lwt
-	    lwt _ = query_t insert_query in
+	let%lwt () = PG.prepare st.dbh ~query:"SAVEPOINT update_sp" () in
+	let%lwt _ = PG.execute st.dbh ~params:[] () in
+	  try%lwt
+	    let%lwt _ = query_t insert_query in
 	      Lwt.return ()
 	  with
 	    | exn when is_exn_unique_violation exn ->
-		lwt () =
+		let%lwt () =
 		  PG.prepare st.dbh ~query:"ROLLBACK TO SAVEPOINT update_sp" ()
 		in
-		lwt _ = PG.execute st.dbh ~params:[] () in
-		lwt _ = query_t update_query in
+		let%lwt _ = PG.execute st.dbh ~params:[] () in
+		let%lwt _ = query_t update_query in
 		  Lwt.return ()
       )
     | None ->
-	lwt () =
+	let%lwt () =
 	  Lwt_log.error ~section
 	    "Sql.update_t called outside transaction"
 	in
-	  raise_lwt (Aborted "Sql.update_t called outside transaction")
+	  raise (Aborted "Sql.update_t called outside transaction")
 
 let string_of_bool = PG.string_of_bool
 let bool_of_string = PG.bool_of_string

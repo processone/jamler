@@ -1,4 +1,4 @@
-open Process
+(*open Process*)
 
 module XMLReceiver = Jamler_receiver
 module GenServer = Gen_server
@@ -107,7 +107,7 @@ let process_pid_file () =
 let main () =
   let%lwt () = process_pid_file () in
   let%lwt () = Erl_epmd.start !name !cookie in
-  Jamler_cluster.start ();
+  ignore (Jamler_cluster.start ());
   let%lwt () = Jamler_config.read_config !config_file_path in
   let%lwt () = Jamler_captcha.check_captcha_setup () in
   Jamler_local.start ();

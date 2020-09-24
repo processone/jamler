@@ -56,7 +56,8 @@ struct
 	    | None -> receive self
 	    | Some timeout ->
 		Lwt.pick [receive self;
-			  (Lwt_unix.sleep timeout >> Lwt.return `Timeout)]
+			  (let%lwt () = Lwt_unix.sleep timeout in
+                           Lwt.return `Timeout)]
 	in
           match msg with
 	    | #system_msg ->

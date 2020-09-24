@@ -88,67 +88,67 @@ struct
   let sql_get_default_privacy_list luser lserver =
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql {|
 	select @(name)s from privacy_default_list
 	where username=%(username)s
-      >>
+      |}]
     in
       Sql.query lserver query
 
   let sql_get_default_privacy_list_t luser =
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql {|
 	select @(name)s from privacy_default_list
 	where username=%(username)s
-      >>
+      |}]
     in
       Sql.query_t query
 
   let sql_get_privacy_list_names luser lserver =
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql {|
 	select @(name)s from privacy_list
 	where username=%(username)s
-      >>
+      |}]
     in
       Sql.query lserver query
 
   let sql_get_privacy_list_names_t luser =
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql {|
 	select @(name)s from privacy_list
 	where username=%(username)s
-      >>
+      |}]
     in
       Sql.query_t query
 
   let sql_get_privacy_list_id luser lserver name =
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql {|
 	select @(id)d from privacy_list
 	where username=%(username)s and name=%(name)s
-      >>
+      |}]
     in
       Sql.query lserver query
 
   let sql_get_privacy_list_id_t luser name =
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql {|
 	select @(id)d from privacy_list
 	where username=%(username)s and name=%(name)s
-      >>
+      |}]
     in
       Sql.query_t query
 
   let sql_get_privacy_list_data luser lserver name =
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql {|
 	select @(t)s, @(value)s, @(action)s, @(ord)d,
                @(match_all)b, @(match_iq)b,
                @(match_message)b, @(match_presence_in)b, @(match_presence_out)b
@@ -156,82 +156,82 @@ struct
         where id = (select id from privacy_list where
                     username=%(username)s and name=%(name)s)
         order by ord
-      >>
+      |}]
     in
       Sql.query lserver query
 
   let sql_get_privacy_list_data_by_id id lserver =
     let query =
-      <:sql<
+      [%sql {|
 	select @(t)s, @(value)s, @(action)s, @(ord)d,
                @(match_all)b, @(match_iq)b,
                @(match_message)b, @(match_presence_in)b, @(match_presence_out)b
         from privacy_list_data 
         where id=%(id)d order by ord
-      >>
+      |}]
     in
       Sql.query lserver query
 
   let sql_set_default_privacy_list luser name =
     let username = (luser : Jlib.nodepreped :> string) in
     let insert_query =
-      <:sql<
+      [%sql {|
 	insert into privacy_default_list(username, name)
 	values (%(username)s, %(name)s)
-      >>
+      |}]
     in
     let update_query =
-      <:sql<
+      [%sql {|
 	update privacy_default_list
 	set name = %(name)s
         where username = %(username)s
-      >>
+      |}]
     in
       Sql.update_t insert_query update_query
 
   let sql_unset_default_privacy_list luser lserver =
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql {|
 	delete from privacy_default_list
         where username=%(username)s
-      >>
+      |}]
     in
       Sql.query lserver query
 
   let sql_remove_privacy_list luser name =
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql {|
 	delete from privacy_list
 	where username=%(username)s and name=%(name)s
-      >>
+      |}]
     in
       Sql.query_t query
 
   let sql_add_privacy_list luser name =
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
-      <:sql<
+      [%sql {|
 	insert into privacy_list(username, name)
 	values (%(username)s, %(name)s)
-      >>
+      |}]
     in
       Sql.query_t query
 
   let sql_set_privacy_list id ritems =
     let query =
-      <:sql<
+      [%sql {|
 	delete from privacy_list_data
 	where id=%(id)d
-      >>
+      |}]
     in
-    lwt _ = Sql.query_t query in
+    let%lwt _ = Sql.query_t query in
       Lwt_list.iter_s
 	(fun (stype, svalue, saction, order, match_all, match_iq,
 	      match_message, match_presence_in, match_presence_out) ->
 	   let query =
-	     <:sql<
+	     [%sql {|
 	       insert into privacy_list_data(
 		 id, t, value, action, ord, match_all, match_iq,
 		 match_message, match_presence_in,
@@ -243,9 +243,9 @@ struct
 		 %(match_message)b, %(match_presence_in)b,
 		 %(match_presence_out)b
 	       )
-	     >>
+	     |}]
 	   in
-	   lwt _ = Sql.query_t query in
+	   let%lwt _ = Sql.query_t query in
 	     Lwt.return ()
 	) ritems
 
@@ -254,14 +254,14 @@ struct
     let server = (lserver : Jlib.namepreped :> string) in
     let us = user ^ "@" ^ server in
     let del_privacy_list_query =
-      <:sql<delete from privacy_list where username=%(user)s>> in
+      [%sql {|delete from privacy_list where username=%(user)s|}] in
     let del_privacy_list_data_query =
-      <:sql<delete from privacy_list_data where value=%(us)s>> in
+      [%sql {|delete from privacy_list_data where value=%(us)s|}] in
     let del_privacy_default_list_query =
-      <:sql<delete from privacy_default_list where username=%(user)s>> in
-    lwt _ = Sql.query lserver del_privacy_list_query in
-    lwt _ = Sql.query lserver del_privacy_list_data_query in
-    lwt _ = Sql.query lserver del_privacy_default_list_query in
+      [%sql {|delete from privacy_default_list where username=%(user)s|}] in
+    let%lwt _ = Sql.query lserver del_privacy_list_query in
+    let%lwt _ = Sql.query lserver del_privacy_list_data_query in
+    let%lwt _ = Sql.query lserver del_privacy_default_list_query in
       Lwt.return ()
 
   let raw_to_item (stype, svalue, saction, order, match_all, match_iq,
@@ -475,7 +475,7 @@ struct
 (* From is the sender, To is the destination.
    If Dir = out, User@Server is the sender account (From).
    If Dir = in, User@Server is the destination account (To). *)
-  let check_packet _ (user, server, ({list; _} as userlist),
+  let check_packet _ (_user, _server, ({list; _} as userlist),
 		      (from, to', `XmlElement (pname, attrs, _)), dir) =
     match list with
       | [] ->
@@ -514,12 +514,12 @@ struct
 	    (Jamler_hooks.OK, res)
 
 
-  let process_local_iq _from _to = function
+  let _process_local_iq _from _to = function
     | {Jlib.iq_type = `Set subel; _} as iq ->
 	Lwt.return (`IQ {iq with
 			   Jlib.iq_type =
 			`Error (Jlib.err_not_allowed, Some subel)})
-    | {Jlib.iq_type = `Get _subel; iq_xmlns = <:ns<TIME90>>; _} as iq ->
+    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%ns "TIME90"]; _} as iq ->
 	let utc = Jlib.timestamp_to_iso' (Unix.gmtime (Unix.time ())) in
 	  Lwt.return (
 	    `IQ {iq with
@@ -527,10 +527,10 @@ struct
 		`Result
 		  (Some (`XmlElement
 			   ("query",
-			    [("xmlns", <:ns<TIME90>>)],
+			    [("xmlns", [%ns "TIME90"])],
 			    [`XmlElement ("utc", [],
 					  [`XmlCdata utc])])))})
-    | {Jlib.iq_type = `Get _subel; iq_xmlns = <:ns<TIME>>; _} as iq ->
+    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%ns "TIME"]; _} as iq ->
 	let utc, tzo = Jlib.timestamp_to_iso (Unix.time ()) (Jlib.get_tzo ()) in
 	  Lwt.return (
 	    `IQ {iq with
@@ -538,7 +538,7 @@ struct
 		`Result
 		  (Some (`XmlElement
 			   ("query",
-			    [("xmlns", <:ns<TIME>>)],
+			    [("xmlns", [%ns "TIME"])],
 			    [`XmlElement ("time", [],
 					  [`XmlElement ("tzo", [],
 							[`XmlCdata tzo]);
@@ -559,18 +559,18 @@ struct
 
 
   let process_lists_get luser lserver active =
-    lwt default =
-      match_lwt sql_get_default_privacy_list luser lserver with
+    let%lwt default =
+      match%lwt sql_get_default_privacy_list luser lserver with
 	| [] -> Lwt.return None
 	| [default] -> Lwt.return (Some default)
 	| _ -> Lwt.return None
     in
-      match_lwt sql_get_privacy_list_names luser lserver with
+      match%lwt sql_get_privacy_list_names luser lserver with
 	| [] ->
 	    Lwt.return (
 	      `Result
 		(Some
-		   (`XmlElement ("query", [("xmlns", <:ns<PRIVACY>>)], []))))
+		   (`XmlElement ("query", [("xmlns", [%ns "PRIVACY"])], []))))
 	| names ->
 	    let items =
 	      List.map
@@ -591,25 +591,25 @@ struct
 	    in
 	      Lwt.return (
 		`Result (Some
-			   (`XmlElement ("query", [("xmlns", <:ns<PRIVACY>>)],
+			   (`XmlElement ("query", [("xmlns", [%ns "PRIVACY"])],
 					 items))))
 
 
   let process_list_get luser lserver =
     function
       | Some name -> (
-	  match_lwt sql_get_privacy_list_id luser lserver name with
+	  match%lwt sql_get_privacy_list_id luser lserver name with
 	    | [] ->
 		Lwt.return (`Error Jlib.err_item_not_found)
 	    | [id] -> (
-		lwt ritems = sql_get_privacy_list_data_by_id id lserver in
+		let%lwt ritems = sql_get_privacy_list_data_by_id id lserver in
 		let items = List.map raw_to_item ritems in
 		let litems = List.map item_to_xml items in
 		  Lwt.return (
 		    `Result
 		      (Some
 			 (`XmlElement
-			    ("query", [("xmlns", <:ns<PRIVACY>>)],
+			    ("query", [("xmlns", [%ns "PRIVACY"])],
 			     [`XmlElement ("list",
 					   [("name", name)], litems)]))))
 	      )
@@ -623,7 +623,7 @@ struct
 			{name = active; _}) =
     let {Jlib.luser = luser; Jlib.lserver = lserver; _} = from in
     let `XmlElement (_, _, els) = subel in
-    lwt res =
+    let%lwt res =
       match Xml.remove_cdata els with
 	| [] ->
 	    process_lists_get luser lserver active
@@ -776,21 +776,21 @@ let parse_items =
 		Lwt.return (`Error Jlib.err_bad_request)
 	    | PRemove -> (
 		let f () =
-		  match_lwt sql_get_default_privacy_list_t luser with
+		  match%lwt sql_get_default_privacy_list_t luser with
 		    | [] ->
-			lwt _ = sql_remove_privacy_list luser name in
+			let%lwt _ = sql_remove_privacy_list luser name in
 			  Lwt.return (`Result None)
 		    | [default] ->
 			(* TODO: check active *)
 			if name = default
 			then Lwt.return (`Error Jlib.err_conflict)
 			else (
-			  lwt _ = sql_remove_privacy_list luser name in
+			  let%lwt _ = sql_remove_privacy_list luser name in
 			    Lwt.return (`Result None)
 			)
 		    | _ -> assert false
 		in
-		  match_lwt Sql.transaction lserver f with
+		  match%lwt Sql.transaction lserver f with
 		    | `Error _ as error ->
 			Lwt.return error
 		    | `Result _ as res ->
@@ -808,21 +808,21 @@ let parse_items =
 	    | PList list -> (
 		let ritems = List.map item_to_raw list in
 		let f () =
-		  lwt id =
-		    match_lwt sql_get_privacy_list_id_t luser name with
+		  let%lwt id =
+		    match%lwt sql_get_privacy_list_id_t luser name with
 		      | [] -> (
-			  lwt _ = sql_add_privacy_list luser name in
-			    match_lwt sql_get_privacy_list_id_t luser name with
+			  let%lwt _ = sql_add_privacy_list luser name in
+			    match%lwt sql_get_privacy_list_id_t luser name with
 			      | [i] -> Lwt.return i
 			      | _ -> assert false
 			)
 		      | [i] -> Lwt.return i
 		      | _ -> assert false
 		  in
-		  lwt _ = sql_set_privacy_list id ritems in
+		  let%lwt _ = sql_set_privacy_list id ritems in
 		    Lwt.return (`Result None)
 		in
-		  match_lwt Sql.transaction lserver f with
+		  match%lwt Sql.transaction lserver f with
 		    | `Error _ as error ->
 			Lwt.return error
 		    | `Result _ as res ->
@@ -851,7 +851,7 @@ let parse_items =
       ) items
 
   let get_roster_data luser lserver =
-    lwt roster_items =
+    let%lwt roster_items =
       Jamler_hooks.run_fold Gen_roster.roster_get lserver [] (luser, lserver)
     in
     let subscriptions, groups =
@@ -877,7 +877,7 @@ let parse_items =
       Lwt.return (subscriptions, groups)
 
   let make_userlist luser lserver name items =
-    lwt subscriptions, groups =
+    let%lwt subscriptions, groups =
       if is_list_needdb items
       then get_roster_data luser lserver
       else Lwt.return (LJIDMap.empty, LJIDGroupSet.empty)
@@ -892,13 +892,13 @@ let parse_items =
   let process_active_set luser lserver =
     function
       | Some name -> (
-	  match_lwt sql_get_privacy_list_id luser lserver name with
+	  match%lwt sql_get_privacy_list_id luser lserver name with
 	    | [] ->
 		Lwt.return (`Error Jlib.err_item_not_found)
 	    | [id] -> (
-		lwt ritems = sql_get_privacy_list_data_by_id id lserver in
+		let%lwt ritems = sql_get_privacy_list_data_by_id id lserver in
 		let items = List.map raw_to_item ritems in
-		lwt userlist = make_userlist luser lserver name items in
+		let%lwt userlist = make_userlist luser lserver name items in
 		  Lwt.return (`ResultList (None, userlist))
 	      )
 	    | _ -> assert false
@@ -910,12 +910,12 @@ let parse_items =
     function
       | Some name -> (
 	  let f () =
-	    match_lwt sql_get_privacy_list_names_t luser with
+	    match%lwt sql_get_privacy_list_names_t luser with
 	      | [] ->
 		  Lwt.return (`Error Jlib.err_item_not_found)
 	      | names -> (
 		  if List.mem name names then (
-		    lwt _ = sql_set_default_privacy_list luser name in
+		    let%lwt _ = sql_set_default_privacy_list luser name in
 		      Lwt.return (`Result None)
 		  ) else
 		    Lwt.return (`Error Jlib.err_item_not_found)
@@ -924,14 +924,14 @@ let parse_items =
 	    Sql.transaction lserver f
 	)
       | None -> (
-	  lwt _ = sql_unset_default_privacy_list luser lserver in
+	  let%lwt _ = sql_unset_default_privacy_list luser lserver in
 	    Lwt.return (`Result None)
 	)
 
   let process_iq_set _ (from, _to', {Jlib.iq_type = `Set subel; _}) =
     let {Jlib.luser = luser; Jlib.lserver = lserver; _} = from in
     let `XmlElement (_, _, els) = subel in
-    lwt res =
+    let%lwt res =
       match Xml.remove_cdata els with
 	| [`XmlElement (name, attrs, subels)] -> (
 	    let list_name = Xml.get_attr "name" attrs in
@@ -953,24 +953,24 @@ let parse_items =
 
 
   let get_user_list _ (luser, lserver) =
-    match_lwt sql_get_default_privacy_list luser lserver with
+    match%lwt sql_get_default_privacy_list luser lserver with
       | [] ->
 	  Lwt.return (Jamler_hooks.OK, new_userlist ())
       | [default] -> (
-	  lwt ritems = sql_get_privacy_list_data luser lserver default in
+	  let%lwt ritems = sql_get_privacy_list_data luser lserver default in
 	  let items = List.map raw_to_item ritems in
-	  lwt userlist = make_userlist luser lserver default items in
+	  let%lwt userlist = make_userlist luser lserver default items in
 	    Lwt.return (Jamler_hooks.OK, userlist)
 	)
       | _ ->
 	  Lwt.return (Jamler_hooks.OK, new_userlist ())
 
   let remove_user (user, server) =
-    lwt _ = sql_del_privacy_lists user server in
+    let%lwt _ = sql_del_privacy_lists user server in
       Lwt.return Jamler_hooks.OK
 
   let start host =
-    Mod_disco.register_feature host <:ns<PRIVACY>>;
+    Mod_disco.register_feature host [%ns "PRIVACY"];
     Lwt.return (
       [Gen_mod.fold_hook privacy_iq_get host process_iq_get 50;
        Gen_mod.fold_hook privacy_iq_set host process_iq_set 50;
@@ -980,12 +980,12 @@ let parse_items =
 (*    ejabberd_hooks:add(privacy_updated_list, Host,
 		       ?MODULE, updated_list, 50),
 *)
-       Gen_mod.iq_handler `SM host <:ns<PRIVACY>> process_iq ();
+       Gen_mod.iq_handler `SM host [%ns "PRIVACY"] process_iq ();
       ]
     )
 
   let stop host =
-    Mod_disco.register_feature host <:ns<PRIVACY>>;
+    Mod_disco.register_feature host [%ns "PRIVACY"];
     Lwt.return ()
 
 (*

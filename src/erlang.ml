@@ -29,7 +29,7 @@ let term_to_string term =
 	  Buffer.add_string b "\'";
 	  Buffer.add_string b x;
 	  Buffer.add_string b "\'";
-      | ErlReference (node, x) ->
+      | ErlReference (_node, x) ->
 	  Buffer.add_string b "#Ref<";
 	  Buffer.add_string b (Printf.sprintf "%S" x);
 	  Buffer.add_string b ">";
@@ -193,7 +193,7 @@ let term_to_buffer b term =
 	    Buffer.add_char b (Char.chr ((len lsr 16) land 0xff));
 	    Buffer.add_char b (Char.chr ((len lsr 8) land 0xff));
 	    Buffer.add_char b (Char.chr (len land 0xff));
-	    for i = 0 to len - 1 do
+	    for _i = 0 to len - 1 do
 	      match !u with
 		| ErlCons (x, t) ->
 		    aux b x;

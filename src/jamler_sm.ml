@@ -15,9 +15,10 @@ type msg =
     [ Router.msg | `Broadcast of broadcast | `Replaced
     | `Node_up of string
     | `Node_down of string ]
-type sm_msg = msg
+(*type sm_msg = msg*)
 type info = [ `TODO ] list
 
+[@@@warning "-32"]
 module Session :
 sig
   type external_owner =
@@ -414,7 +415,7 @@ let check_max_sessions user server =
     match sids with
       | s :: sids' when List.length sids > max_sessions ->
           let min_sid = List.fold_left min s sids' in
-          let (_, pid) = min_sid in
+          let (_, _pid) = min_sid in
             (* TODO *)
             ()
             (*Pid ! replaced*)
@@ -465,7 +466,7 @@ let set_presence sid user server resource priority _presence info nodes =
   (*ejabberd_hooks:run(set_presence_hook, jlib:nameprep(Server),
       	       [User, Server, Resource, Presence]).*)
 
-let unset_presence sid user server resource status info nodes =
+let unset_presence sid user server resource _status info nodes =
   set_session sid user server resource (-2) info nodes
   (*ejabberd_hooks:run(unset_presence_hook, jlib:nameprep(Server),
       	       [User, Server, Resource, Status]).*)
@@ -542,7 +543,8 @@ let route_message from to' packet =
             | "groupchat"
             | "headline" ->
       		bounce_offline_message from to' packet
-            | _ -> (
+            | _ ->
+               ignore (
       		match%lwt Auth.does_user_exist luser lserver with
       		  | true -> (
       		(* TODO *) Lwt.return ()
@@ -562,8 +564,8 @@ let route_message from to' packet =
       		      in
       			Router.route to' from err;
 			Lwt.return ()
-      	      );
-		()
+      	         );
+	       ()
         )
 
 let process_iq from to' packet =
@@ -595,7 +597,7 @@ let process_iq from to' packet =
    for the target session/resource to which a stanza is addressed,
    or if there are no current sessions for the user.
 *)
-let is_privacy_allow from to' packet =
+let is_privacy_allow _from _to' _packet =
   true				(* TODO *)
 (*
     User = To#jid.user,
@@ -738,7 +740,7 @@ let do_route from to' packet =
     if node <> Erl_epmd.node () then (
       match (lresource :> string) with
 	| "" -> (
-	    let `XmlElement (name, attrs, _els) = packet in
+	    let `XmlElement (name, _attrs, _els) = packet in
 	      match name with
 		| "iq" ->
 		    ignore (process_iq from to' packet)
@@ -791,7 +793,7 @@ let broadcast to' data =
        Jlib.lserver = lserver; _} = to' in
     List.iter
       (fun r ->
-	 let to' = Jlib.jid_replace_resource' to' r in
+	(*let to' = Jlib.jid_replace_resource' to' r in*)
 	 let packet = `Broadcast data in
 	   match find_sids_by_usr luser lserver r with
 	    | [] -> ()
@@ -905,7 +907,7 @@ struct
 	      (match get_sid_by_usr user server resource with
 		 | None ->
 		     ()
-		 | Some (ts', owner) when ts' <> ts ->
+		 | Some (ts', _owner) when ts' <> ts ->
 		     ()
 		 | Some (_ts, External _) ->
 		     ()
@@ -937,7 +939,7 @@ struct
 	    Lwt.return (`Continue state)
       | #GenServer.msg -> assert false
 
-  let terminate state _reason =
+  let terminate _state _reason =
     Lwt.return ()
 
 end

@@ -2,6 +2,8 @@ open Process
 module GenServer = Gen_server
 module Hooks = Jamler_hooks
 
+[@@@warning "-52"]
+
 (* Wont' work on 32-bit arch *)
 let hash s =
   let h = ref 0 in

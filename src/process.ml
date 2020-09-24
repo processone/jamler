@@ -95,7 +95,7 @@ let spawn f =
     proc.t <- t;
     pid
 
-exception Queue_limit
+(*exception Queue_limit*)
 
 let send pid msg =
   let proc = pid_to_proc pid in
@@ -221,22 +221,22 @@ type timer = unit Lwt.t
 type 'a timer_msg = [ `TimerTimeout of timer * 'a ]
 
 let send_after timeout pid msg =
-  Lwt_unix.sleep timeout >>
-    (pid $! msg;
-     Lwt.return ())
+  let%lwt () = Lwt_unix.sleep timeout in
+  pid $! msg;
+  Lwt.return ()
 
 let apply_after timeout f =
-  Lwt_unix.sleep timeout >>
-    (let%lwt () = f () in
-       Lwt.return ())
+  let%lwt () = Lwt_unix.sleep timeout in
+  let%lwt () = f () in
+  Lwt.return ()
 
 let start_timer timeout pid msg =
   let t0 = Lwt.return () in
   let timer = ref t0 in
   let t =
-    Lwt_unix.sleep timeout >>
-      (pid $! `TimerTimeout (!timer, msg);
-       Lwt.return ())
+    let%lwt () = Lwt_unix.sleep timeout in
+    pid $! `TimerTimeout (!timer, msg);
+    Lwt.return ()
   in
     match Lwt.state t with
       | Lwt.Sleep ->

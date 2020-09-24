@@ -1,5 +1,5 @@
 type t =
-    {mutable buf : string;
+    {mutable buf : bytes;
      mutable start : int;
      mutable len : int;
      mutable size : int;
@@ -7,7 +7,7 @@ type t =
     }
 
 let create size =
-  let buf = String.create size in
+  let buf = Bytes.create size in
     {buf;
      start = 0;
      len = 0;
@@ -16,10 +16,10 @@ let create size =
     }
 
 let contents b =
-  String.sub b.buf b.start b.len
+  Bytes.sub_string b.buf b.start b.len
 
 let reset b =
-  b.buf <- String.create b.initial_size;
+  b.buf <- Bytes.create b.initial_size;
   b.start <- 0;
   b.len <- 0;
   b.size <- b.initial_size
@@ -34,8 +34,8 @@ let resize b min_size =
       then next_size := Sys.max_string_length
       else failwith "Jamler_buffer.resize: cannot grow buffer"
     );
-    let buf = String.create !next_size in
-      String.blit b.buf b.start buf 0 b.len;
+    let buf = Bytes.create !next_size in
+      Bytes.blit b.buf b.start buf 0 b.len;
       b.buf <- buf;
       b.start <- 0;
       b.size <- !next_size
@@ -43,7 +43,7 @@ let resize b min_size =
 let add_char b c =
   if b.start + b.len >= b.size
   then resize b (b.start + b.len + 1);
-  b.buf.[b.start + b.len] <- c;
+  Bytes.set b.buf (b.start + b.len) c;
   b.len <- b.len + 1
 
 let add_substring b s ofs len =
@@ -61,7 +61,7 @@ let remove b len =
   b.start <- b.start + len;
   b.len <- b.len - len;
   if b.start > b.size lsr 1 then (
-    String.blit b.buf b.start b.buf 0 b.len;
+    Bytes.blit b.buf b.start b.buf 0 b.len;
     b.start <- 0;
   )
 
@@ -70,4 +70,4 @@ let length b = b.len
 let sub b ofs len =
   if ofs + len > b.len
   then invalid_arg "Jamler_buffer.sub";
-  String.sub b.buf (b.start + ofs) len
+  Bytes.sub_string b.buf (b.start + ofs) len

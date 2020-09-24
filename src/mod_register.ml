@@ -15,7 +15,7 @@ end
   =
 struct
   let name = "mod_register"
-  let section = Jamler_log.new_section name
+  let _section = Jamler_log.new_section name
 
   let is_captcha_enabled =
     Config.(get_module_opt_with_default
@@ -25,7 +25,7 @@ struct
     Config.(get_module_opt_with_default
 	      name ["password_strength"] int 0)
 
-  let ip_access =
+  let _ip_access =
     Config.(get_module_opt_with_default
 	      name ["ip_access"] (list ip) [])
 
@@ -46,19 +46,19 @@ struct
 
   module TimeTreap = Treap.Make
     (struct
-       let compare = Pervasives.compare
+       let compare = Stdlib.compare
        let hash = Hashtbl.hash
        let equal = (=)
        type t = source
      end)
     (struct
-       let compare = Pervasives.compare
+       let compare = Stdlib.compare
        type t = int
      end)
 
   let timeout_treap = ref TimeTreap.empty
 
-  let check_ip_access _ _ =
+  let _check_ip_access _ _ =
     (* TODO *)
     true
 
@@ -341,7 +341,7 @@ struct
 		  match from with
 		    | {Jlib.luser = luser;
 		       Jlib.lserver = s; _} when s = lserver ->
-			let res_iq = {Jlib.iq_xmlns = [%ns:REGISTER];
+			let res_iq = {Jlib.iq_xmlns = [%ns "REGISTER"];
 				      Jlib.iq_id = id;
 				      Jlib.iq_lang = "";
 				      Jlib.iq_type = `Result (Some subel)} in
@@ -488,7 +488,7 @@ struct
   let stream_feature_register acc _host =
     Lwt.return
       (Hooks.OK, (`XmlElement ("register",
-			       [("xmlns", [%ns:FEATURE_IQREGISTER])],
+			       [("xmlns", [%ns "FEATURE_IQREGISTER"])],
 			       [])) :: acc)
 
   let unauthenticated_iq_register _acc ((lserver : Jlib.namepreped), iq, ip) =
@@ -506,10 +506,10 @@ struct
 	      assert false
 
   let start host =
-    Mod_disco.register_feature host [%ns:REGISTER];
+    Mod_disco.register_feature host [%ns "REGISTER"];
     Lwt.return (
-      [Gen_mod.iq_handler `Local host [%ns:REGISTER] process_iq ();
-       Gen_mod.iq_handler `SM host [%ns:REGISTER] process_iq ();
+      [Gen_mod.iq_handler `Local host [%ns "REGISTER"] process_iq ();
+       Gen_mod.iq_handler `SM host [%ns "REGISTER"] process_iq ();
        Gen_mod.fold_hook Jamler_c2s.c2s_stream_features host
  	 stream_feature_register 50;
        Gen_mod.fold_hook Jamler_c2s.c2s_unauthenticated_iq host
@@ -518,7 +518,7 @@ struct
     )
 
   let stop host =
-    Mod_disco.unregister_feature host [%ns:REGISTER];
+    Mod_disco.unregister_feature host [%ns "REGISTER"];
     Lwt.return ()
 
 end

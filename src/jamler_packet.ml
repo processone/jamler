@@ -1,4 +1,3 @@
-open Process
 module Buffer = Jamler_buffer
 
 type header =
@@ -33,17 +32,17 @@ let header_len =
 
 exception Size_limit
 
-let parse_len st h pos =
+let parse_len st (h : bytes) pos =
   match st.header with
     | BE1 ->
-	Char.code h.[pos]
+	Char.code (Bytes.get h pos)
     | BE2 ->
-	(Char.code h.[pos] lsl 8) lor Char.code h.[pos + 1]
+	(Char.code (Bytes.get h pos) lsl 8) lor Char.code (Bytes.get h (pos + 1))
     | BE4 ->
-	let h0 = Char.code h.[pos] in
-	let h1 = Char.code h.[pos + 1] in
-	let h2 = Char.code h.[pos + 2] in
-	let h3 = Char.code h.[pos + 3] in
+	let h0 = Char.code (Bytes.get h pos) in
+	let h1 = Char.code (Bytes.get h (pos + 1)) in
+	let h2 = Char.code (Bytes.get h (pos + 2)) in
+	let h3 = Char.code (Bytes.get h (pos + 3)) in
 	  if h0 > 0 then raise Size_limit;
 	  (((((h0 lsl 8) lor h1) lsl 8) lor h2) lsl 8) lor h3
 
@@ -70,20 +69,20 @@ let parse st data =
 let free _st = ()
 
 let decorate header packet =
-  let len = String.length packet in
+  let len = Bytes.length packet in
     match header with
       | `BE1 ->
-	  String.make 1 (Char.chr (len land 0xff)) ^ packet
+	  Bytes.cat (Bytes.make 1 (Char.chr (len land 0xff))) packet
       | `BE2 ->
-	  let h = String.make 2 '\000' in
-	    h.[0] <- Char.chr ((len lsr 8) land 0xff);
-	    h.[1] <- Char.chr (len land 0xff);
-	    h ^ packet
+	  let h = Bytes.make 2 '\000' in
+	    Bytes.set h 0 (Char.chr ((len lsr 8) land 0xff));
+	    Bytes.set h 1 (Char.chr (len land 0xff));
+	    Bytes.cat h packet
       | `BE4 ->
-	  let h = String.make 4 '\000' in
-	    h.[0] <- Char.chr ((len lsr 24) land 0xff);
-	    h.[1] <- Char.chr ((len lsr 16) land 0xff);
-	    h.[2] <- Char.chr ((len lsr 8) land 0xff);
-	    h.[3] <- Char.chr (len land 0xff);
-	    h ^ packet
+	  let h = Bytes.make 4 '\000' in
+	    Bytes.set h 0 (Char.chr ((len lsr 24) land 0xff));
+	    Bytes.set h 1 (Char.chr ((len lsr 16) land 0xff));
+	    Bytes.set h 2 (Char.chr ((len lsr 8) land 0xff));
+	    Bytes.set h 3 (Char.chr (len land 0xff));
+	    Bytes.cat h packet
 

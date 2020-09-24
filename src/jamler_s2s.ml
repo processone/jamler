@@ -1,6 +1,6 @@
 open Process
 
-let section = Jamler_log.new_section "s2s"
+let _section = Jamler_log.new_section "s2s"
 
 module LJID = Jlib.LJID
 module Hooks = Jamler_hooks
@@ -16,6 +16,7 @@ type msg = Router.msg
 module S2S :
 sig
 
+  [@@@warning "-32"]
   val route : Jlib.jid -> Jlib.jid -> Xml.element -> unit
 
   val s2s_send_packet : (Jlib.jid * Jlib.jid * Xml.element) Hooks.hook
@@ -24,7 +25,7 @@ end =
 struct
   let s2s_send_packet = Hooks.create ()
 
-  let choose_pid from pids =
+  let choose_pid _from pids =
     (* Pids1 = case [P || P <- Pids, node(P) == node()] of
                 [] -> Pids;
                 Ps -> Ps
@@ -130,7 +131,7 @@ struct
 	let new_attrs = Jlib.replace_from_to_attrs
 	  (Jlib.jid_to_string from) (Jlib.jid_to_string to') attrs in
 	let myserver = from.Jlib.lserver in
-	Hooks.run s2s_send_packet myserver (from, to', packet);
+	ignore (Hooks.run s2s_send_packet myserver (from, to', packet));
 	send_element pid (`XmlElement (name, new_attrs, els));
       | None -> (
 	match Xml.get_tag_attr_s "type" packet with

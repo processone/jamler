@@ -231,24 +231,24 @@ struct
 		  (jid, {item with groups = List.sort compare item.groups})
 	       ) items)))
 		
-  let roster_versioning_enabled host =
+  let roster_versioning_enabled _host =
     (* TODO *)
     false
     (*gen_mod:get_module_opt(Host, ?MODULE, versioning, false).*)
 
-  let roster_version_on_db host =
+  let roster_version_on_db _host =
     (* TODO *)
     false
     (*gen_mod:get_module_opt(Host, ?MODULE, store_current_id, false).*)
 
   (* Returns a list that may contain an xmlelement with the XEP-237 feature if it's enabled. *)
-  let get_versioning_feature acc host =
+  let _get_versioning_feature acc host =
     if roster_versioning_enabled host then (
-      let feature = `XmlElement ("ver", [("xmlns", [%ns:ROSTER_VER])], []) in
+      let feature = `XmlElement ("ver", [("xmlns", [%ns "ROSTER_VER"])], []) in
 	feature :: acc
     ) else []
 
-  let roster_version lserver luser =
+  let _roster_version _lserver _luser =
     (* TODO *)
     ""
 (*
@@ -321,7 +321,7 @@ struct
 	  match Xml.get_tag_attr "ver" subel, 
 	    roster_versioning_enabled lserver,
 	    roster_version_on_db lserver with
-	      | Some requested_version, true, true ->
+	      | Some _requested_version, true, true ->
 		  (* Retrieve version from DB. Only load entire roster
 		     when neccesary. *)
 			(*case mnesia:dirty_read(roster_version, US) of
@@ -360,10 +360,10 @@ struct
 	  match to_send with
 	    | None -> None
 	    | Some (items, None) ->
-		Some (`XmlElement ("query", [("xmlns", [%ns:ROSTER])],
+		Some (`XmlElement ("query", [("xmlns", [%ns "ROSTER"])],
 				   (items :> Xml.element_cdata list)))
 	    | Some (items, Some version) ->
-		Some (`XmlElement ("query", [("xmlns", [%ns:ROSTER]);
+		Some (`XmlElement ("query", [("xmlns", [%ns "ROSTER"]);
 					     ("ver", version)],
 				   (items :> Xml.element_cdata list)))
 	in
@@ -379,7 +379,7 @@ struct
     let items =
       List.filter
 	(function
-	   | (jid, {subscription = `None `In; _}) -> false
+	   | (_jid, {subscription = `None `In; _}) -> false
 	   | _ -> true) items @ acc
     in
       Lwt.return (Hooks.OK, items)
@@ -393,9 +393,9 @@ struct
     let resiq =
       {Jlib.iq_type =
 	  `Set (`XmlElement ("query",
-			     ("xmlns", [%ns:ROSTER]) :: extra_attrs,
+			     ("xmlns", [%ns "ROSTER"]) :: extra_attrs,
 			     [(item_to_xml item :> Xml.element_cdata)]));
-       Jlib.iq_xmlns = [%ns:ROSTER];
+       Jlib.iq_xmlns = [%ns "ROSTER"];
        Jlib.iq_id = "push" ^ Jlib.get_random_string ();
        Jlib.iq_lang = "";
       }
@@ -956,11 +956,11 @@ webadmin_user(Acc, _User, _Server, Lang) ->
 		       ?MODULE, webadmin_page, 50),
     ejabberd_hooks:add(webadmin_user, Host,
 		       ?MODULE, webadmin_user, 50),*)
-       Gen_mod.iq_handler `SM host [%ns:ROSTER] process_iq ();
+       Gen_mod.iq_handler `SM host [%ns "ROSTER"] process_iq ();
       ]
     )
 
-  let stop host =
+  let stop _host =
     (* TODO *)
     Lwt.return ()
 

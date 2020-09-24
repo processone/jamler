@@ -1,7 +1,7 @@
 let section = Jamler_log.new_section "config"
 
 module JSON = Yojson.Safe
-type json = JSON.json
+type json = JSON.t
 
 let (config : json ref) = ref (`Assoc [])
 let config_timestamp = ref 0.0
@@ -201,7 +201,7 @@ let get_host_part (host : Jlib.namepreped) json =
     | _ -> None
 
 
-let rec get_path host path (json : json) =
+let get_path host path (json : json) =
   match get_host_part host json with
     | Some json ->
 	get_global_path path json
@@ -296,7 +296,7 @@ let myhosts = get_global_opt_with_default ["hosts"] (list namepreped) []
 
 let is_my_host host = List.mem host (myhosts ())
 
-let loglevel =
+let _loglevel =
   get_global_opt_with_default ["loglevel"]
     (enum [("notice", `Notice);
 	   ("debug", `Debug);

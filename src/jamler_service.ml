@@ -106,11 +106,11 @@ struct
 		 password = "password";
 		 hosts = [Jlib.nameprep_exn "mrim.zinid.ru"];}
     in
-      Socket.activate socket self;
+    let%lwt () = Socket.activate socket self in
       Lwt.return (`Continue state)
 
   let myname = "localhost"              (* TODO *)
-  let invalid_ns_err = Jlib.serr_invalid_namespace
+  let _invalid_ns_err = Jlib.serr_invalid_namespace
   let invalid_xml_err = Jlib.serr_xml_not_well_formed
   let invalid_header_err =
     "<stream:stream " ^
@@ -128,8 +128,11 @@ struct
   let send_text state text =
     Socket.send_async state.socket text
 
+  let send_string state text =
+    send_text state (Bytes.of_string text)
+
   let send_element state el =
-    send_text state (Xml.element_to_string el)
+    send_string state (Xml.element_to_string el)
 
   let stream_header_fmt =
     "<?xml version='1.0'?>" ^^
@@ -143,7 +146,7 @@ struct
 
   let send_trailer state =
     let stream_trailer = "</stream:stream>" in
-    send_text state stream_trailer
+    send_string state stream_trailer
 
   let wait_for_stream msg state =
     match msg with
@@ -152,14 +155,14 @@ struct
 	  | "jabber:component:accept" ->
 	    let to' = Xml.get_attr_s "to" attrs in
 	    let header = stream_header state.streamid (Xml.crypt to') in
-	    send_text state header;
+	    send_string state header;
 	    Lwt.return (`Continue {state with state = Wait_for_handshake})
 	  | _ ->
-	    send_text state invalid_header_err;
+	    send_string state invalid_header_err;
 	    Lwt.return (`Stop state))
       | `XmlStreamError _ ->
 	let header = stream_header "none" myname in
-	send_text state header;
+	send_string state header;
 	send_element state invalid_xml_err;
 	send_trailer state;
 	Lwt.return (`Stop state)
@@ -174,7 +177,7 @@ struct
 	match name, (Xml.get_cdata els) with
 	  | "handshake", digest -> (
 	      if Jlib.sha1 (state.streamid ^ state.password) = digest then (
-		send_text state "<handshake/>";
+		send_string state "<handshake/>";
 		let%lwt () =
 		  Lwt_list.iter_s
 		    (fun (h : Jlib.namepreped) ->
@@ -186,7 +189,7 @@ struct
 		in
 		  Lwt.return (`Continue {state with state = Stream_established})
 	      ) else (
-		send_text state invalid_handshake_err;
+		send_string state invalid_handshake_err;
 		Lwt.return (`Stop state)
 	      )
 	    )
@@ -204,7 +207,7 @@ struct
     match msg with
       | `XmlStreamElement el ->
 	let newel = Jlib.remove_attr "xmlns" el in
-	let `XmlElement (name, attrs, els) = newel in
+	let `XmlElement (name, attrs, _els) = newel in
 	let from = Xml.get_attr_s "from" attrs in
 	let from_jid = match state.check_from with
 	  | false ->
@@ -227,8 +230,8 @@ struct
 	let to_jid = Jlib.string_to_jid to' in
 	let _ = match to_jid, from_jid with
 	  | Some to', Some from when (name = "iq"
-				      or name = "message"
-				      or name = "presence") ->
+				      || name = "message"
+				      || name = "presence") ->
 	    Router.route from to' newel
 	  | _ ->
 	    let err = Jlib.make_error_reply el Jlib.err_bad_request in
@@ -270,7 +273,7 @@ struct
 	      "tcp data %d %S\n" (String.length data) data
 	  in
             XMLReceiver.parse state.xml_receiver data;
-            Socket.activate state.socket state.pid;
+            let%lwt () = Socket.activate state.socket state.pid in
             Lwt.return (`Continue state)
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->

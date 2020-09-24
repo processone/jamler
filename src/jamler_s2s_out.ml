@@ -49,7 +49,7 @@ struct
     | Stream_established
 
   type tls_option =
-    | CertFile of string
+    (*| CertFile of string*)
     | Connect
 
   type start_type =
@@ -95,8 +95,11 @@ struct
 	  Socket.send_async socket text
       | None -> assert false
 
+  let send_string state text =
+    send_text state (Bytes.of_string text)
+
   let send_element state el =
-    send_text state (Xml.element_to_string el)
+    send_string state (Xml.element_to_string el)
 
   let send_queue state =
     Queue.iter (send_element state) state.queue
@@ -133,9 +136,9 @@ struct
 
   let send_trailer state =
     let stream_trailer = "</stream:stream>" in
-    send_text state stream_trailer
+    send_string state stream_trailer
 
-  let socket_default_result = None
+  let _socket_default_result = None
 
   type verify_res = | Result of (string * string * string * string)
                     | Verify of (string * string * string * string)
@@ -230,12 +233,12 @@ struct
     10000
 
   let open_socket2 addr' port self =
-    let timeout = outgoing_s2s_timeout () in
+    let _timeout = outgoing_s2s_timeout () in
     let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
     let addr = Unix.ADDR_INET (addr', port) in
-    lwt () = Lwt_unix.connect socket addr in (* TODO *)
+    let%lwt () = Lwt_unix.connect socket addr in (* TODO *)
     let tcpsock = Socket.of_fd socket self in
-      Socket.activate tcpsock self;
+    let%lwt () = Socket.activate tcpsock self in
       Lwt.return tcpsock
 
   let open_socket1 = open_socket2
@@ -273,7 +276,7 @@ struct
 
   let get_addr_port ascii_addr =
     (* TODO: srv *)
-    lwt h = Lwt_unix.gethostbyname ascii_addr in
+    let%lwt h = Lwt_unix.gethostbyname ascii_addr in
     let res =
       List.map
 	(fun addr -> (addr, 5269))
@@ -376,28 +379,28 @@ struct
   let open_socket msg state =
     match msg with
       | `Init ->
-	  lwt () = log_s2s_out state.new'
+	  let%lwt () = log_s2s_out state.new'
 	    (state.myname :> string) (state.server :> string) state.tls in
-	  lwt () = Lwt_log.debug_f ~section
+	  let%lwt () = Lwt_log.debug_f ~section
             "open_socket: %s -> %s"
             (* TODO "new = %s, verify = %s" *)
-	    state.myname state.server in
-	  lwt addr_list =
-	    (try_lwt
+	    (state.myname :> string) (state.server :> string) in
+	  let%lwt addr_list =
+	    (try%lwt
 	       let ascii_addr = Idna.domain_utf8_to_ascii (state.server :> string) in
 		 get_addr_port ascii_addr
 	     with
 	       | _ -> Lwt.return [])
 	  in
-	  lwt open_res =
+	  let%lwt open_res =
 	    Lwt_list.fold_left_s
 	      (fun acc (addr, port) ->
 		 match acc with
-		   | Some socket ->
+		   | Some _socket ->
 		       Lwt.return acc
 		   | None -> (
-		       try_lwt
-			 lwt s = open_socket1 addr port state.pid in
+		       try%lwt
+			 let%lwt s = open_socket1 addr port state.pid in
 			   Lwt.return (Some s)
 		       with
 			 | _ -> Lwt.return None
@@ -413,12 +416,12 @@ struct
 	                              tls_enabled = false;
 				      stream_id = new_id();
 				      state = Wait_for_stream} in
-		     send_text new_state
+		     send_string new_state
 		       (stream_header (state.myname :> string)
 			  (state.server :> string) version);
 		     Lwt.return (`Continue new_state) (* ?FSMTIMEOUT *)
 	       | None ->
-		   lwt () = Lwt_log.notice_f ~section
+		   let%lwt () = Lwt_log.notice_f ~section
 		     "s2s connection: %s -> %s (remote server not found)"
 		     (state.myname :> string) (state.server :> string)
 		   in
@@ -437,12 +440,12 @@ struct
 		     wait_before_reconnect state
 	    )
       | `Closed ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "s2s connection: %s -> %s (stopped in open socket)"
 	    (state.myname :> string) (state.server :> string) in
             Lwt.return (`Stop state)
       | `Timeout ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "s2s connection: %s -> %s (timeout in open socket)"
 	    (state.myname :> string) (state.server :> string) in
             Lwt.return (`Stop state)
@@ -454,7 +457,7 @@ struct
 
   let wait_for_stream msg state =
     match msg with
-      | `XmlStreamStart (name, attrs) -> (
+      | `XmlStreamStart (_name, attrs) -> (
 	  match (Xml.get_attr_s "xmlns" attrs,
 		 Xml.get_attr_s "xmlns:db" attrs,
 		 Xml.get_attr_s "version" attrs = "1.0") with
@@ -470,7 +473,7 @@ struct
 	                                 state = Wait_for_features}) (* ?FSMTIMEOUT *)
 	    | ns_provided, db, _ ->
 		send_element state Jlib.serr_invalid_namespace;
-		lwt () = Lwt_log.notice_f ~section
+		let%lwt () = Lwt_log.notice_f ~section
  		  ("closing s2s connection: %s -> %s (invalid namespace):"
 		  ^^ "namespace provided = %s, "
 		  ^^ "namespace expected = \"jabber:server\", "
@@ -484,23 +487,23 @@ struct
       | `XmlStreamError _ ->
 	  send_element state Jlib.serr_xml_not_well_formed;
 	  send_trailer state;
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
             "closing s2s connection: %s -> %s (invalid xml)"
 	    (state.myname :> string) (state.server :> string)
 	  in
             Lwt.return (`Stop state)
       | `XmlStreamEnd _ ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "closing s2s connection: %s -> %s (xmlstreamend)"
 	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
       | `Timeout ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "closing s2s connection: %s -> %s (timeout in wait_for_stream)"
 	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
       | `Closed ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "closing s2s connection: %s -> %s (close in wait_for_stream)"
 	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
@@ -513,14 +516,14 @@ struct
       | `XmlStreamElement el -> (
 	  match is_verify_res el with
 	    | Result (to', from, id, type') ->
-		lwt () = Lwt_log.debug_f ~section
-		  "recv result: from = %s, to = %s, id = %, type = %s"
+		let%lwt () = Lwt_log.debug_f ~section
+		  "recv result: from = %s, to = %s, id = %s, type = %s"
 		  from to' id type'
 		in
 		  (match (type', state.tls_enabled, state.tls_required) with
 		     | "valid", enabled, required when (enabled = true || required = false) ->
 			 send_queue state;
-			 lwt () = Lwt_log.notice_f ~section
+			 let%lwt () = Lwt_log.notice_f ~section
 			   "connection established: %s -> %s with tls=%B"
 			   (state.myname :> string)
 			   (state.server :> string) state.tls_enabled in
@@ -534,15 +537,15 @@ struct
 				   queue = Queue.create ()})
 		     | _ ->
 			 (* TODO: bounce packets *)
-			 lwt () = Lwt_log.notice_f ~section
+			 let%lwt () = Lwt_log.notice_f ~section
 			   "closing s2s connection: %s -> %s (invalid dialback key)"
 			   (state.myname :> string)
 			   (state.server :> string)
 			 in
 			   Lwt.return (`Stop state))
 	    | Verify (to', from, id, type') ->
-		lwt () = Lwt_log.debug_f ~section
-		  "recv verify: from = %s, to = %s, id = %, type = %s"
+		let%lwt () = Lwt_log.debug_f ~section
+		  "recv verify: from = %s, to = %s, id = %s, type = %s"
 		  from to' id type' in
 		  (match state.verify with
 		     | None ->
@@ -566,13 +569,13 @@ struct
 	    | False ->
 		Lwt.return (`Continue state)) (* ?FSMTIMEOUT *)
       | `XmlStreamEnd _ ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "wait for validation: %s -> %s (xmlstreamend)"
 	    (state.myname :> string) (state.server :> string)
 	  in
 	    Lwt.return (`Stop state)
       | `XmlStreamError _ ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "wait for validation: %s -> %s (xmlstreamerror)"
 	    (state.myname :> string) (state.server :> string)
 	  in
@@ -581,20 +584,20 @@ struct
 	    Lwt.return (`Stop state)
       | `Timeout -> (
 	  match state.verify with
-	    | Some (vpid, vkey, sid) ->
+	    | Some (_vpid, _vkey, _sid) ->
 		(* This is an auxiliary s2s connection for dialback.
 		   This timeout is normal and doesn't represent a problem. *)
-		lwt () = Lwt_log.debug_f ~section
+		let%lwt () = Lwt_log.debug_f ~section
 		  "wait_for_validation: %s -> %s (timeout in verify connection)"
-		  state.myname state.server in
+		  (state.myname :> string) (state.server :> string) in
 		  Lwt.return (`Stop state)
 	    | None ->
-		lwt () = Lwt_log.notice_f ~section
+		let%lwt () = Lwt_log.notice_f ~section
 		  "wait_for_validation: %s -> %s (connect timeout)"
 		  (state.myname :> string) (state.server :> string) in
 		  Lwt.return (`Stop state))
       | `Closed ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "wait for validation: %s -> %s (closed)"
 	    (state.myname :> string) (state.server :> string)
 	  in
@@ -615,7 +618,7 @@ struct
 			 | `XmlElement ("mechanisms", attrs1, els1) ->
 			     let (_sext, stls, stlsreq) = acc in (
 				 match Xml.get_attr_s "xmlns" attrs1 with
-				   | <:ns<SASL>> ->
+				   | [%ns "SASL"] ->
 				     let new_sext = List.exists
 				       (function
 					  | `XmlElement ("mechanism", _, els2) ->
@@ -631,7 +634,7 @@ struct
 			 | `XmlElement ("starttls", attrs1, _els1) as el1 ->
 			     let (sext, _stls, _stlsreq) = acc in (
 				 match Xml.get_attr_s "xmlns" attrs1 with
-				   | <:ns<TLS>> ->
+				   | [%ns "TLS"] ->
 				     let req = (
 				       match Xml.get_subtag el1 "required" with
 					 | Some _ -> true;
@@ -645,7 +648,7 @@ struct
 		in
 		  if (not sasl_ext) && (not start_tls) && state.authenticated then (
 		    send_queue state;
-		    lwt () = Lwt_log.notice_f ~section
+		    let%lwt () = Lwt_log.notice_f ~section
 		      "connection established: %s -> %s"
 		      (state.myname :> string) (state.server :> string)
 		    in
@@ -658,7 +661,7 @@ struct
 		  ) else if sasl_ext && state.try_auth && state.new' <> None then (
 		    send_element state
 		      (`XmlElement ("auth",
-				    [("xmlns", <:ns<SASL>>);
+				    [("xmlns", [%ns "SASL"]);
 				     ("mechanism", "EXTERNAL")],
 				    [`XmlCdata (Jlib.encode_base64
 						  (state.myname :> string))]));
@@ -667,15 +670,15 @@ struct
 					     try_auth = false}) (* ?FSMTIMEOUT *)
 		  ) else if start_tls && state.tls && (not state.tls_enabled) then (
 		    send_element state
-		      (`XmlElement ("starttls", [("xmlns", <:ns<SASL>>)], []));
+		      (`XmlElement ("starttls", [("xmlns", [%ns "SASL"])], []));
 		    Lwt.return (`Continue {state with
 					     state = Wait_for_starttls_proceed}) (* ?FSMTIMEOUT *)
 		  ) else if start_tls_required && (not state.tls) then (
-		    lwt () = Lwt_log.debug_f ~section
+		    let%lwt () = Lwt_log.debug_f ~section
 		      "restarted: %s -> %s"
-		      state.myname state.server
+		      (state.myname :> string) (state.server :> string)
 		    in
-		    lwt () = close_socket state in
+		    let%lwt () = close_socket state in
 		      Lwt.return (`Continue {state with
 					       state = Reopen_socket;
 					       use_v10 = false;
@@ -683,11 +686,11 @@ struct
 		  ) else if state.db_enabled then (
 		    send_db_request state
 		  ) else (
-		    lwt () = Lwt_log.debug_f ~section
+		    let%lwt () = Lwt_log.debug_f ~section
 		      "restarted: %s -> %s"
-		      state.myserver state.server in
+		      (state.myname :> string) (state.server :> string) in
 		      (* TODO: clear message queue *)
-		    lwt () = close_socket state in
+		    let%lwt () = close_socket state in
 		      Lwt.return (`Continue {state with
 					       socket = None;
 					       use_v10 = false;
@@ -695,27 +698,27 @@ struct
 	    | _ ->
 		send_element state Jlib.serr_bad_format;
 		send_trailer state;
-		lwt () = Lwt_log.notice_f ~section
+		let%lwt () = Lwt_log.notice_f ~section
 		  "closing s2s connection: %s -> %s (bad format)"
 		  (state.myname :> string) (state.server :> string)
 		in
 		  Lwt.return (`Stop state))
       | `XmlStreamEnd _ ->
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait_for_features: xmlstreamend" in
 	    Lwt.return (`Stop state)
       | `XmlStreamError _ ->
 	  send_element state Jlib.serr_xml_not_well_formed;
 	  send_trailer state;
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait_for_features: xmlstreamerror" in
 	    Lwt.return (`Stop state)
       | `Timeout ->
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait_for_features: timeout" in
 	    Lwt.return (`Stop state)
       | `Closed ->
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait_for_features: closed" in
 	    Lwt.return (`Stop state)
       | `Send_element el -> enqueue el state
@@ -726,12 +729,12 @@ struct
     match msg with
       | `XmlStreamElement (`XmlElement ("success", attrs, _els)) -> (
 	  match Xml.get_attr_s "xmlns" attrs with
-	    | <:ns<SASL>> ->
-	      lwt () = Lwt_log.debug_f ~section
+	    | [%ns "SASL"] ->
+	      let%lwt () = Lwt_log.debug_f ~section
 		"auth: %s -> %s"
-		state.myname state.server in
+		(state.myname :> string) (state.server :> string) in
 		XMLReceiver.reset_stream state.xml_receiver;
-		send_text state
+		send_string state
 		  (stream_header
 		     (state.myname :> string)
 		     (state.server :> string)
@@ -743,26 +746,26 @@ struct
 	    | _ ->
 		send_element state Jlib.serr_bad_format;
 		send_trailer state;
-		lwt () = Lwt_log.notice_f ~section
+		let%lwt () = Lwt_log.notice_f ~section
 		  "closing s2s connection: %s -> %s (bad format)"
 		  (state.myname :> string) (state.server :> string)
 		in
 		  Lwt.return (`Stop state))
       | `XmlStreamElement (`XmlElement ("failure", attrs, _els)) -> (
 	  match Xml.get_attr_s "xmlns" attrs with
-	    | <:ns<SASL>> ->
-	      lwt () = Lwt_log.debug_f ~section
+	    | [%ns "SASL"] ->
+	      let%lwt () = Lwt_log.debug_f ~section
 		"restarted: %s -> %s"
-		state.myname state.server
+		(state.myname :> string) (state.server :> string)
 	      in
-	      lwt () = close_socket state in
+	      let%lwt () = close_socket state in
 		Lwt.return (`Continue {state with
 					 state = Reopen_socket;
 					 socket = None}) (* ?FSMTIMEOUT *)
 	    | _ ->
 		send_element state Jlib.serr_bad_format;
 		send_trailer state;
-		lwt () = Lwt_log.notice_f ~section
+		let%lwt () = Lwt_log.notice_f ~section
 		  "closing s2s connection: %s -> %s (bad format)"
 		  (state.myname :> string) (state.server :> string)
 		in
@@ -770,27 +773,27 @@ struct
       | `XmlStreamElement _ ->
 	  send_element state Jlib.serr_bad_format;
 	  send_trailer state;
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "closing s2s connection: %s -> %s (bad format)"
 	    (state.myname :> string) (state.server :> string)
 	  in
 	    Lwt.return (`Stop state)
       | `XmlStreamEnd _ ->
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait for auth result: xmlstreamend" in
 	    Lwt.return (`Stop state)
       | `XmlStreamError _ ->
 	  send_element state Jlib.serr_xml_not_well_formed;
 	  send_trailer state;
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait for auth result: xmlstreamerror" in
 	    Lwt.return (`Stop state)
       | `Timeout ->
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait for auth result: timeout" in
 	    Lwt.return (`Stop state)
       | `Closed ->
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait for auth result: closed" in
 	    Lwt.return (`Stop state)
       | `Send_element el -> enqueue el state
@@ -801,10 +804,10 @@ struct
     match msg with
       | `XmlStreamElement (`XmlElement ("proceed", attrs, _els)) -> (
 	  match Xml.get_attr_s "xmlns" attrs with
-	    | <:ns<TLS>> ->
-	      lwt () = Lwt_log.debug_f ~section
+	    | [%ns "TLS"] ->
+	      let%lwt () = Lwt_log.debug_f ~section
 		"starttls: %s -> %s"
-		state.myname state.server in
+		(state.myname :> string) (state.server :> string) in
 		(* Socket = StateData#state.socket,
 		    TLSOpts = case ejabberd_config:get_local_option(
 				     {domain_certfile,
@@ -828,39 +831,39 @@ struct
 					    [StateData#state.myname, StateData#state.server,
 					     " version='1.0'"])),
 		    {next_state, wait_for_stream, NewStateData, ?FSMTIMEOUT}; *)
-	      lwt () = Lwt_log.error_f ~section
+	      let%lwt () = Lwt_log.error_f ~section
 		"don't support starttls yet" in
 		Lwt.return (`Stop state)
 	    | _ ->
 		send_element state Jlib.serr_bad_format;
 		send_trailer state;
-		lwt () = Lwt_log.notice_f ~section
+		let%lwt () = Lwt_log.notice_f ~section
 		  "closing s2s connection: %s -> %s (bad format)"
 		  (state.myname :> string) (state.server :> string)
 		in
 		  Lwt.return (`Stop state))
       | `XmlStreamElement _ ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "closing s2s connection: %s -> %s (bad format)"
 	    (state.myname :> string) (state.server :> string)
 	  in
 	    Lwt.return (`Stop state)
       | `XmlStreamEnd _ ->
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait for starttls proceed: xmlstreamend" in
 	    Lwt.return (`Stop state)
       | `XmlStreamError _ ->
 	  send_element state Jlib.serr_xml_not_well_formed;
 	  send_trailer state;
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait for starttls proceed: xmlstreamerror" in
 	    Lwt.return (`Stop state)
       | `Timeout ->
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait for starttls proceed: timeout" in
 	    Lwt.return (`Stop state)
       | `Closed ->
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "wait for starttls proceed: closed" in
 	    Lwt.return (`Stop state)
       | `Send_element el -> enqueue el state
@@ -876,7 +879,7 @@ struct
       | `XmlStreamError _ ->
 	  Lwt.return (`Continue state) (* ?FSMTIMEOUT *)
       | `Timeout ->
-	  lwt () = Lwt_log.notice ~section
+	  let%lwt () = Lwt_log.notice ~section
 	    "reopen socket: timeout" in
 	    Lwt.return (`Stop state)
       | `Closed ->
@@ -915,11 +918,11 @@ struct
   let stream_established msg state =
     match msg with
       | `XmlStreamElement el ->
-	  lwt () = Lwt_log.debug ~section
+	  let%lwt () = Lwt_log.debug ~section
 	    "s2s stream established" in
 	    (match is_verify_res el with
 	       | Verify (vto, vfrom, vid, vtype) ->
-		   lwt () = Lwt_log.debug_f ~section
+		   let%lwt () = Lwt_log.debug_f ~section
 		     "recv verify: to = %s, from = %s, id = %s, type = %s"
 		     vto vfrom vid vtype in
 		     (match state.verify with
@@ -934,26 +937,26 @@ struct
 	       | _ ->
 		   Lwt.return (`Continue state))
       | `XmlStreamEnd _ ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "connection closed in stream established: %s -> %s (xmlstreamend)"
 	    (state.myname :> string) (state.server :> string) in
 	    Lwt.return (`Stop state)
       | `XmlStreamError _ ->
 	  send_element state Jlib.serr_xml_not_well_formed;
 	  send_trailer state;
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "stream established: %s -> %s (xmlstreamerror)"
 	    (state.myname :> string) (state.server :> string)
 	  in
 	    Lwt.return (`Stop state)
       | `Timeout ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "stream established: %s -> %s (timeout)"
 	    (state.myname :> string) (state.server :> string)
 	  in
 	    Lwt.return (`Stop state)
       | `Closed ->
-	  lwt () = Lwt_log.notice_f ~section
+	  let%lwt () = Lwt_log.notice_f ~section
 	    "stream established: %s -> %s (closed)"
 	    (state.myname :> string) (state.server :> string)
 	  in
@@ -975,14 +978,14 @@ struct
     if state.timer == timer then (
       match state.state with
 	| Wait_before_retry ->
-	    lwt () =
+	    let%lwt () =
 	      Lwt_log.notice_f ~section
 		"reconnect delay expired: will now retry to connect to %s when needed"
 		(state.server :> string)
 	    in
 	      Lwt.return (`Stop state)
 	| _ ->
-	    lwt () =
+	    let%lwt () =
 	      Lwt_log.notice_f ~section
 		"closing connection with %s: timeout"
 		(state.server :> string)
@@ -1010,19 +1013,19 @@ struct
       | `Tcp_data (socket, data) -> (
 	  match state.socket with
 	    | Some socket' when socket == socket' ->
-		lwt () =
+		let%lwt () =
 		  Lwt_log.debug_f ~section
 		    "tcp data %d %S" (String.length data) data
 		in
 		  XMLReceiver.parse state.xml_receiver data;
-		  Socket.activate socket state.pid;
+		  let%lwt () = Socket.activate socket state.pid in
 		  Lwt.return (`Continue state)
 	    | _ -> assert false
 	)
       | `Tcp_close socket -> (
 	  match state.socket with
 	    | Some socket' when socket == socket' ->
-		lwt () = Lwt_log.debug ~section "tcp close" in
+		let%lwt () = Lwt_log.debug ~section "tcp close" in
 		  Lwt.return (`Stop state)
 	    | _ -> assert false
 	)
@@ -1035,7 +1038,7 @@ struct
       | #GenServer.msg -> assert false
 
   let terminate state _reason =
-    lwt () = Lwt_log.debug ~section "terminated" in
+    let%lwt () = Lwt_log.debug ~section "terminated" in
       (match state.new' with
 	 | None -> ()
 	 | Some key ->
@@ -1052,7 +1055,7 @@ struct
 	| None ->
 	    Lwt.return ()
 	| Some socket ->
-	    lwt () = Socket.close socket in
+	    let%lwt () = Socket.close socket in
 	      Lwt.return ()
 
 

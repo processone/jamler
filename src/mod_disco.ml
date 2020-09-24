@@ -5,7 +5,7 @@ module Router = Jamler_router
 module SM = Jamler_sm
 module Auth = Jamler_auth
 
-let section = Jamler_log.new_section "mod_disco"
+(*let section = Jamler_log.new_section "mod_disco"*)
 
 let rec dropwhile pred = function
   | [] ->
@@ -86,13 +86,13 @@ struct
 
   module DFTable = Set.Make(
     struct
-      let compare = Pervasives.compare
+      let compare = Stdlib.compare
       type t = string * Jlib.namepreped
     end)
 
   module EDTable = Set.Make(
     struct
-      let compare = Pervasives.compare
+      let compare = Stdlib.compare
       type t = Jlib.namepreped * Jlib.namepreped
     end)
 
@@ -100,7 +100,7 @@ struct
 
   let extra_domains = Config.(get_module_opt_with_default
 				name ["extra_domains"] (list namepreped) [])
-  let server_info = Config.(get_module_opt_with_default
+  let _server_info = Config.(get_module_opt_with_default
 			      name ["server_info"] (list string) [])
 
   let disco_features = ref DFTable.empty
@@ -141,7 +141,7 @@ struct
 		  else false
 	   ) roster_items) || (user = luser && server = lserver)) *)
 
-  let is_presence_subscribed from to' = Lwt.return false
+  let is_presence_subscribed _from _to' = Lwt.return false
 
   let get_user_resources ({Jlib.user = user;
 			   Jlib.luser = luser;
@@ -149,9 +149,10 @@ struct
     let rs = SM.get_user_resources luser lserver in
       List.map
 	(fun r ->
-	   `XmlElement ("item",
-			[("jid", Jlib.jid_to_string jid);
-			 ("name", user)], []))
+	  `XmlElement
+            ("item",
+	     [("jid", Jlib.jid_to_string (Jlib.jid_replace_resource' jid r));
+	      ("name", user)], []))
 	(List.sort compare rs)
 
   let features_to_xml (feature_list:string list) =
@@ -193,14 +194,16 @@ struct
 		    else acc)
       !disco_features []
 
-  let get_local_services acc (from, to', node, lang) =
+  let get_local_services acc (_from, to', node, _lang) =
     match acc with
       | IError _ ->
 	  Lwt.return (Hooks.OK, acc)
       | _ when node = "" ->
-	  let items = match acc with
+	  let items =
+            match acc with
 	    | Items its -> its
 	    | IEmpty -> []
+            | IError _ -> assert false
 	  in
 	  let host = to'.Jlib.lserver in
 	  let domains =
@@ -231,9 +234,11 @@ struct
       | FError _ ->
 	  Lwt.return (Hooks.OK, acc)
       | _ when node = "" ->
-	  let feats = match acc with
+	  let feats =
+            match acc with
 	    | Features features -> features
 	    | FEmpty -> []
+            | FError _ -> assert false
 	  in
 	  let host = to'.Jlib.lserver in
 	    Lwt.return
@@ -248,9 +253,11 @@ struct
       | IError _ ->
 	  Lwt.return (Hooks.OK, acc)
       | _ when node = "" ->
-	  let items = match acc with
+	  let items =
+            match acc with
 	    | Items its -> its
 	    | IEmpty -> []
+            | IError _ -> assert false
 	  in
 	  let%lwt items1 =
 	    match%lwt is_presence_subscribed from to' with
@@ -361,6 +368,7 @@ struct
 	  let lang = iq.Jlib.iq_lang in
 	    match%lwt Hooks.run_fold disco_local_items
 	      host IEmpty (from, to', node, lang) with
+                | IEmpty -> assert false
 		| Items items ->
 		    let anode = match node with
 		      | "" -> []
@@ -372,7 +380,7 @@ struct
 			     `Result
 			       (Some (`XmlElement
 					("query",
-					 ("xmlns", [%ns:DISCO_ITEMS]) :: anode,
+					 ("xmlns", [%ns "DISCO_ITEMS"]) :: anode,
 					 (items :> Xml.element_cdata list))))})
 		| IError error ->
 		    Lwt.return (`IQ {iq with
@@ -395,6 +403,7 @@ struct
 	    host [] (host, Some name, node, lang) in
 	    match%lwt Hooks.run_fold disco_local_features
 	      host FEmpty (from, to', node, lang) with
+                | FEmpty -> assert false
 		| Features features ->
 		    let anode = match node with
 		      | "" -> []
@@ -407,7 +416,7 @@ struct
 			     `Result
 			       (Some (`XmlElement
 					("query",
-					 ("xmlns", [%ns:DISCO_INFO]) :: anode,
+					 ("xmlns", [%ns "DISCO_INFO"]) :: anode,
 					 (res_els :> Xml.element_cdata list))))})
 		| FError error ->
 		    Lwt.return (`IQ {iq with
@@ -428,6 +437,7 @@ struct
 		let lang = iq.Jlib.iq_lang in
 		  match%lwt Hooks.run_fold disco_sm_items
 		    host IEmpty (from, to', node, lang) with
+                      | IEmpty -> assert false
 		      | Items items ->
 			  let anode = match node with
 			    | "" -> []
@@ -439,7 +449,7 @@ struct
 				   `Result
 				     (Some (`XmlElement
 					      ("query",
-					       ("xmlns", [%ns:DISCO_ITEMS])
+					       ("xmlns", [%ns "DISCO_ITEMS"])
 					       :: anode,
 					       (items :> Xml.element_cdata list)
 					      )))})
@@ -469,6 +479,7 @@ struct
 		  host [] (from, to', node, lang) in
 		  match%lwt Hooks.run_fold disco_sm_features
 		    host FEmpty (from, to', node, lang) with
+                      | FEmpty -> assert false
 		      | Features features ->
 			  let anode = match node with
 			    | "" -> []
@@ -481,7 +492,7 @@ struct
 				   `Result
 				     (Some (`XmlElement
 					      ("query",
-					       ("xmlns", [%ns:DISCO_INFO])
+					       ("xmlns", [%ns "DISCO_INFO"])
 					       :: anode,
 					       (res_els :> Xml.element_cdata list))))})
 		      | FError error ->
@@ -499,14 +510,14 @@ struct
     register_feature host "iq";
     register_feature host "presence";
     register_feature host "presence-invisible";
-    register_feature host [%ns:DISCO_ITEMS];
-    register_feature host [%ns:DISCO_INFO];
+    register_feature host [%ns "DISCO_ITEMS"];
+    register_feature host [%ns "DISCO_INFO"];
     List.iter (fun domain -> register_extra_domain host domain) (extra_domains host);
     Lwt.return (
-      [Gen_mod.iq_handler `Local host [%ns:DISCO_ITEMS] process_local_iq_items ();
-       Gen_mod.iq_handler `Local host [%ns:DISCO_INFO] process_local_iq_info ();
-       Gen_mod.iq_handler `SM host [%ns:DISCO_ITEMS] process_sm_iq_items ();
-       Gen_mod.iq_handler `SM host [%ns:DISCO_INFO] process_sm_iq_info ();
+      [Gen_mod.iq_handler `Local host [%ns "DISCO_ITEMS"] process_local_iq_items ();
+       Gen_mod.iq_handler `Local host [%ns "DISCO_INFO"] process_local_iq_info ();
+       Gen_mod.iq_handler `SM host [%ns "DISCO_ITEMS"] process_sm_iq_items ();
+       Gen_mod.iq_handler `SM host [%ns "DISCO_INFO"] process_sm_iq_info ();
        Gen_mod.fold_hook disco_local_items host get_local_services 100;
        Gen_mod.fold_hook disco_local_features host get_local_features 100;
        Gen_mod.fold_hook disco_local_identity host get_local_identity 100;

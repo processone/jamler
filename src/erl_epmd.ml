@@ -83,7 +83,7 @@ struct
       ignore (Socket.activate tcpsock self);
       Lwt.return tcpsock
 
-  let close_socket socket =
+  let _close_socket socket =
     Socket.close socket
 
   let make_alive2_req port name =
@@ -97,7 +97,7 @@ struct
       add_int16_be b (String.length name);
       Buffer.add_string b name;
       add_int16_be b 0;
-      Buffer.contents b
+      Buffer.to_bytes b
 
   let handle_msg msg state =
     match state.state, msg with
@@ -234,14 +234,15 @@ let lookup_node node =
     let%lwt addr = get_addr_exn hostname in
       open_socket addr epmd_port
 	(fun socket ->
-	   let packet = Packet.decorate `BE2 ("\122" ^ nodename) in
-	   let%lwt _ = Lwt_unix.write socket packet 0 (String.length packet) in
+	   let packet = Packet.decorate `BE2 (Bytes.of_string ("\122" ^ nodename)) in
+	   let%lwt _ = Lwt_unix.write socket packet 0 (Bytes.length packet) in
 	   let%lwt () = Lwt_unix.wait_read socket in
-	   let buf = String.make 64 '\000' in
+	   let buf = Bytes.make 64 '\000' in
 	   let%lwt c = Lwt_unix.read socket buf 0 64 in
-	     if c >= 4 && buf.[1] = '\000' then (
+	     if c >= 4 && Bytes.get buf 1 = '\000' then (
 	       Lwt.return
-		 (Some ((Char.code buf.[2] lsl 8) lor Char.code buf.[3]))
+		 (Some ((Char.code (Bytes.get buf 2) lsl 8) lor
+                          Char.code (Bytes.get buf 3)))
 	     ) else raise Not_found
 	)
   with
@@ -351,7 +352,7 @@ struct
       add_int16_be b 5;
       add_int32_be b flags;
       Buffer.add_string b node;
-      Buffer.contents b
+      Buffer.to_bytes b
 
   let make_challenge_req challenge =
     let node = !nodename ^ "@" ^ !nodehost in
@@ -367,20 +368,20 @@ struct
       add_int32_be b flags;
       add_int32_be b challenge;
       Buffer.add_string b node;
-      Buffer.contents b
+      Buffer.to_bytes b
 
   let make_challenge_reply challenge digest =
     let b = Buffer.create 20 in
       Buffer.add_char b 'r';
       add_int32_be b challenge;
       Buffer.add_string b digest;
-      Buffer.contents b
+      Buffer.to_bytes b
 
   let make_challenge_ack digest =
     let b = Buffer.create 20 in
       Buffer.add_char b 'a';
       Buffer.add_string b digest;
-      Buffer.contents b
+      Buffer.to_bytes b
 
   let init node self =
     match node with
@@ -408,9 +409,9 @@ struct
 			       send_packet state (make_send_name_req ());
 			       Lwt.return (`Continue state)
 			 )
-		       | None -> [%lwt raise ( Not_found)]
+		       | None -> raise Not_found
 		 )
-	       | None -> [%lwt raise ( Not_found)]
+	       | None -> raise Not_found
 	    )
 	  with
 	    | _exn ->
@@ -431,7 +432,7 @@ struct
 		    queue = Queue.create ();
 		   })
 
-  let open_socket addr port self =
+  let _open_socket addr port self =
     (*let timeout = 1.0 in*)
     let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
     let addr = Unix.ADDR_INET (addr, port) in
@@ -440,7 +441,7 @@ struct
       ignore (Socket.activate tcpsock self);
       Lwt.return tcpsock
 
-  let close_socket socket =
+  let _close_socket socket =
     Socket.close socket
 
   let switch_to_connection_established state =
@@ -454,7 +455,7 @@ struct
       | Recv_name, `Packet data ->
 	  if data.[0] = 'n' && String.length data > 7 then (
 	    let node = String.sub data 7 (String.length data - 7) in
-	      send_packet state "sok";
+	      send_packet state (Bytes.of_string "sok");
 	      let challege = Random.int 1000000000 in
 		send_packet state (make_challenge_req challege);
 		Lwt.return
@@ -472,7 +473,7 @@ struct
 	      | "sok_simultaneous" ->
 		  Lwt.return (`Continue {state with state = Recv_challenge})
 	      | "salive" ->
-		  send_packet state "strue";
+		  send_packet state (Bytes.of_string "strue");
 		  Lwt.return (`Continue {state with state = Recv_challenge})
 	      | "snok"
 	      | "snot_allowed"
@@ -547,7 +548,7 @@ struct
 	  )
       | Connection_established, `Packet data ->
 	  if String.length data = 0 then (
-	    send_packet state "";
+	    send_packet state Bytes.empty;
 	    Lwt.return (`Continue state)
 	  ) else if data.[0] = 'p' then (
 	    let (control, pos) = Erlang.binary_to_term data 1 in
@@ -559,14 +560,14 @@ struct
 	    let open Erlang in
 	      match control with
 		| ErlTuple [| ErlInt 2; _; _ |] ->
-		    let (message, pos) = Erlang.binary_to_term data pos in
+		    let (message, _pos) = Erlang.binary_to_term data pos in
 		    let%lwt () =
 		      Lwt_log.debug_f ~section
 			"message %s" (Erlang.term_to_string message)
 		    in
 		      Lwt.return (`Continue state)
 		| ErlTuple [| ErlInt 6; _; _; ErlAtom name |] ->
-		    let (message, pos) = Erlang.binary_to_term data pos in
+		    let (message, _pos) = Erlang.binary_to_term data pos in
 		    let%lwt () =
 		      Lwt_log.debug_f ~section
 			"message %s" (Erlang.term_to_string message)
@@ -615,7 +616,7 @@ struct
 	      format_pid state.pid
 	      (Buffer.contents b)
 	  in
-	    send_packet state (Buffer.contents b);
+	    send_packet state (Buffer.to_bytes b);
 	    Lwt.return (`Continue state)
     | `SendName (name, term), Connection_established ->
 	let open Erlang in
@@ -633,7 +634,7 @@ struct
 	      format_pid state.pid
 	      (Buffer.contents b)
 	  in
-	    send_packet state (Buffer.contents b);
+	    send_packet state (Buffer.to_bytes b);
 	    Lwt.return (`Continue state)
 
   let handle (msg : msg) state =
@@ -689,7 +690,7 @@ module ErlNodeConnectionServer = GenServer.Make(ErlNodeConnection)
 
 let try_connect node =
   match find_node_connection node with
-    | Some conn ->
+    | Some _conn ->
 	()
     | None ->
 	let _conn = ErlNodeConnectionServer.start (`Out node) in
@@ -754,11 +755,11 @@ struct
     Process.dist_send_by_name_ref := dist_send_by_name;
     let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
     let addr = Unix.ADDR_INET (Unix.inet_addr_any, 0) in
-      Lwt_unix.setsockopt socket Unix.SO_REUSEADDR true;
-      Lwt_unix.bind socket addr;
-      set_port socket;
-      Lwt_unix.listen socket 1024;
-      accept start socket
+    Lwt_unix.setsockopt socket Unix.SO_REUSEADDR true;
+    let%lwt () = Lwt_unix.bind socket addr in
+    set_port socket;
+    Lwt_unix.listen socket 1024;
+    accept start socket
 end
 
 module ErlNetKernel :
@@ -813,7 +814,7 @@ struct
 	    Lwt.return (`Continue state)
       | #GenServer.msg -> assert false
 
-  let terminate state _reason =
+  let terminate _state _reason =
     Lwt.return ()
 
 end
@@ -973,7 +974,7 @@ module ErlGlobalServer = GenServer.Make(ErlGlobal)
 
 
 let _ =
-  ErlNetKernelServer.start ();
+  ignore (ErlNetKernelServer.start ());
   (*ErlGlobalServer.start ();*)
   spawn ErlListener.start
   (*ErlNodeConnectionServer.start (`Out "asd@localhost")*)

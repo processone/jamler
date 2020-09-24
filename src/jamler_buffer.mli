@@ -1,5 +1,5 @@
 type t = {
-  mutable buf : string;
+  mutable buf : bytes;
   mutable start : int;
   mutable len : int;
   mutable size : int;

@@ -122,7 +122,7 @@ let crypt' b s =
 	| c -> Buffer.add_char b c
     done
 
-let rec attrs_to_string' b attrs =
+let attrs_to_string' b attrs =
   let attr_to_string (name, value) =
     Buffer.add_char b ' ';
     Buffer.add_string b name;

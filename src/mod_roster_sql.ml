@@ -33,21 +33,21 @@ struct
   let get_roster_query server username =
     let username = (username : Jlib.nodepreped :> string) in
     let query =
-      [%sql:
+      [%sql {|
 	select @(jid)s, @(nick)s, @(subscription)s, @(ask)s, @(askmessage)s
         from rosterusers
         where username=%(username)s
-      ]
+      |}]
     in
       Sql.query server query
 
   let get_roster_jid_groups_query server username =
     let username = (username : Jlib.nodepreped :> string) in
     let query =
-      [%sql:
+      [%sql {|
 	select @(jid)s, @(grp)s from rostergroups
 	where username=%(username)s
-      ]
+      |}]
     in
       Sql.query server query
 
@@ -55,10 +55,10 @@ struct
     let username = (username : Jlib.nodepreped :> string) in
     let sjid = Jlib.LJID.to_string ljid in
     let query =
-      [%sql:
+      [%sql {|
 	select @(grp)s from rostergroups
 	where username=%(username)s and jid=%(sjid)s
-      ]
+      |}]
     in
       Sql.query_t query
 
@@ -92,23 +92,23 @@ struct
   let delete_roster' u s =
     Hashtbl.remove rosters (u, s)
 
-  let delete_roster u s =
+  let _delete_roster u s =
     Lwt.return (delete_roster' u s)
 
   let read_roster_item_t username ljid =
     let username = (username : Jlib.nodepreped :> string) in
     let sjid = Jlib.LJID.to_string ljid in
     let query =
-      [%sql:
+      [%sql {|
 	select @(jid)s, @(nick)s, @(subscription)s, @(ask)s, @(askmessage)s
         from rosterusers
         where username=%(username)s and jid=%(sjid)s
         for update
-      ]
+      |}]
     in
       Sql.query_t query
 
-  let write_roster_item' u s jid item =
+  let _write_roster_item' u s jid item =
     let us = (u, s) in
     let roster =
       try
@@ -151,38 +151,38 @@ struct
     in
     let askmessage = item.askmessage in
     let insert_user =
-      [%sql:
+      [%sql {|
 	insert into rosterusers(username, jid, nick, subscription, ask,
 				askmessage)
 	values (%(username)s, %(sjid)s, %(name)s, %(ssubscription)s, %(sask)s,
                 %(askmessage)s)
-      ]
+      |}]
     in
     let update_user =
-      [%sql:
+      [%sql {|
 	update rosterusers
 	set nick = %(name)s,
             subscription = %(ssubscription)s,
             ask = %(sask)s,
             askmessage = %(askmessage)s
 	where username = %(username)s and jid = %(sjid)s
-      ]
+      |}]
     in
     let%lwt () = Sql.update_t insert_user update_user in
     let delete_groups =
-      [%sql:
+      [%sql {|
 	delete from rostergroups
         where username=%(username)s and jid=%(sjid)s
-      ]
+      |}]
     in
     let%lwt _ = Sql.query_t delete_groups in
       Lwt_list.iter_s
 	(fun group ->
 	   let insert_group =
-	     [%sql:
+	     [%sql {|
 	       insert into rostergroups(username, jid, grp)
 	       values (%(username)s, %(sjid)s, %(group)s)
-	     ]
+	     |}]
 	   in
 	   let%lwt _ = Sql.query_t insert_group in
 	     Lwt.return ()
@@ -192,16 +192,16 @@ struct
     let username = (username : Jlib.nodepreped :> string) in
     let sjid = Jlib.LJID.to_string ljid in
     let query1 =
-      [%sql:
+      [%sql {|
 	delete from rosterusers
         where username=%(username)s and jid=%(sjid)s
-      ]
+      |}]
     in
     let query2 =
-      [%sql:
+      [%sql {|
 	delete from rostergroups
         where username=%(username)s and jid=%(sjid)s
-      ]
+      |}]
     in
     let%lwt _ = Sql.query_t query1 in
     let%lwt _ = Sql.query_t query2 in

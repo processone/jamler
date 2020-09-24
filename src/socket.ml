@@ -13,8 +13,8 @@ type mod_name = [ `Tcp | `SSL | `Zlib ]
 module type SocketMod =
 sig
   type t
-  val read : t -> string -> int -> int -> int Lwt.t
-  val write : t -> string -> int -> int -> int Lwt.t
+  val read : t -> bytes -> int -> int -> int Lwt.t
+  val write : t -> bytes -> int -> int -> int Lwt.t
   val close : t -> unit Lwt.t
   val get_fd : t -> Lwt_unix.file_descr
   val name : mod_name
@@ -65,15 +65,15 @@ struct
   (* Copy&paste from cryptokit to enable zlib headers *)
 class buffered_output initial_buffer_size =
   object(self)
-    val mutable obuf = String.create initial_buffer_size
+    val mutable obuf = Bytes.create initial_buffer_size
     val mutable obeg = 0
     val mutable oend = 0
 
     method private ensure_capacity n =
-      let len = String.length obuf in
+      let len = Bytes.length obuf in
       if oend + n > len then begin
         if oend - obeg + n < len then begin
-          String.blit obuf obeg obuf 0 (oend - obeg);
+          Bytes.blit obuf obeg obuf 0 (oend - obeg);
           oend <- oend - obeg;
           obeg <- 0
         end else begin
@@ -87,8 +87,8 @@ class buffered_output initial_buffer_size =
             else
               raise (Error Output_buffer_overflow)
           end;
-          let newbuf = String.create (!newlen) in
-          String.blit obuf obeg newbuf 0 (oend - obeg);
+          let newbuf = Bytes.create (!newlen) in
+          Bytes.blit obuf obeg newbuf 0 (oend - obeg);
           obuf <- newbuf;
           oend <- oend - obeg;
           obeg <- 0
@@ -101,11 +101,11 @@ class buffered_output initial_buffer_size =
       let res = (obuf, obeg, oend - obeg) in obeg <- 0; oend <- 0; res
 
     method get_string =
-      let res = String.sub obuf obeg (oend - obeg) in obeg <- 0; oend <- 0; res
+      let res = Bytes.sub_string obuf obeg (oend - obeg) in obeg <- 0; oend <- 0; res
 
     method get_char =
       if obeg >= oend then raise End_of_file;
-      let r = obuf.[obeg] in
+      let r = Bytes.get obuf obeg in
       obeg <- obeg + 1;
       r
 
@@ -113,7 +113,7 @@ class buffered_output initial_buffer_size =
       Char.code self#get_char
 
     method wipe =
-      wipe_string obuf
+      wipe_bytes obuf
   end
 
 
@@ -127,14 +127,14 @@ type flush_command =
       
 external deflate_init: int -> bool -> stream = "caml_zlib_deflateInit"
 external deflate:
-  stream -> string -> int -> int -> string -> int -> int -> flush_command
+  stream -> bytes -> int -> int -> bytes -> int -> int -> flush_command
          -> bool * int * int
   = "caml_zlib_deflate_bytecode" "caml_zlib_deflate"
 external deflate_end: stream -> unit = "caml_zlib_deflateEnd"
-          
+
 external inflate_init: bool -> stream = "caml_zlib_inflateInit"
 external inflate:
-  stream -> string -> int -> int -> string -> int -> int -> flush_command
+  stream -> bytes -> int -> int -> bytes -> int -> int -> flush_command
          -> bool * int * int
   = "caml_zlib_inflate_bytecode" "caml_zlib_inflate"
 external inflate_end: stream -> unit = "caml_zlib_inflateEnd"
@@ -143,7 +143,7 @@ class compress level =
   object(self)
     val zs = deflate_init level true
       
-    inherit buffered_output 512 as output_buffer           
+    inherit buffered_output 512 (*as output_buffer*)
       
     method input_block_size = 1                            
     method output_block_size = 1                           
@@ -154,14 +154,15 @@ class compress level =
         let (_, used_in, used_out) =
           deflate zs
                   src ofs len
-                  obuf oend (String.length obuf - oend)
+                  obuf oend (Bytes.length obuf - oend)
                   Z_NO_FLUSH in
         oend <- oend + used_out;
         if used_in < len
         then self#put_substring src (ofs + used_in) (len - used_in)
       end
       
-    method put_string s = self#put_substring s 0 (String.length s)
+    method put_string s =
+      self#put_substring (Bytes.unsafe_of_string s) 0 (String.length s)
       
     method put_char c = self#put_string (String.make 1 c)
       
@@ -171,11 +172,11 @@ class compress level =
       self#ensure_capacity 256;
       let (_, _, used_out) =
          deflate zs
-                 "" 0 0
-                 obuf oend (String.length obuf - oend)
+                 Bytes.empty 0 0
+                 obuf oend (Bytes.length obuf - oend)
                  Z_SYNC_FLUSH in
       oend <- oend + used_out;
-      if oend = String.length obuf then self#flush
+      if oend = Bytes.length obuf then self#flush
       
     method finish =
       (*self#ensure_capacity 256;
@@ -187,8 +188,8 @@ class compress level =
       oend <- oend + used_out;
       if finished then*) deflate_end zs (*else self#finish*)
 
-    method wipe =
-      output_buffer#wipe
+    (*method wipe =
+      output_buffer#wipe*)
 end
 
 let compress ?(level = 6) () = new compress level
@@ -197,7 +198,7 @@ class uncompress =
   object(self)
     val zs = inflate_init true
 
-    inherit buffered_output 512 as output_buffer
+    inherit buffered_output 512 (*as output_buffer*)
 
     method input_block_size = 1
     method output_block_size = 1
@@ -208,7 +209,7 @@ class uncompress =
         let (finished, used_in, used_out) =
           inflate zs
                   src ofs len
-                  obuf oend (String.length obuf - oend)
+                  obuf oend (Bytes.length obuf - oend)
                   Z_SYNC_FLUSH in
         oend <- oend + used_out;
         if used_in < len then begin
@@ -219,7 +220,8 @@ class uncompress =
         end
       end
 
-    method put_string s = self#put_substring s 0 (String.length s)
+    method put_string s =
+      self#put_substring (Bytes.unsafe_of_string s) 0 (String.length s)
 
     method put_char c = self#put_string (String.make 1 c)
 
@@ -239,8 +241,8 @@ class uncompress =
         if not finished then do_finish false in
       do_finish true;*) inflate_end zs
 
-    method wipe =
-      output_buffer#wipe
+    (*method wipe =
+      output_buffer#wipe*)
 end
 
 let uncompress () = new uncompress
@@ -251,7 +253,7 @@ type zlib_socket =
     {zfd : Lwt_unix.file_descr;
      compress : Cryptokit.transform;
      uncompress : Cryptokit.transform;
-     mutable buf : string;
+     mutable buf : bytes;
      mutable off : int;
     }
 
@@ -259,15 +261,15 @@ module ZlibSocketMod : SocketMod with type t = zlib_socket =
 struct
   type t = zlib_socket
   let rec read sock buf off len =
-    let buflen = String.length sock.buf - sock.off in
+    let buflen = Bytes.length sock.buf - sock.off in
       if buflen > 0 then (
 	if buflen <= len then (
-	  String.blit sock.buf sock.off buf off buflen;
-	  sock.buf <- "";
+	  Bytes.blit sock.buf sock.off buf off buflen;
+	  sock.buf <- Bytes.empty;
 	  sock.off <- 0;
 	  Lwt.return buflen
 	) else (
-	  String.blit sock.buf sock.off buf off len;
+	  Bytes.blit sock.buf sock.off buf off len;
 	  sock.off <- sock.off + len;
 	  Lwt.return len
 	)
@@ -279,11 +281,11 @@ struct
 	    if sock.uncompress#available_output > 0 then (
 	      let (ubuf, uoff, ulen) = sock.uncompress#get_substring in
 		if ulen <= len then (
-		  String.blit ubuf uoff buf off ulen;
+		  Bytes.blit ubuf uoff buf off ulen;
 		  Lwt.return ulen
 		) else (
-		  String.blit ubuf uoff buf off len;
-		  sock.buf <- String.sub ubuf (uoff + len) (ulen - len);
+		  Bytes.blit ubuf uoff buf off len;
+		  sock.buf <- Bytes.sub ubuf (uoff + len) (ulen - len);
 		  sock.off <- 0;
 		  Lwt.return len
 		)
@@ -325,7 +327,7 @@ and msg =
 let rec writer socket =
   let len = Buffer.length socket.buffer in
     if len > 0 then (
-      let data = Buffer.contents socket.buffer in
+      let data = Buffer.to_bytes socket.buffer in
 	Buffer.reset socket.buffer;
 	let%lwt () =
 	  try%lwt
@@ -402,14 +404,14 @@ let close socket =
     Lwt.return ()
 
 let buf_size = 4096
-let buf = String.make buf_size '\000'
+let buf = Bytes.make buf_size '\000'
 
 let activate socket pid =
   try%lwt
     let module S = (val socket.socket : Socket) in
     let%lwt len = S.SocketMod.read S.socket buf 0 buf_size in
       if len > 0 then (
-	let data = String.sub buf 0 len in
+	let data = Bytes.sub_string buf 0 len in
 	  pid $! `Tcp_data (socket, data)
       ) else (
 	close' socket
@@ -457,9 +459,9 @@ let send' socket data =
     else*) (
       match socket.writer with
 	| None ->
-	    Buffer.add_string socket.buffer data
+	    Buffer.add_bytes socket.buffer data
 	| Some writer ->
-	    Buffer.add_string socket.buffer data;
+	    Buffer.add_bytes socket.buffer data;
 	    Lwt.wakeup writer ()
     )
 
@@ -496,7 +498,7 @@ let get_name socket =
   let module S = (val socket.socket : Socket) in
     S.SocketMod.name
 
-let starttls socket opts =
+let starttls socket _opts =
   let module S = (val socket.socket : Socket) in
   let fd = S.SocketMod.get_fd S.socket in
   let context = Ssl.create_context Ssl.SSLv23 Ssl.Server_context in
@@ -520,7 +522,7 @@ let compress socket =
     {zfd = fd;
      compress;
      uncompress;
-     buf = "";
+     buf = Bytes.empty;
      off = 0;
     }
   in

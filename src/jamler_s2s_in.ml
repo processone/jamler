@@ -78,8 +78,11 @@ struct
   let send_text state text =
     Socket.send_async state.socket text
 
+  let send_string state text =
+    send_text state (Bytes.of_string text)
+
   let send_element state el =
-    send_text state (Xml.element_to_string el)
+    send_string state (Xml.element_to_string el)
 
   let stream_header_fmt =
     "<?xml version='1.0'?>" ^^
@@ -94,10 +97,10 @@ struct
 
   let send_trailer state =
     let stream_trailer = "</stream:stream>" in
-    send_text state stream_trailer
+    send_string state stream_trailer
 
   let init socket self =
-    let%lwt () = Lwt_log.debug ~secion "started" in
+    let%lwt () = Lwt_log.debug ~section "started" in
     let socket = Socket.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
     let state = {pid = self;
@@ -117,7 +120,7 @@ struct
 		 auth_domain = Jlib.nameprep_exn "";
 		 (* shaper, timer *)}
     in
-      Socket.activate socket self;
+      let%lwt () = Socket.activate socket self in
       Lwt.return (`Continue state)
 
   let invalid_ns_err = Jlib.serr_invalid_namespace
@@ -150,7 +153,7 @@ struct
 	       (Xml.get_attr_s "version" attrs) = "1.0") with
 	  | "jabber:server", _, (Some lserver), true
 	    when (state.tls && not state.authenticated) ->
-	    send_text state (stream_header state.streamid " version='1.0'");
+	    send_string state (stream_header state.streamid " version='1.0'");
 	    (* SASL =
 		if
 		    StateData#state.tls_enabled ->
@@ -180,9 +183,9 @@ struct
 	      if state.tls_enabled then
 		[]
 	      else if (not state.tls_enabled && not state.tls_required) then
-		[`XmlElement ("starttls", [("xmlns", [%ns:TLS])], [])]
+		[`XmlElement ("starttls", [("xmlns", [%ns "TLS"])], [])]
 	      else if (not state.tls_enabled && state.tls_required) then
-		[`XmlElement ("starttls", [("xmlns", [%ns:TLS])],
+		[`XmlElement ("starttls", [("xmlns", [%ns "TLS"])],
 			      [`XmlElement ("required", [], [])])]
 	      else
 		assert false in
@@ -204,14 +207,14 @@ struct
 				   with state = Wait_for_feature_request;
 				     server = lserver})
 	  | "jabber:server", _, (Some lserver), true when state.authenticated ->
-	    send_text state (stream_header state.streamid " version='1.0'");
+	    send_string state (stream_header state.streamid " version='1.0'");
 	    let%lwt feats = Hooks.run_fold s2s_stream_features lserver [] lserver in
 	    send_element state (`XmlElement ("stream:features", [], feats));
 	    Lwt.return (`Continue {state
 				   with state = Stream_established;
 				     server = lserver})
 	  | "jabber:server", "jabber:server:dialback", (Some lserver), _ ->
-	    send_text state (stream_header state.streamid "");
+	    send_string state (stream_header state.streamid "");
 	    Lwt.return (`Continue {state
 				   with state = Stream_established;
 				     server = lserver})
@@ -219,7 +222,7 @@ struct
 	    send_element state invalid_ns_err;
 	    Lwt.return (`Stop state))
       | `XmlStreamError _ ->
-	send_text state (stream_header state.streamid "");
+	send_string state (stream_header state.streamid "");
 	send_element state invalid_xml_err;
 	send_trailer state;
 	Lwt.return (`Stop state)
@@ -251,12 +254,13 @@ struct
 		    (*
 		      S2SOut.terminate_if_waiting_delay lto lfrom;
 		    *)
-		    Jamler_s2s_out.S2SOutServer.start
-		      (lto, lfrom,
-		       `Verify
-			 ((state.pid :> Jamler_s2s_lib.validation_msg pid),
-			  key,
-			  state.streamid));
+		     ignore (
+                         Jamler_s2s_out.S2SOutServer.start
+		           (lto, lfrom,
+		            `Verify
+			      ((state.pid :> Jamler_s2s_lib.validation_msg pid),
+			       key,
+			       state.streamid)));
 		    Hashtbl.replace state.connections
 		      (lfrom, lto) Wait_for_verification;
 		    (* change_shaper(StateData, LTo, jlib:make_jid("", LFrom, "")), *)
@@ -495,7 +499,7 @@ stream_established(closed, StateData) ->
               "tcp data %d %S" (String.length data) data
           in
             XMLReceiver.parse state.xml_receiver data;
-            Socket.activate state.socket state.pid;
+            let%lwt () = Socket.activate state.socket state.pid in
             Lwt.return (`Continue state)
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->

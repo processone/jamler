@@ -16,6 +16,7 @@ let resourceprep_exn = Stringprep.resourceprep
 
 let start_time = Unix.time ()
 
+[@@@warning "-52"]
 let nameprep s =
   try
     Some (nameprep_exn s)
@@ -131,7 +132,7 @@ let stanza_error code type' condition =
   `XmlElement
     ("error",
      [("code", code); ("type", type')],
-     [`XmlElement (condition, [("xmlns", [%ns:STANZAS])], [])])
+     [`XmlElement (condition, [("xmlns", [%ns "STANZAS"])], [])])
 
 let err_bad_request =
   stanza_error "400" "modify" "bad-request"
@@ -184,8 +185,8 @@ let stanza_errort code type' condition lang text =
   `XmlElement
     ("error",
      [("code", code); ("type", type')],
-     [`XmlElement (condition, [("xmlns", [%ns:STANZAS])], []);
-      `XmlElement ("text", [("xmlns", [%ns:STANZAS])],
+     [`XmlElement (condition, [("xmlns", [%ns "STANZAS"])], []);
+      `XmlElement ("text", [("xmlns", [%ns "STANZAS"])],
 		   [`XmlCdata (translate lang text)])])
 
 let errt_bad_request lang text =
@@ -243,7 +244,7 @@ let stream_error condition cdata =
   `XmlElement
     ("stream:error",
      [],
-     [`XmlElement (condition, [("xmlns", [%ns:STREAMS])],
+     [`XmlElement (condition, [("xmlns", [%ns "STREAMS"])],
 		   [`XmlCdata cdata])])
 
 let serr_bad_format = stream_error "bad-format" ""
@@ -568,7 +569,7 @@ let timestamp_to_xml tfloat tz from_jid desc =
   let (t_string, tz_string) = timestamp_to_iso tfloat tz in
   let text = [`XmlCdata desc] in
   let from = jid_to_string from_jid in
-    `XmlElement ("delay", [("xmlns", [%ns:DELAY]);
+    `XmlElement ("delay", [("xmlns", [%ns "DELAY"]);
 			   ("from", from);
 			   ("stamp", t_string ^ tz_string)],
 		 text)
@@ -580,7 +581,7 @@ let timestamp_to_xml' tm =
     (tm.Unix.tm_year + 1900) (tm.Unix.tm_mon + 1)
     tm.Unix.tm_mday tm.Unix.tm_hour
     tm.Unix.tm_min tm.Unix.tm_sec in
-    `XmlElement ("x", [("xmlns", [%ns:DELAY91]);
+    `XmlElement ("x", [("xmlns", [%ns "DELAY91"]);
 		       ("stamp", stamp)], [])
 
 let uptime () = (Unix.time ()) -. start_time

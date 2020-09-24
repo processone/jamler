@@ -6,6 +6,7 @@ type t = Jlib.jid -> Jlib.jid -> Xml.element -> unit
 
 type msg = [ `Route of Jlib.jid * Jlib.jid * Xml.element ]
 
+[@@@warning "-37"]
 type external_owner =
   | ExternalPid of Erlang.pid
   | ExternalNode of string * Erlang.erl_term
@@ -318,7 +319,7 @@ struct
 	    Lwt.return (`Continue state)
       | #GenServer.msg -> assert false
 
-  let terminate state _reason =
+  let terminate _state _reason =
     Lwt.return ()
 
 end

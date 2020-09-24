@@ -111,8 +111,8 @@ let parent_domains domain =
 	     [label ^ "." ^ head; head] @ tail
     ) (Str.split (Str.regexp_string "\\.") domain) []
 
-let is_service from to' =
-  let lfrom = from.Jlib.lserver in
+let is_service _from to' =
+  (*let lfrom = from.Jlib.lserver in*)
     (* case ejabberd_config:get_local_option({route_subdomains, LFromDomain}) of *)
     match "s2s" with
       | "s2s" -> false
@@ -126,7 +126,7 @@ let is_service from to' =
 	    | [] -> false in
 	    is_service_rec pdomains
 
-let allow_host' myhost s2shost =
+let allow_host' _myhost _s2shost =
     (* case ejabberd_config:get_local_option({{s2s_host, S2SHost}, MyHost}) of
         deny -> false;
         allow -> true;
