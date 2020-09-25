@@ -1,13 +1,5 @@
 type -'a pid
-type 'a proc = {			(* TODO: make abstract *)
-  id : int;
-  queue : 'a Queue.t;
-  mutable t : unit Lwt.t;
-  mutable overloaded : bool;
-  mutable wakener : 'a Lwt.u option;
-  mutable name : string option;
-  mutable monitor_nodes : bool;
-}
+type 'a proc
 (*
 external pid_to_proc : 'a pid -> 'a proc = "%identity"
 external proc_to_pid : 'a proc -> 'a pid = "%identity"

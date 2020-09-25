@@ -66,6 +66,19 @@ type state =
 
 type host = Jlib.namepreped
 
+let get_sql_server =
+  Jamler_config.(get_global_opt_with_default
+                   ["sql_server"] string "localhost")
+let get_sql_database =
+  Jamler_config.(get_global_opt_with_default
+                   ["sql_database"] string "ejabberd")
+let get_sql_username =
+  Jamler_config.(get_global_opt_with_default
+                   ["sql_username"] string "ejabberd")
+let get_sql_password =
+  Jamler_config.(get_global_opt_with_default
+                   ["sql_password"] string "ejabberd")
+
 let pools = Hashtbl.create 10
 
 let add_pool host =
@@ -74,10 +87,10 @@ let add_pool host =
       (fun () ->
 	 let%lwt dbh =
 	   PG.connect
-	     ~host:"localhost"
-	     ~user:"ejabberd"
-	     ~password:"ejabberd"
-	     ~database:"ejabberd" ()
+	     ~host:(get_sql_server ())
+	     ~user:(get_sql_username ())
+	     ~password:(get_sql_password ())
+	     ~database:(get_sql_database ()) ()
 	 in
 	 let%lwt () = PG.prepare dbh
 	   ~query:"SET default_transaction_isolation TO SERIALIZABLE" ()

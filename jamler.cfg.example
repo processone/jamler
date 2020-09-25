@@ -1,0 +1,94 @@
+{
+  "hosts" : ["localhost"],
+  "loglevel" : "notice",
+
+  "sql_server": "localhost",
+  "sql_database": "ejabberd",
+  "sql_username": "ejabberd",
+  "sql_password": "ejabberd",
+
+  "acl": {
+    "admin": [
+      {"user": "test"},
+      {"user": "admin@example.org"}
+    ],
+    "blocked": [
+      {"user": "test2"}
+    ],
+    "local": [
+      {"user_regexp": ""}
+    ]
+  },
+
+  "access": {
+    "register": [
+      {"all": "allow"}
+    ],
+    "announce": [
+      {"admin": "allow"}
+    ],
+    "c2s": [
+      {"blocked": "deny"},
+      {"all": "allow"}
+    ],
+    "c2s_shaper": [
+      /*{"admin": "none"},*/
+      {"all": "normal"}
+    ],
+    "s2s_shaper": [
+      {"all": "s2s"}
+    ],
+    "max_user_sessions": [
+      {"all": 10}
+    ]
+  },
+
+  "shaper": {
+    "normal": {
+      "type": "maxrate",
+      "maxrate": 1000
+    }
+  },
+
+  "listen": {
+    "c2s": {
+      "family": "ipv4",
+      "port": 5222,
+      "module": "c2s",
+      "access": "c2s",
+      "shaper": "c2s_shaper",
+      "max_stanza_size": 65536
+    },
+    "s2s": {
+      "family": "ipv4",
+      "port": 5269,
+      "module": "s2s",
+      "shaper": "s2s_shaper",
+      "max_stanza_size": 65536
+    }/*,
+    "service": {
+      "family": "ipv4",
+      "port": 5270,
+      "module": "service"
+    }*/
+  },
+
+  "modules": {
+    "mod_roster_sql": {},
+    "mod_version": {
+      "show_os": true
+    },
+    "mod_time": {},
+    "mod_last_sql": {},
+    "mod_offline_sql": {},
+    "mod_privacy_sql": {},
+    "mod_disco": {},
+    "mod_vcard_sql": {},
+    "mod_ping": {},
+    "mod_register": {}
+  }
+}
+
+/* Local Variables: */
+/* mode: javascript */
+/* End:             */
