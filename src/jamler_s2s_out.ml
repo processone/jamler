@@ -238,7 +238,7 @@ struct
     let addr = Unix.ADDR_INET (addr', port) in
     let%lwt () = Lwt_unix.connect socket addr in (* TODO *)
     let tcpsock = Socket.of_fd socket self in
-    let%lwt () = Socket.activate tcpsock self in
+      ignore (Socket.activate tcpsock self);
       Lwt.return tcpsock
 
   let open_socket1 = open_socket2
@@ -1018,7 +1018,7 @@ struct
 		    "tcp data %d %S" (String.length data) data
 		in
 		  XMLReceiver.parse state.xml_receiver data;
-		  let%lwt () = Socket.activate socket state.pid in
+		  ignore (Socket.activate socket state.pid);
 		  Lwt.return (`Continue state)
 	    | _ -> assert false
 	)

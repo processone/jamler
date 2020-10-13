@@ -120,7 +120,7 @@ struct
 		 auth_domain = Jlib.nameprep_exn "";
 		 (* shaper, timer *)}
     in
-      let%lwt () = Socket.activate socket self in
+      ignore (Socket.activate socket self);
       Lwt.return (`Continue state)
 
   let invalid_ns_err = Jlib.serr_invalid_namespace
@@ -499,7 +499,7 @@ stream_established(closed, StateData) ->
               "tcp data %d %S" (String.length data) data
           in
             XMLReceiver.parse state.xml_receiver data;
-            let%lwt () = Socket.activate state.socket state.pid in
+            ignore (Socket.activate state.socket state.pid);
             Lwt.return (`Continue state)
       | `Tcp_data (_socket, _data) -> assert false
       | `Tcp_close socket when socket == state.socket ->
