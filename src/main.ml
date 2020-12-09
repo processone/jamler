@@ -147,6 +147,7 @@ let () =
       | _ ->
 	  config_file_path := make_abs_path !config_file_path;
 	  (try
+             Lwt_engine.set (new Lwt_engine.libev ());
 	     Lwt_main.run (main ())
 	   with
 	     | Yojson.Json_error err ->
