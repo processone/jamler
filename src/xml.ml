@@ -134,24 +134,28 @@ let attrs_to_string' b attrs =
 
 let rec element_cdata_to_string' b el =
   match el with
-    | `XmlElement (name, attrs, els) ->
-	if List.length els > 0 then (
-	  Buffer.add_char b '<';
-	  Buffer.add_string b name;
-	  attrs_to_string' b attrs;
-	  Buffer.add_char b '>';
-	  List.iter (element_cdata_to_string' b) els;
-	  Buffer.add_string b "</";
-	  Buffer.add_string b name;
-	  Buffer.add_char b '>';
-	) else (
-	  Buffer.add_char b '<';
-	  Buffer.add_string b name;
-	  attrs_to_string' b attrs;
-	  Buffer.add_string b "/>";
-	)
-    | `XmlCdata chunk ->
-	crypt' b chunk
+  | `XmlElement (name, attrs, []) ->
+     Buffer.add_char b '<';
+     Buffer.add_string b name;
+     attrs_to_string' b attrs;
+     Buffer.add_string b "/>"
+  | `XmlElement (name, attrs, els) ->
+     Buffer.add_char b '<';
+     Buffer.add_string b name;
+     attrs_to_string' b attrs;
+     Buffer.add_char b '>';
+     element_cdata_to_string'_els b els;
+     Buffer.add_string b "</";
+     Buffer.add_string b name;
+     Buffer.add_char b '>';
+  | `XmlCdata chunk ->
+     crypt' b chunk
+and element_cdata_to_string'_els b els =
+  match els with
+  | [] -> ()
+  | el :: els ->
+     element_cdata_to_string' b el;
+     element_cdata_to_string'_els b els
 
 let crypt s =
   let l = String.length s in
@@ -165,7 +169,7 @@ let attrs_to_string attrs =
     Buffer.contents b
 
 let element_cdata_to_string el =
-  let b = Buffer.create 64 in
+  let b = Buffer.create 256 in
     element_cdata_to_string' b el;
     Buffer.contents b
 

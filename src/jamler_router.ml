@@ -96,14 +96,14 @@ let register_s2s_route f =
   s2s_route := f
 
 let do_route orig_from orig_to orig_packet =
-  ignore (
+  (*ignore (
     Lwt_log.debug_f
       ~section
       "route\nfrom: %s\n to: %s\npacket: %s"
       (Jlib.jid_to_string orig_from)
       (Jlib.jid_to_string orig_to)
       (Xml.element_to_string orig_packet)
-  );
+  );*)
   match (*ejabberd_hooks:run_fold(filter_packet,
       			 {OrigFrom, OrigTo, OrigPacket}, [])*)
     (* TODO *)
