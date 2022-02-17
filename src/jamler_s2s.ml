@@ -11,8 +11,6 @@ module Config = Jamler_config
 module S2SOut = Jamler_s2s_out.S2SOut
 module S2SOutServer = Jamler_s2s_out.S2SOutServer
 
-type msg = Router.msg
-
 module S2S :
 sig
 
@@ -46,8 +44,8 @@ struct
   open Jamler_s2s_lib
 
   let new_connection
-      myserver server from from_to
-      max_s2s_connections_number max_s2s_connections_number_per_node =
+        myserver server from from_to
+        max_s2s_connections_number max_s2s_connections_number_per_node =
     let key = new_key () in
     let pid = S2SOutServer.start (myserver, server, `New key) in
     let s2s_list = find_s2s_list from_to in
@@ -58,16 +56,16 @@ struct
 	max_s2s_connections_number_per_node in
     let pid' = match needed_connections with
       | n when n > 0 ->
-	Hashtbl.replace s2s_table from_to ((key, (pid :> s2s_out_msg Process.pid)) :: s2s_list);
-	(pid :> s2s_out_msg pid)
+	 Hashtbl.replace s2s_table from_to ((key, pid) :: s2s_list);
+	 pid
       | _ ->
-	match choose_connection from s2s_list with
-	  | Some p -> p
-	  | None -> (pid :> s2s_out_msg pid)
+	 match choose_connection from s2s_list with
+	 | Some p -> p
+	 | None -> pid
     in
-      if (pid :> s2s_out_msg pid) == pid'
-      then S2SOut.start_connection (pid :> s2s_out_msg pid)
-      else S2SOut.stop_connection (pid :> s2s_out_msg pid);
+    if pid == pid'
+    then S2SOut.start_connection pid
+    else S2SOut.stop_connection pid;
     pid'
 
   let open_several_connections
@@ -119,7 +117,7 @@ struct
 	  choose_connection from s2s_list
 
   let send_element pid el =
-    pid $! (`Send_element el)
+    pid $! Jamler_s2s_lib.S2SOut (`Send_element el)
 
   let do_route from to' packet =
     (* ?DEBUG("s2s manager~n\tfrom ~p~n\tto ~p~n\tpacket ~P~n",

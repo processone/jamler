@@ -2,18 +2,15 @@ open Process
 
 type broadcast =
     [ `RosterItem of Jlib.LJID.t * [ `None | `From | `To | `Both | `Remove ] ]
-type msg =
-    [ Jamler_router.msg
-    | `Broadcast of broadcast
-    | `Replaced
-    | `Node_up of string
-    | `Node_down of string ]
+type msg +=
+   | Broadcast of broadcast
+   | Replaced
 type info = [ `TODO ] list
 type external_owner =
   | ExternalPid of Erlang.pid
   | ExternalNode of string * Erlang.erl_term
 type owner =
-  | Local of msg pid
+  | Local of pid
   | External of external_owner
 type sid = float * owner
 

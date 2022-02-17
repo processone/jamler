@@ -2,8 +2,6 @@ open Process
 
 let section = Jamler_log.new_section "gen_server"
 
-type system_msg = [ `System ]
-type msg = [ system_msg | `Timeout ]
 type reason = [ `Normal | `Exception of exn ]
 type ('a, 'b) plain_result =
     [ `Continue of 'a
@@ -14,33 +12,32 @@ type ('a, 'b) plain_result =
 type ('a, 'b) init_result = [ ('a, 'b) plain_result | `Init_failed ] Lwt.t
 type ('a, 'b) result = ('a, 'b) plain_result Lwt.t
 
+type msg +=
+   (*| System*)
+   | Timeout
+
 module type Type =
 sig
-  type msg
   type state
   type init_data
   type stop_reason
-  val init : init_data -> msg pid -> (state, stop_reason) init_result
-  val handle : msg -> state -> (state, stop_reason) result
+  val init : init_data -> pid -> (state, stop_reason) init_result
+  val handle : Process.msg -> state -> (state, stop_reason) result
   val terminate : state -> stop_reason -> unit Lwt.t
 end
 
 module type S =
 sig
-  type msg
   type init_data
-  val start : init_data -> msg pid
+  val start : init_data -> pid
 end
 
-module Make (T : Type with type msg = private [> msg]
-		      and type stop_reason = private [> reason ]) :
+module Make (T : Type with type stop_reason = private [> reason ]) :
 sig
-  type msg = [ `System | `Timeout ]
   type init_data = T.init_data
-  val start : init_data -> T.msg pid
+  val start : init_data -> pid
 end =
 struct
-  type msg = [ `System | `Timeout ]
   type init_data = T.init_data
   let start init_data =
     let rec loop self state timeout =
@@ -57,11 +54,11 @@ struct
 	    | Some timeout ->
 		Lwt.pick [receive self;
 			  (let%lwt () = Lwt_unix.sleep timeout in
-                           Lwt.return `Timeout)]
+                           Lwt.return Timeout)]
 	in
           match msg with
-	    | #system_msg ->
-		loop self state timeout
+	    (*| System ->
+		loop self state timeout*)
 	    | m ->
 		let%lwt result =
 	          try%lwt

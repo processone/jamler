@@ -312,7 +312,7 @@ struct
 end
 
 type socket = {mutable socket : (module Socket);
-	       pid : msg pid;
+	       pid : pid;
 	       mutable writer : unit Lwt.u option;
 	       buffer : Buffer.t;
 	       mutable buffer_limit : int;
@@ -320,9 +320,9 @@ type socket = {mutable socket : (module Socket);
 	       mutable timeout : float;
 	      }
 
-and msg =
-    [ `Tcp_data of socket * string
-    | `Tcp_close of socket ]
+type msg +=
+   | Tcp_data of socket * string
+   | Tcp_close of socket
 
 let rec writer socket =
   let len = Buffer.length socket.buffer in
@@ -343,7 +343,7 @@ let rec writer socket =
 		let senders = socket.waiters in
                   socket.waiters <- [];
 	          List.iter (fun w -> Lwt.wakeup_exn w exn) senders;
-		  socket.pid $! `Tcp_close socket;
+		  socket.pid $! Tcp_close socket;
                   Lwt.fail exn
         in
 	  writer socket
@@ -370,7 +370,7 @@ let of_fd fd pid =
   in
   let socket =
     {socket = s;
-     pid = (pid :> msg pid);
+     pid;
      writer = None;
      buffer = Buffer.create 100;
      buffer_limit = -1;
@@ -391,7 +391,7 @@ let close' socket =
   let module S = (val socket.socket : Socket) in
     ignore (S.SocketMod.close S.socket);
     Buffer.reset socket.buffer;
-    socket.pid $! `Tcp_close socket
+    socket.pid $! Tcp_close socket
 
 let close socket =
   let module S = (val socket.socket : Socket) in
@@ -412,7 +412,7 @@ let activate socket pid =
     let%lwt len = S.SocketMod.read S.socket buf 0 buf_size in
       if len > 0 then (
 	let data = Bytes.sub_string buf 0 len in
-	  pid $! `Tcp_data (socket, data)
+	  pid $! Tcp_data (socket, data)
       ) else (
 	close' socket
       );
@@ -441,7 +441,7 @@ let activate socket pid =
 	let senders = socket.waiters in
           socket.waiters <- [];
 	  List.iter (fun w -> Lwt.wakeup_exn w exn) senders;
-	  socket.pid $! `Tcp_close socket;
+	  socket.pid $! Tcp_close socket;
           Lwt.fail exn
 
 (*

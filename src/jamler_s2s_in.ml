@@ -18,21 +18,17 @@ module S2SIn :
 sig
   type validation_msg = Jamler_s2s_lib.validation_msg
   include GenServer.Type with
-    type msg =
-        [ Socket.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
-    and type init_data = Lwt_unix.file_descr
+    type init_data = Lwt_unix.file_descr
     and type stop_reason = GenServer.reason
 
   val s2s_stream_features :
     (Jlib.namepreped, Xml.element_cdata list) Hooks.fold_hook
   val s2s_receive_packet : (Jlib.jid * Jlib.jid * Xml.element) Hooks.hook
-  val s2s_loop_debug : (XMLReceiver.msg) Hooks.hook
+  val s2s_loop_debug : XMLReceiver.xml_msg Hooks.hook
 
 end =
 struct
   type validation_msg = Jamler_s2s_lib.validation_msg
-  type msg =
-      [ Socket.msg | XMLReceiver.msg | GenServer.msg | validation_msg ]
 
   type s2s_in_state =
     | Wait_for_stream
@@ -46,7 +42,7 @@ struct
   type from_to = (Jlib.namepreped * Jlib.namepreped)
 
   type state =
-      {pid: msg pid;
+      {pid: pid;
        socket: Socket.socket;
        xml_receiver : XMLReceiver.t;
        state : s2s_in_state;
@@ -258,9 +254,7 @@ struct
                          Jamler_s2s_out.S2SOutServer.start
 		           (lto, lfrom,
 		            `Verify
-			      ((state.pid :> Jamler_s2s_lib.validation_msg pid),
-			       key,
-			       state.streamid)));
+			      (state.pid, key, state.streamid)));
 		    Hashtbl.replace state.connections
 		      (lfrom, lto) Wait_for_verification;
 		    (* change_shaper(StateData, LTo, jlib:make_jid("", LFrom, "")), *)
@@ -378,8 +372,8 @@ stream_established(closed, StateData) ->
 
   let wait_for_feature_request msg state =
     match msg with
-      | `XmlStreamElement _ ->
-	(* TODO: TLS/Mutual-Auth stuff
+    | `XmlStreamElement _ ->
+       (* TODO: TLS/Mutual-Auth stuff
 	   TLS = StateData#state.tls,
     TLSEnabled = StateData#state.tls_enabled,
     SockMod = (StateData#state.sockmod):get_sockmod(StateData#state.socket),
@@ -409,7 +403,7 @@ stream_established(closed, StateData) ->
 			     streamid = new_id(),
 			     tls_enabled = true,
 			     tls_options = TLSOpts
-			    }};
+	    }};
 	{?NS_SASL, "auth"} when TLSEnabled ->
 	    Mech = xml:get_attr_s("mechanism", Attrs),
 	    case Mech of
@@ -457,7 +451,7 @@ stream_established(closed, StateData) ->
 			     StateData#state{streamid = new_id(),
 					     authenticated = true,
 					     auth_domain = AuthDomain
-					    }};
+			    }};
 			true ->
 			    send_element(StateData,
 					 {xmlelement, "failure",
@@ -472,20 +466,20 @@ stream_established(closed, StateData) ->
 				  [{xmlelement, "invalid-mechanism", [], []}]}),
 		    {stop, normal, StateData}
 	    end; *)
-	stream_established msg {state with state = Stream_established}
-      | `XmlStreamEnd _ ->
-	send_trailer state;
-	Lwt.return (`Stop state)
-      | `XmlStreamError _ ->
-	send_element state invalid_xml_err;
-	send_trailer state;
-	Lwt.return (`Stop state)
-      | `XmlStreamStart _ ->
-	Lwt.return (`Stop state)
-      | `Valid _
-      | `Invalid _ -> assert false
+       stream_established msg {state with state = Stream_established}
+    | `XmlStreamEnd _ ->
+       send_trailer state;
+       Lwt.return (`Stop state)
+    | `XmlStreamError _ ->
+       send_element state invalid_xml_err;
+       send_trailer state;
+       Lwt.return (`Stop state)
+    | `XmlStreamStart _ ->
+       Lwt.return (`Stop state)
+    | `Valid _
+    | `Invalid _ -> assert false
 
-  let handle_xml (msg : [ XMLReceiver.msg | validation_msg ]) state =
+  let handle_xml (msg : [ XMLReceiver.xml_msg | validation_msg ]) state =
     match state.state with
       | Wait_for_stream -> wait_for_stream msg state
       | Wait_for_feature_request -> wait_for_feature_request msg state
@@ -493,7 +487,7 @@ stream_established(closed, StateData) ->
 
   let handle (msg : msg) state =
     match msg with
-      | `Tcp_data (socket, data) when socket == state.socket ->
+      | Socket.Tcp_data (socket, data) when socket == state.socket ->
 	let%lwt () =
             Lwt_log.debug_f ~section
               "tcp data %d %S" (String.length data) data
@@ -501,15 +495,18 @@ stream_established(closed, StateData) ->
             XMLReceiver.parse state.xml_receiver data;
             ignore (Socket.activate state.socket state.pid);
             Lwt.return (`Continue state)
-      | `Tcp_data (_socket, _data) -> assert false
-      | `Tcp_close socket when socket == state.socket ->
+      | Socket.Tcp_data (_socket, _data) -> assert false
+      | Socket.Tcp_close socket when socket == state.socket ->
 	let%lwt () = Lwt_log.debug ~section "tcp close" in
         Lwt.return (`Stop state)
-      | `Tcp_close _socket -> assert false
-      | #XMLReceiver.msg
-      | #validation_msg as m ->
-          handle_xml m state
-      | #GenServer.msg -> assert false
+      | Socket.Tcp_close _socket -> assert false
+      | XMLReceiver.Xml m ->
+         handle_xml (m :> [ XMLReceiver.xml_msg | Jamler_s2s_lib.validation_msg ]) state
+      | Jamler_s2s_lib.S2SValidation m ->
+         handle_xml (m :> [ XMLReceiver.xml_msg | Jamler_s2s_lib.validation_msg ]) state
+      | _ ->
+         (* TODO: add a warning *)
+	 Lwt.return (`Continue state)
 
   let terminate state _reason =
     let%lwt () = Lwt_log.debug ~section "terminated" in
@@ -527,7 +524,7 @@ struct
   let listen_parser =
     Jamler_config.P
       (function _json ->
-	 (fun socket -> any_pid (S2SInServer.start socket))
+	 (fun socket -> S2SInServer.start socket)
       )
 end
 

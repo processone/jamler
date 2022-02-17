@@ -5,7 +5,7 @@ let section = Jamler_log.new_section "listener"
 module type ListenModule =
 sig
   val name : string
-  val listen_parser : (Lwt_unix.file_descr -> empty pid) Jamler_config.p
+  val listen_parser : (Lwt_unix.file_descr -> pid) Jamler_config.p
 end
 
 let mods : (string, (module ListenModule)) Hashtbl.t =

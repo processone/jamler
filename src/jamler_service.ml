@@ -14,22 +14,17 @@ module ACL = Jamler_acl
 module ExtService :
 sig
   include GenServer.Type with
-    type msg =
-        [ Socket.msg | XMLReceiver.msg | GenServer.msg | Router.msg ]
-    and type init_data = Lwt_unix.file_descr
+    type init_data = Lwt_unix.file_descr
     and type stop_reason = GenServer.reason
 end =
 struct
-  type msg =
-      [ Socket.msg | XMLReceiver.msg | GenServer.msg | Router.msg ]
-
   type service_state =
     | Wait_for_stream
     | Wait_for_handshake
     | Stream_established
 
   type state =
-      {pid: msg pid;
+      {pid: pid;
        socket: Socket.socket;
        xml_receiver : XMLReceiver.t;
        state : service_state;
@@ -181,7 +176,7 @@ struct
 		let%lwt () =
 		  Lwt_list.iter_s
 		    (fun (h : Jlib.namepreped) ->
-		       Router.register_route h (state.pid :> Router.msg pid);
+		       Router.register_route h state.pid;
 		       Lwt_log.notice_f ~section
 			 "route registered for service %s\n" (h :> string)
 		    )
@@ -247,7 +242,7 @@ struct
       | `XmlStreamStart _ -> assert false
 	  
 
-  let handle_route (`Route (from, to', packet)) state =
+  let handle_route from to' packet state =
     let _ = match ACL.match_global_rule state.access from false with
       | true ->
 	let `XmlElement (name, attrs, els) = packet in
@@ -267,7 +262,7 @@ struct
 
   let handle msg state =
     match msg with
-      | `Tcp_data (socket, data) when socket == state.socket ->
+      | Socket.Tcp_data (socket, data) when socket == state.socket ->
           let%lwt () =
 	    Lwt_log.debug_f ~section
 	      "tcp data %d %S\n" (String.length data) data
@@ -275,19 +270,21 @@ struct
             XMLReceiver.parse state.xml_receiver data;
             ignore (Socket.activate state.socket state.pid);
             Lwt.return (`Continue state)
-      | `Tcp_data (_socket, _data) -> assert false
-      | `Tcp_close socket when socket == state.socket ->
+      | Socket.Tcp_data (_socket, _data) -> assert false
+      | Socket.Tcp_close socket when socket == state.socket ->
           let%lwt () = Lwt_log.debug ~section "tcp close\n" in
             (*Gc.print_stat stdout;
             Gc.compact ();
             Gc.print_stat stdout; flush stdout;*)
             Lwt.return (`Stop state)
-      | `Tcp_close _socket -> assert false
-      | #XMLReceiver.msg as m ->
+      | Socket.Tcp_close _socket -> assert false
+      | XMLReceiver.Xml m ->
           handle_xml m state
-      | #Router.msg as m ->
-          handle_route m state
-      | #GenServer.msg -> assert false
+      | Router.Route (from, to', packet) ->
+          handle_route from to' packet state
+      | _ ->
+         (* TODO: add a warning *)
+	 Lwt.return (`Continue state)
 
   let terminate state _reason =
     XMLReceiver.free state.xml_receiver;
@@ -297,7 +294,7 @@ struct
 	    let%lwt () =
 	      Lwt_list.iter_s
 		(fun (h : Jlib.namepreped) ->
-		   Router.unregister_route h (state.pid :> Router.msg pid);
+		   Router.unregister_route h state.pid;
 		   Lwt_log.notice_f ~section
 		     "route unregistered for service %s\n" (h :> string)
 		)
@@ -316,7 +313,7 @@ struct
   let listen_parser =
     Jamler_config.P
       (function _json ->
-	 (fun socket -> any_pid (Service.start socket))
+	 (fun socket -> Service.start socket)
       )
 end
 

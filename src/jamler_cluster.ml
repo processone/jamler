@@ -57,22 +57,19 @@ let sm_remove = ref (fun _u _s _r _ts _pid -> ())
 module JamlerCluster :
 sig
   include GenServer.Type with
-    type msg = [ univ_msg | monitor_nodes_msg | GenServer.msg ]
-    and type init_data = unit
+    type init_data = unit
     and type stop_reason = GenServer.reason
 
   val get_nodes_by_hash : int -> int -> string list
   val get_node_by_hash : int -> string
 end =
 struct
-  type msg = [ univ_msg | monitor_nodes_msg | GenServer.msg ]
-
   type init_data = unit
 
   type stop_reason = GenServer.reason
 
   type state =
-      {pid : msg pid;
+      {pid : pid;
       }
 
   let section = Jamler_log.new_section "jamler_cluster"
@@ -149,9 +146,9 @@ struct
   open Erlang
 
   let init () self =
-    register (self :> univ_msg Process.pid) name;
+    register self name;
     add_node (Erl_epmd.node ());
-    monitor_nodes (self :> monitor_nodes_msg Process.pid) true;
+    monitor_nodes self true;
     List.iter
       (fun node ->
 	 dist_send_by_name name node
@@ -186,7 +183,7 @@ struct
 	    handle_call m state*)
       (*| `Erl (ErlTuple [| ErlAtom "$gen_call"; from; request |]) ->
 	  handle_call request from state*)
-      | `Erl (ErlTuple [| ErlAtom "node_up"; ErlAtom node;
+      | Erl (ErlTuple [| ErlAtom "node_up"; ErlAtom node;
 			  nodes |] as term) -> (
 	  let%lwt () =
 	    Lwt_log.notice_f ~section
@@ -211,7 +208,7 @@ struct
 		  in
 		    Lwt.return (`Continue state)
 	)
-      | `Erl (ErlTuple
+      | Erl (ErlTuple
 		[| ErlAtom "store";
 		   ErlTuple [| ErlBinary u; ErlBinary s; ErlBinary r |];
 		   ErlFloat ts;
@@ -225,7 +222,7 @@ struct
 	    !sm_store u s r ts priority owner;
 	    Lwt.return (`Continue state)
 	)
-      | `Erl (ErlTuple
+      | Erl (ErlTuple
 		[| ErlAtom "remove";
 		   ErlTuple [| ErlBinary u; ErlBinary s; ErlBinary r |];
 		   ErlFloat ts;
@@ -238,7 +235,7 @@ struct
 	    !sm_remove u s r ts owner;
 	    Lwt.return (`Continue state)
 	)
-      | `Node_up node ->
+      | Node_up node ->
 	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "node %s goes up" node
@@ -252,7 +249,7 @@ struct
 			   ErlAtom (Erl_epmd.node ());
 			   ErlType.(to_term (list atom) nodes) |]);
 	    Lwt.return (`Continue state)
-      | `Erl (ErlTuple [| ErlAtom "ready"; ErlAtom node |]) ->
+      | Erl (ErlTuple [| ErlAtom "ready"; ErlAtom node |]) ->
 	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "node %s is ready" node
@@ -263,20 +260,20 @@ struct
 			   ErlAtom (Erl_epmd.node ());
 			   ErlType.(to_term (list atom) nodes) |]);
 	    Lwt.return (`Continue state)
-      | `Node_down node ->
+      | Node_down node ->
 	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "node %s goes down" node
 	  in
 	    delete_node node;
 	    Lwt.return (`Continue state)
-      | `Erl term ->
+      | Erl term ->
 	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "unexpected packet %s" (Erlang.term_to_string term)
 	  in
 	    Lwt.return (`Continue state)
-      | #GenServer.msg -> assert false
+      | _ -> assert false
 
   let terminate _state _reason =
     Lwt.return ()

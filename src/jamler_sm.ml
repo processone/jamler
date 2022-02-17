@@ -11,11 +11,9 @@ module GenServer = Gen_server
 
 type broadcast =
     [ `RosterItem of LJID.t * [ `None | `From | `To | `Both | `Remove ] ]
-type msg =
-    [ Router.msg | `Broadcast of broadcast | `Replaced
-    | `Node_up of string
-    | `Node_down of string ]
-(*type sm_msg = msg*)
+type msg +=
+   | Broadcast of broadcast
+   | Replaced
 type info = [ `TODO ] list
 
 [@@@warning "-32"]
@@ -25,7 +23,7 @@ sig
     | ExternalPid of Erlang.pid
     | ExternalNode of string * Erlang.erl_term
   type owner =
-    | Local of msg pid
+    | Local of pid
     | External of external_owner
   type sid = float * owner
 
@@ -50,7 +48,7 @@ struct
     | ExternalPid of Erlang.pid
     | ExternalNode of string * Erlang.erl_term
   type owner =
-    | Local of msg pid
+    | Local of pid
     | External of external_owner
   type sid = float * owner
 
@@ -200,7 +198,7 @@ struct
       (fun (_ts, owner) _ ->
 	 match owner with
 	   | Local pid ->
-               pid $! `Node_up node
+               pid $! Node_up node
 	   | External _ ->
 	       ()
       ) sessions;
@@ -211,7 +209,7 @@ struct
       (fun ((_ts, owner) as sid) _ ->
 	 match owner with
            | Local pid ->
-               pid $! `Node_down node
+               pid $! Node_down node
 	   | External (ExternalPid pid) ->
 	       if Erlang.node_of_pid pid = node
 	       then remove sid
@@ -266,19 +264,21 @@ let send_owner owner msg =
 	let open Erlang in
 	let msg =
 	  match msg with
-	    | `Route (from, to', packet) ->
-		ErlTuple [| ErlAtom "route";
-			    jid_to_term from;
-			    jid_to_term to';
-			    ErlType.(to_term xml packet)
-			 |]
-	    | `Broadcast _->
-		ErlNil			(* TODO *)
-	    | `Node_down _
-	    | `Node_up _ ->
-		ErlNil
-	    | `Replaced ->
-		ErlAtom "replaced"
+	  | Router.Route (from, to', packet) ->
+	     ErlTuple [| ErlAtom "route";
+			 jid_to_term from;
+			 jid_to_term to';
+			 ErlType.(to_term xml packet)
+	       |]
+	  | Broadcast _->
+	     ErlNil			(* TODO *)
+	  | Node_down _
+	  | Node_up _ ->
+	     ErlNil
+	  | Replaced ->
+	     ErlAtom "replaced"
+          | _ ->
+             ErlNil
 	in
 	  match msg with
 	    | ErlNil -> ()
@@ -385,7 +385,7 @@ let check_existing_resources user server resource =
             List.iter
       	(fun ((_, owner) as s) ->
       	   if s != max_sid then (
-      	     send_owner owner `Replaced
+      	     send_owner owner Replaced
       	   )
       	) sids
 
@@ -533,7 +533,7 @@ let route_message from to' packet =
       	       if p = priority then (
       		 let (_, owner) = sid in
       		   (*?DEBUG("sending to process ~p~n", [Pid]),*)
-      		   send_owner owner (`Route (from, to', packet))
+      		   send_owner owner (Router.Route (from, to', packet))
       	       )
             ) prio_res
       | _ -> (
@@ -727,7 +727,7 @@ let rec do_route1 from to' packet =
 		let sid = List.fold_left max s sids in
 		let (_, owner) = sid in
 		  (*?DEBUG("sending to process ~p~n", [Pid]),*)
-		  send_owner owner (`Route (from, to', packet))
+		  send_owner owner (Router.Route (from, to', packet))
 	)
 
 let do_route from to' packet =
@@ -766,7 +766,7 @@ let do_route from to' packet =
 		  let sid = List.fold_left max s sids in
 		  let (_, owner) = sid in
 		    (*?DEBUG("sending to process ~p~n", [Pid]),*)
-		    send_owner owner (`Route (from, to', packet))
+		    send_owner owner (Router.Route (from, to', packet))
 	  )
     ) else (
       do_route1 from to' packet
@@ -794,7 +794,7 @@ let broadcast to' data =
     List.iter
       (fun r ->
 	(*let to' = Jlib.jid_replace_resource' to' r in*)
-	 let packet = `Broadcast data in
+	 let packet = Broadcast data in
 	   match find_sids_by_usr luser lserver r with
 	    | [] -> ()
 	    | s :: sids ->
@@ -854,30 +854,27 @@ let _ =
 module JamlerSM :
 sig
   include GenServer.Type with
-    type msg = [ univ_msg | GenServer.msg ]
-    and type init_data = unit
+    type init_data = unit
     and type stop_reason = GenServer.reason
 end =
 struct
-  type msg = [ univ_msg | GenServer.msg ]
-
   type init_data = unit
 
   type stop_reason = GenServer.reason
 
   type state =
-      {pid : msg pid;
+      {pid : pid;
       }
 
   let init () self =
-    register (self :> univ_msg pid) "ejabberd_sm";
+    register self "ejabberd_sm";
     Lwt.return (`Continue {pid = self})
 
   open Erlang
 
   let handle (msg : msg) state =
     match msg with
-      | `Erl (ErlTuple [| ErlAtom "route"; _; _; _ |] as term) -> (
+      | Erl (ErlTuple [| ErlAtom "route"; _; _; _ |] as term) -> (
 	  try
 	    let `Route (from, to', msg) = term_to_route term in
 	      route from to' msg;
@@ -893,7 +890,7 @@ struct
 		in
 		  Lwt.return (`Continue state)
 	)
-      | `Erl (ErlTuple
+      | Erl (ErlTuple
 		[| ErlAtom "send";
 		   ErlTuple [| ErlFloat ts;
 			       ErlBinary user;
@@ -914,7 +911,8 @@ struct
 		 | Some (_ts, Local pid) -> (
 		     match msg with
 		       | ErlTuple [| ErlAtom "route"; _; _; _ |] ->
-			   let route_msg = term_to_route msg in
+			  let `Route (from, to', msg) = term_to_route msg in
+                          let route_msg = Router.Route (from, to', msg) in
 			     pid $! route_msg;
 		       | _ -> invalid_arg "unknown message"
 		   )
@@ -931,13 +929,15 @@ struct
 		in
 		  Lwt.return (`Continue state)
 	)
-      | `Erl term ->
+      | Erl term ->
 	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "unexpected packet %s" (Erlang.term_to_string term)
 	  in
 	    Lwt.return (`Continue state)
-      | #GenServer.msg -> assert false
+      | _ ->
+         (* TODO: add a warning *)
+	 Lwt.return (`Continue state)
 
   let terminate _state _reason =
     Lwt.return ()

@@ -1,23 +1,21 @@
-type -'a pid
-type 'a proc
-(*
-external pid_to_proc : 'a pid -> 'a proc = "%identity"
-external proc_to_pid : 'a proc -> 'a pid = "%identity"
-*)
-val pid_to_proc : 'a pid -> 'a proc
-val proc_to_pid : 'a proc -> 'a pid
-val spawn : ('a pid -> unit Lwt.t) -> 'a pid
-(*val send : 'a pid -> 'a -> unit*)
-val ( $! ) : 'a pid -> 'a -> unit
-val receive : 'a pid -> 'a Lwt.t
+type pid
+type proc
+type msg = ..
 
-type univ_msg = [ `Erl of Erlang.erl_term ]
+val pid_to_proc : pid -> proc
+val proc_to_pid : proc -> pid
+val spawn : (pid -> unit Lwt.t) -> pid
+(*val send : pid -> msg -> unit*)
+val ( $! ) : pid -> msg -> unit
+val receive : pid -> msg Lwt.t
 
-val register : univ_msg pid -> string -> unit
+type msg += Erl of Erlang.erl_term
+
+val register : pid -> string -> unit
 val unregister : string -> unit
-val whereis : string -> univ_msg pid
-val send_by_name : string -> univ_msg -> unit
-val ( $!! ) : string -> univ_msg -> unit
+val whereis : string -> pid
+val send_by_name : string -> msg -> unit
+val ( $!! ) : string -> msg -> unit
 
 val dist_send_ref : (Erlang.pid -> Erlang.erl_term -> unit) ref
 val ( $!!! ) : Erlang.pid -> Erlang.erl_term -> unit
@@ -27,28 +25,25 @@ val dist_send_by_name : string -> string -> Erlang.erl_term -> unit
 
 module Pid :
 sig
-  type 'a t = 'a pid
-  val equal : 'a t -> 'a t -> bool
-  val hash : 'a t -> int
+  type t = pid
+  val equal : t -> t -> bool
+  val hash : t -> int
 end
 
-type monitor_nodes_msg =
-    [ `Node_up of string
-    | `Node_down of string
-    ]
-val monitor_nodes : monitor_nodes_msg pid -> bool -> unit
-val monitor_nodes_iter : (monitor_nodes_msg pid -> unit) -> unit
+type msg +=
+   | Node_up of string
+   | Node_down of string
 
-val is_overloaded : 'a pid -> bool
-val pid_to_string : 'a pid -> string
-val format_pid : unit -> 'a pid -> string
+val monitor_nodes : pid -> bool -> unit
+val monitor_nodes_iter : (pid -> unit) -> unit
 
-type empty
-val any_pid : 'a pid -> empty pid
+val is_overloaded : pid -> bool
+val pid_to_string : pid -> string
+val format_pid : unit -> pid -> string
 
 type timer = unit Lwt.t
-type 'a timer_msg = [ `TimerTimeout of timer * 'a ]
-val send_after : float -> 'a pid -> 'a -> timer
+type msg += TimerTimeout of timer * msg
+val send_after : float -> pid -> msg -> timer
 val apply_after : float -> (unit -> unit Lwt.t) -> timer
-val start_timer : float -> 'a timer_msg pid -> 'a -> timer
+val start_timer : float -> pid -> msg -> timer
 val cancel_timer : timer -> unit

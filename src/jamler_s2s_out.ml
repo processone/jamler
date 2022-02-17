@@ -18,23 +18,16 @@ module S2SOut :
 sig
   type start_type =
       [ `New of string
-      | `Verify of (Jamler_s2s_lib.validation_msg pid * string * string)
+      | `Verify of (pid * string * string)
       ]
   include GenServer.Type with
-    type msg =
-        [ Socket.msg | XMLReceiver.msg | GenServer.msg
-        | unit timer_msg
-        | Jamler_s2s_lib.s2s_out_msg ]
-    and type init_data = Jlib.namepreped * Jlib.namepreped * start_type
+    type init_data = Jlib.namepreped * Jlib.namepreped * start_type
     and type stop_reason = GenServer.reason
-  val start_connection : Jamler_s2s_lib.s2s_out_msg pid -> unit
-  val stop_connection : Jamler_s2s_lib.s2s_out_msg pid -> unit
+  val start_connection : pid -> unit
+  val stop_connection : pid -> unit
 end =
 struct
-  type msg =
-      [ Socket.msg | XMLReceiver.msg | GenServer.msg
-      | unit timer_msg
-      | Jamler_s2s_lib.s2s_out_msg ]
+  type msg += Unit
 
   type s2s_out_state =
     | Open_socket
@@ -54,7 +47,7 @@ struct
 
   type start_type =
       [ `New of string
-      | `Verify of (Jamler_s2s_lib.validation_msg pid * string * string)
+      | `Verify of (pid * string * string)
       ]
 
   type init_data = Jlib.namepreped * Jlib.namepreped * start_type
@@ -62,7 +55,7 @@ struct
   type stop_reason = GenServer.reason
 
   type state =
-      {pid: msg pid;
+      {pid: pid;
        socket : Socket.socket option;
        xml_receiver : XMLReceiver.t;
        state: s2s_out_state;
@@ -80,7 +73,7 @@ struct
        queue : Xml.element Queue.t;
        delay_to_retry: float;
        new' : string option;
-       verify : (Jamler_s2s_lib.validation_msg pid * string * string) option;
+       verify : (pid * string * string) option;
        timer : timer;
 	 (* bridge *)}
 
@@ -117,10 +110,10 @@ struct
 	      Jamler_router.route to' from err
 
   let start_connection pid =
-    pid $! `Init
+    pid $! Jamler_s2s_lib.S2SOut `Init
 
   let stop_connection pid =
-    pid $! `Closed
+    pid $! Jamler_s2s_lib.S2SOut `Closed
 
   let stream_header_fmt =
     "<?xml version='1.0'?>" ^^
@@ -192,10 +185,7 @@ struct
 	     start_connection self;
 	     None, Some (pid, key, sid)) in
     let timer =
-      start_timer
-	s2stimeout
-	(self :> unit timer_msg pid)
-	()
+      start_timer s2stimeout self Unit
     in
     let state = {pid = self;
 		 socket = None;
@@ -319,10 +309,7 @@ struct
 	    min (delay *. 2.0) (get_max_retry_delay ())
     in
     let timer =
-      start_timer
-	delay
-	(state.pid :> unit timer_msg pid)
-	()
+      start_timer delay state.pid Unit
     in
       Lwt.return
 	(`Continue {state with
@@ -336,8 +323,7 @@ struct
     let new' =
       match state.new' with
 	| None -> (
-	    match (S2SLib.try_register (state.myname, server)
-		     (state.pid :> Jamler_s2s_lib.s2s_out_msg pid)) with
+	    match (S2SLib.try_register (state.myname, server) state.pid) with
 	      | Some key ->
 		  Some key
 	      | None ->
@@ -556,9 +542,9 @@ struct
 		     | Some (pid, _key, _sid) ->
 			 (match type' with
 			    | "valid" ->
-				pid $! (`Valid (state.server, state.myname))
+				pid $! (Jamler_s2s_lib.S2SValidation (`Valid (state.server, state.myname)))
 			    | _ ->
-				pid $! (`Invalid (state.server, state.myname)));
+				pid $! (Jamler_s2s_lib.S2SValidation (`Invalid (state.server, state.myname))));
 			 if state.verify = None then (
 			   Lwt.return (`Stop state)
 			 ) else (
@@ -928,8 +914,8 @@ struct
 		     (match state.verify with
 			| Some (vpid, _vkey, _sid) ->
 			    if vtype = "valid"
-			    then vpid $! (`Valid (state.server, state.myname))
-			    else vpid $! (`Invalid (state.server, state.myname))
+			    then vpid $! (Jamler_s2s_lib.S2SValidation (`Valid (state.server, state.myname)))
+			    else vpid $! (Jamler_s2s_lib.S2SValidation (`Invalid (state.server, state.myname)))
 			| _ ->
 			    ()
 		     );
@@ -964,17 +950,14 @@ struct
       | `Send_element el ->
 	  cancel_timer state.timer;
 	  let timer =
-	    start_timer
-	      s2stimeout
-	      (state.pid :> unit timer_msg pid)
-	      ()
+	    start_timer s2stimeout state.pid Unit
 	  in
 	    send_element state el;
 	    Lwt.return (`Continue {state with timer})
       | `Init
       | `XmlStreamStart _ -> assert false
 
-  let handle_timer (`TimerTimeout (timer, ())) state =
+  let handle_timer timer state =
     if state.timer == timer then (
       match state.state with
 	| Wait_before_retry ->
@@ -995,7 +978,7 @@ struct
       Lwt.return (`Continue state)
     )
 
-  let handle' (msg : [ Jamler_s2s_lib.s2s_out_msg | `Timeout | XMLReceiver.msg ]) state =
+  let handle' msg state =
     match state.state with
       | Open_socket -> open_socket msg state
       | Wait_for_stream -> wait_for_stream msg state
@@ -1010,7 +993,7 @@ struct
 
   let handle (msg : msg) state =
     match msg with
-      | `Tcp_data (socket, data) -> (
+      | Socket.Tcp_data (socket, data) -> (
 	  match state.socket with
 	    | Some socket' when socket == socket' ->
 		let%lwt () =
@@ -1022,30 +1005,31 @@ struct
 		  Lwt.return (`Continue state)
 	    | _ -> assert false
 	)
-      | `Tcp_close socket -> (
+      | Socket.Tcp_close socket -> (
 	  match state.socket with
 	    | Some socket' when socket == socket' ->
 		let%lwt () = Lwt_log.debug ~section "tcp close" in
 		  Lwt.return (`Stop state)
 	    | _ -> assert false
 	)
-      | #Jamler_s2s_lib.s2s_out_msg
-      | `Timeout
-      | #XMLReceiver.msg as m ->
-	  handle' m state
-      | `TimerTimeout _ as m ->
-	  handle_timer m state
-      | #GenServer.msg -> assert false
+      | GenServer.Timeout ->
+         handle' `Timeout state
+      | Jamler_s2s_lib.S2SOut m ->
+	 handle' m state
+      | XMLReceiver.Xml m ->
+	 handle' (m :> [ XMLReceiver.xml_msg | Jamler_s2s_lib.s2s_out_msg ]) state
+      | TimerTimeout (timer, _) ->
+	 handle_timer timer state
+      | _ ->
+         (* TODO: add a warning *)
+	 Lwt.return (`Continue state)
 
   let terminate state _reason =
     let%lwt () = Lwt_log.debug ~section "terminated" in
       (match state.new' with
 	 | None -> ()
 	 | Some key ->
-	     S2SLib.remove_connection
-	       (state.myname, state.server)
-	       (state.pid :> Jamler_s2s_lib.s2s_out_msg pid)
-	       key
+	     S2SLib.remove_connection (state.myname, state.server) state.pid key
       );
       (* bounce queue manage by process and Erlang message queue *)
       (* TODO *)

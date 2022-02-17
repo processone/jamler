@@ -24,18 +24,13 @@ let c2s_unauthenticated_iq :
 module C2S :
 sig
   include GenServer.Type with
-    type msg =
-        [ Socket.msg | XMLReceiver.msg | GenServer.msg
-        | SM.msg | `Activate ]
-    and type init_data = (Lwt_unix.file_descr *
-			    bool Jamler_acl.access_rule *
-			    string Jamler_acl.access_rule)
+    type init_data = (Lwt_unix.file_descr *
+			bool Jamler_acl.access_rule *
+			  string Jamler_acl.access_rule)
     and type stop_reason = [ GenServer.reason | `Replaced ]
 end =
 struct
-  type msg =
-      [ Socket.msg | XMLReceiver.msg | GenServer.msg
-      | SM.msg | `Activate ]
+  type msg += Activate
 
   type c2s_state =
     | Wait_for_stream
@@ -47,7 +42,7 @@ struct
     | Session_established
 
   type state =
-      {pid : msg pid;
+      {pid : pid;
        socket : Socket.socket;
        receiver : unit Lwt.t;
        xml_receiver : XMLReceiver.t;
@@ -162,7 +157,7 @@ struct
 		 server = Jlib.nameprep_exn "";
 		 resource = Jlib.resourceprep_exn "";
 		 jid = Jlib.make_jid_exn "" "" "";
-		 sid = (0.0, SM.Local (self :> SM.msg pid));
+		 sid = (0.0, SM.Local self);
 		 pres_t = LJIDSet.empty;
 		 pres_f = LJIDSet.empty;
 		 pres_a = LJIDSet.empty;
@@ -1064,7 +1059,7 @@ struct
 	                          | None ->
                                       let sid =
 					(Unix.gettimeofday (),
-					 SM.Local (state.pid :> SM.msg pid))
+					 SM.Local state.pid)
 				      in
 				      (*Conn = get_conn_type(StateData),*)
                                       let res = Jlib.make_result_iq_reply el in
@@ -1562,7 +1557,7 @@ struct
 			in
                         let sid =
 			  (Unix.gettimeofday (),
-			   SM.Local (state.pid :> SM.msg pid))
+			   SM.Local state.pid)
 			in
 		    (*Conn = get_conn_type(StateData),
 		    %% Info = [{ip, StateData#state.ip}, {conn, Conn},
@@ -1764,7 +1759,7 @@ session_established(timeout, StateData) ->
 	  wait_for_sasl_response msg sasl_state state
       | Session_established -> session_established msg state
 
-  let handle_route (`Route (from, to', packet)) state =
+  let handle_route from to' packet state =
     let `XmlElement (name, attrs, els) = packet in
     let (pass, attrs, state) =
       match name with
@@ -1917,7 +1912,7 @@ session_established(timeout, StateData) ->
 	fsm_next_state state
       )
 
-  let handle_broadcast (`Broadcast data) state =
+  let handle_broadcast data state =
     let%lwt (stop, state) =
       match data with
 	| `RosterItem (ijid, isubscription) ->
@@ -2040,7 +2035,7 @@ session_established(timeout, StateData) ->
 
   let handle msg state =
     match msg with
-      | `Tcp_data (socket, data) when socket == state.socket ->
+      | Socket.Tcp_data (socket, data) when socket == state.socket ->
           let%lwt () =
 	    Lwt_log.debug_f ~section
 	      "tcp data %d %S" (String.length data) data
@@ -2051,30 +2046,32 @@ session_established(timeout, StateData) ->
 	    in
             let receiver =
 	      if pause > 0.0 then (
-		let%lwt () = send_after pause state.pid `Activate in
+		let%lwt () = send_after pause state.pid Activate in
 		Lwt.return ()
 	      ) else Socket.activate state.socket state.pid
 	    in
               fsm_next_state {state with receiver}
-      | `Tcp_data (_socket, _data) -> assert false
-      | `Tcp_close socket when socket == state.socket ->
+      | Socket.Tcp_data (_socket, _data) -> assert false
+      | Socket.Tcp_close socket when socket == state.socket ->
           let%lwt () = Lwt_log.debug ~section "tcp close" in
             (*Gc.print_stat stdout;
             Gc.compact ();
             Gc.print_stat stdout; flush stdout;*)
             Lwt.return (`Stop state)
-      | `Tcp_close _socket -> assert false
-      | `Activate ->
+      | Socket.Tcp_close _socket -> assert false
+      | Activate ->
 	  Lwt.cancel state.receiver;
 	  let receiver = Socket.activate state.socket state.pid in
             fsm_next_state {state with receiver}
-      | (#XMLReceiver.msg | `Timeout) as m ->
-	  handle_xml m state
-      | #Router.msg as m ->
-	  handle_route m state
-      | `Broadcast _ as m ->
-	  handle_broadcast m state
-      | `Replaced ->
+      | XMLReceiver.Xml m ->
+	 handle_xml m state
+      | GenServer.Timeout ->
+         handle_xml `Timeout state
+      | Router.Route (from, to', packet) ->
+	  handle_route from to' packet state
+      | SM.Broadcast data ->
+	  handle_broadcast data state
+      | SM.Replaced ->
 	  (* TODO *)
 	  (*let lang = state.lang in*)
 	  send_element
@@ -2082,11 +2079,13 @@ session_established(timeout, StateData) ->
 	    Jlib.serr_conflict (*Lang, "Replaced by new connection"*);
 	  send_trailer state;
 	  Lwt.return (`StopReason (state, `Replaced))
-      | `Node_up node ->
+      | Node_up node ->
           node_up node state
-      | `Node_down node ->
+      | Node_down node ->
           node_down node state
-      | #GenServer.system_msg -> assert false
+      | _ ->
+         (* TODO: add a warning *)
+	 Lwt.return (`Continue state)
 
   let terminate state reason =
     XMLReceiver.free state.xml_receiver;
@@ -2203,8 +2202,8 @@ struct
 		   | Not_found ->
 		       Jamler_acl.none_string
 	       in
-		 (fun socket ->
-		    any_pid (C2SServer.start (socket, access, shaper)))
+	       (fun socket ->
+		 C2SServer.start (socket, access, shaper))
 	   | json ->
 	       raise (Error
 			(Printf.sprintf "expected JSON object value, got %s"

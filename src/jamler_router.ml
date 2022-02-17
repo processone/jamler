@@ -4,14 +4,14 @@ let section = Jamler_log.new_section "router"
 
 type t = Jlib.jid -> Jlib.jid -> Xml.element -> unit
 
-type msg = [ `Route of Jlib.jid * Jlib.jid * Xml.element ]
+type msg += Route of Jlib.jid * Jlib.jid * Xml.element
 
 [@@@warning "-37"]
 type external_owner =
   | ExternalPid of Erlang.pid
   | ExternalNode of string * Erlang.erl_term
 type owner =
-  | Local of msg pid
+  | Local of pid
   | External of external_owner
 
 type route =
@@ -126,7 +126,7 @@ let do_route orig_from orig_to orig_packet =
 			  | Some f ->
 			      f from to' packet
 			  | None ->
-			      pid $! `Route (from, to', packet)
+			      pid $! Route (from, to', packet)
 		      )
 		    | External owner -> (
 			let open Erlang in
@@ -233,30 +233,27 @@ module GenServer = Gen_server
 module JamlerRouter :
 sig
   include GenServer.Type with
-    type msg = [ univ_msg | GenServer.msg ]
-    and type init_data = unit
+    type init_data = unit
     and type stop_reason = GenServer.reason
 end =
 struct
-  type msg = [ univ_msg | GenServer.msg ]
-
   type init_data = unit
 
   type stop_reason = GenServer.reason
 
   type state =
-      {pid : msg pid;
+      {pid : pid;
       }
 
   let init () self =
-    register (self :> univ_msg pid) "ejabberd_router";
+    register self "ejabberd_router";
     Lwt.return (`Continue {pid = self})
 
   open Erlang
 
   let handle (msg : msg) state =
     match msg with
-      | `Erl (ErlTuple [| ErlAtom "route"; _; _; _ |] as term) -> (
+      | Erl (ErlTuple [| ErlAtom "route"; _; _; _ |] as term) -> (
 	  try
 	    let `Route (from, to', msg) = term_to_route term in
 	      route from to' msg;
@@ -311,13 +308,15 @@ struct
 		  Lwt.return (`Continue state)
 	)
 *)
-      | `Erl term ->
+      | Erl term ->
 	  let%lwt () =
 	    Lwt_log.notice_f ~section
 	      "unexpected packet %s" (Erlang.term_to_string term)
 	  in
 	    Lwt.return (`Continue state)
-      | #GenServer.msg -> assert false
+      | _ ->
+         (* TODO: add a warning *)
+	 Lwt.return (`Continue state)
 
   let terminate _state _reason =
     Lwt.return ()

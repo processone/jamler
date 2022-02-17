@@ -1,19 +1,21 @@
 let section = Jamler_log.new_section "process"
 
-type -'a pid = private int
+type msg = ..
 
-type 'a proc = {id : int;
-		queue : 'a Queue.t;
-		mutable t : unit Lwt.t;
-		mutable overloaded : bool;
-		mutable wakener : 'a Lwt.u option;
-		mutable name : string option;
-		mutable monitor_nodes : bool;
-	       }
+type pid = int
+
+type proc = {id : int;
+	     queue : msg Queue.t;
+	     mutable t : unit Lwt.t;
+	     mutable overloaded : bool;
+	     mutable wakener : msg Lwt.u option;
+	     mutable name : string option;
+	     mutable monitor_nodes : bool;
+	    }
 
 let max_processes = 65536
 
-let processes : 'a proc option array = Array.make max_processes None
+let processes : proc option array = Array.make max_processes None
 
 let free_pids = Array.init (max_processes + 1) (fun i -> i)
 let free_pid_start = ref 0
@@ -38,25 +40,22 @@ let get_free_pid () =
     pid
 
 
-type univ_msg = [ `Erl of Erlang.erl_term ]
+type msg += Erl of Erlang.erl_term
 
-let registered : (string, univ_msg pid) Hashtbl.t = Hashtbl.create 10
+let registered : (string, pid) Hashtbl.t = Hashtbl.create 10
 
 (*
 external pid_to_proc : 'a pid -> 'a proc = "%identity"
 external proc_to_pid : 'a proc -> 'a pid = "%identity"
 *)
 
-let pid_to_proc : type a. a pid -> a proc =
-  fun pid ->
-    let pid = (pid : _ pid :> int) in
-      match processes.(pid) with
-	| Some proc -> Obj.magic proc
-	| None -> raise Not_found
+let pid_to_proc (pid : pid) =
+  match processes.(pid) with
+  | Some proc -> proc
+  | None -> raise Not_found
 
-let proc_to_pid : 'a proc -> 'a pid =
-  fun proc ->
-    Obj.magic proc.id
+let proc_to_pid : proc -> pid =
+  fun proc -> proc.id
 
 let spawn f =
   let id = get_free_pid () in
@@ -69,7 +68,7 @@ let spawn f =
 	      monitor_nodes = false;
 	     }
   in
-  let () = processes.(id) <- Some (Obj.magic proc) in
+  let () = processes.(id) <- Some proc in
   let pid = proc_to_pid proc in
   let t =
     try%lwt
@@ -165,15 +164,14 @@ let dist_send_by_name_ref : (string -> string -> Erlang.erl_term -> unit) ref =
 
 let dist_send_by_name name node term = !dist_send_by_name_ref name node term
 
-type monitor_nodes_msg =
-    [ `Node_up of string
-    | `Node_down of string
-    ]
+type msg +=
+   | Node_up of string
+   | Node_down of string
 
-let monitor_nodes_pids : (monitor_nodes_msg pid, unit) Hashtbl.t =
+let monitor_nodes_pids : (pid, unit) Hashtbl.t =
   Hashtbl.create 10
 
-let monitor_nodes (pid : monitor_nodes_msg pid) flag =
+let monitor_nodes (pid : pid) flag =
   let proc = pid_to_proc pid in
     if proc.monitor_nodes <> flag then (
       proc.monitor_nodes <- flag;
@@ -192,33 +190,26 @@ let is_overloaded pid =
     proc.overloaded
 
 let pid_to_string pid =
-  let id = (Obj.magic (pid : 'a pid) : int) in
-    "<" ^ string_of_int id ^ ">"
+  "<" ^ string_of_int pid ^ ">"
 
 let format_pid () pid = pid_to_string pid
 
-type empty
-external any_pid : 'a pid -> empty pid = "%identity"
-
 module Pid :
 sig
-  type 'a t = 'a pid
-  val equal : 'a t -> 'a t -> bool
-  val hash : 'a t -> int
+  type t = pid
+  val equal : t -> t -> bool
+  val hash : t -> int
 end
   =
 struct
-  type 'a t = 'a pid
-  let equal p1 p2 =
-    let p1 = (Obj.magic p1 : int)
-    and p2 = (Obj.magic p2 : int) in
-      p1 = p2
+  type t = pid
+  let equal p1 p2 = p1 = p2
   let hash p =
     Hashtbl.hash p
 end
 
 type timer = unit Lwt.t
-type 'a timer_msg = [ `TimerTimeout of timer * 'a ]
+type msg += TimerTimeout of timer * msg
 
 let send_after timeout pid msg =
   let%lwt () = Lwt_unix.sleep timeout in
@@ -235,7 +226,7 @@ let start_timer timeout pid msg =
   let timer = ref t0 in
   let t =
     let%lwt () = Lwt_unix.sleep timeout in
-    pid $! `TimerTimeout (!timer, msg);
+    pid $! TimerTimeout (!timer, msg);
     Lwt.return ()
   in
     match Lwt.state t with

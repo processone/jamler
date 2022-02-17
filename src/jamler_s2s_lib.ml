@@ -11,7 +11,12 @@ type validation_msg =
     [ `Valid of Jlib.namepreped * Jlib.namepreped
     | `Invalid of Jlib.namepreped * Jlib.namepreped
     ]
-type s2s = string * s2s_out_msg pid
+
+type msg +=
+   | S2SOut of s2s_out_msg
+   | S2SValidation of validation_msg
+
+type s2s = string * pid
 type fromto = Jlib.namepreped * Jlib.namepreped
 type s2s_table = (fromto, s2s list) Hashtbl.t
 

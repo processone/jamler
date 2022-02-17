@@ -2,13 +2,13 @@ open Process
 
 type t = Jlib.jid -> Jlib.jid -> Xml.element -> unit
 
-type msg = [ `Route of Jlib.jid * Jlib.jid * Xml.element ]
+type msg += Route of Jlib.jid * Jlib.jid * Xml.element
 
 val route : t
 
 val register_route :
-  ?local_hint : t option -> Jlib.namepreped -> msg pid -> unit
-val unregister_route : Jlib.namepreped -> msg pid -> unit
+  ?local_hint : t option -> Jlib.namepreped -> pid -> unit
+val unregister_route : Jlib.namepreped -> pid -> unit
 
 val dirty_get_all_domains: unit -> Jlib.namepreped list
 val dirty_get_all_routes: unit -> Jlib.namepreped list

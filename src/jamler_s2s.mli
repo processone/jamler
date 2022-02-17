@@ -1,4 +1,3 @@
-type msg = Jamler_router.msg
 (*
 type s2s_out_msg = [ `Send_element of Xml.element ]
 

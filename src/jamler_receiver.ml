@@ -1,25 +1,26 @@
 open Process
 
-type msg =
+type xml_msg =
     [ `XmlStreamStart of Xml.name * Xml.attribute list
     | `XmlStreamElement of Xml.element
     | `XmlStreamEnd of Xml.name
     | `XmlStreamError of string
     ]
 
-type t = {pid : msg pid;
+type msg += Xml of xml_msg
+
+type t = {pid : pid;
 	  mutable xml_parser : Xml.t}
 
 let create pid =
-  let pid = (pid :> msg pid) in
   let element_callback el =
-    pid $! `XmlStreamElement el
+    pid $! Xml (`XmlStreamElement el)
   in
   let start_callback name attrs =
-    pid $! `XmlStreamStart (name, attrs)
+    pid $! Xml (`XmlStreamStart (name, attrs))
   in
   let end_callback name =
-    pid $! `XmlStreamEnd name
+    pid $! Xml (`XmlStreamEnd name)
   in
   let xml_parser =
     Xml.create_parser
@@ -37,7 +38,7 @@ let parse st data =
     Xml.parse st.xml_parser data false
   with
     | Expat.Parse_error error ->
-	st.pid $! `XmlStreamError error
+	st.pid $! Xml (`XmlStreamError error)
 
 let free st =
   Expat.parser_free st.xml_parser
@@ -46,13 +47,13 @@ let reset_stream st =
   Expat.parser_free st.xml_parser;
   let pid = st.pid in
   let element_callback el =
-    pid $! `XmlStreamElement el
+    pid $! Xml (`XmlStreamElement el)
   in
   let start_callback name attrs =
-    pid $! `XmlStreamStart (name, attrs)
+    pid $! Xml (`XmlStreamStart (name, attrs))
   in
   let end_callback name =
-    pid $! `XmlStreamEnd name
+    pid $! Xml (`XmlStreamEnd name)
   in
   let xml_parser =
     Xml.create_parser
