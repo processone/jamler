@@ -1,6 +1,6 @@
 module Hooks = Jamler_hooks
 
-let section = Jamler_log.new_section "auth"
+let src = Jamler_log.new_src "auth"
 
 type result = | OK
 	      | Empty_password
@@ -17,19 +17,19 @@ sig
   val name : string
 
   val check_password :
-    Jlib.nodepreped -> Jlib.namepreped -> string -> bool Lwt.t
+    Jlib.nodepreped -> Jlib.namepreped -> string -> bool
   val check_password_digest :
     Jlib.nodepreped -> Jlib.namepreped ->
-    string -> string -> (string -> string) -> bool Lwt.t
+    string -> string -> (string -> string) -> bool
   val get_password :
-    Jlib.nodepreped -> Jlib.namepreped -> string option Lwt.t
+    Jlib.nodepreped -> Jlib.namepreped -> string option
   val plain_password_required : bool
 
-  val does_user_exist : Jlib.nodepreped -> Jlib.namepreped -> bool Lwt.t
-  val remove : Jlib.nodepreped -> Jlib.namepreped -> unit Lwt.t
-  val remove' : Jlib.nodepreped -> Jlib.namepreped -> string -> unit Lwt.t
-  val try_register : Jlib.nodepreped -> Jlib.namepreped -> string -> result Lwt.t
-  val set_password : Jlib.nodepreped -> Jlib.namepreped -> string -> result Lwt.t
+  val does_user_exist : Jlib.nodepreped -> Jlib.namepreped -> bool
+  val remove : Jlib.nodepreped -> Jlib.namepreped -> unit
+  val remove' : Jlib.nodepreped -> Jlib.namepreped -> string -> unit
+  val try_register : Jlib.nodepreped -> Jlib.namepreped -> string -> result
+  val set_password : Jlib.nodepreped -> Jlib.namepreped -> string -> result
 
 end
 
@@ -48,62 +48,60 @@ let auth_modules server =
 	   Hashtbl.find mods m
 	 with
 	   | Not_found as exn ->
-	       ignore (
-		 Lwt_log.error_f
-		   ~section
-		   ~exn:exn
-		   "auth module %s not found" m
-	       );
-	       raise exn
+              Logs.err ~src
+	        (fun m' ->
+                  m' "auth module %s not found: %a" m
+                    Jamler_log.pp_exn exn);
+	      raise exn
       ) methods
 
 let check_password_with_authmodule user server password =
   let rec aux user server password =
     function
-      | [] -> Lwt.return None
-      | m :: mods -> (
-	  let module A = (val m : Auth) in
-	    match%lwt A.check_password user server password with
-	      | true ->
-		  Lwt.return (Some A.name)
-	      | false ->
-		  aux user server password mods
-	)
+    | [] -> None
+    | m :: mods -> (
+      let module A = (val m : Auth) in
+      match A.check_password user server password with
+      | true ->
+	 Some A.name
+      | false ->
+	 aux user server password mods
+    )
   in
-    aux user server password (auth_modules server)
-
+  aux user server password (auth_modules server)
+  
 let check_password_digest_with_authmodule user server password
-    digest digest_gen =
+      digest digest_gen =
   let rec aux user server password digest digest_gen =
     function
-      | [] -> Lwt.return None
-      | m :: mods -> (
-	  let module A = (val m : Auth) in
-	    match%lwt (A.check_password_digest user server password
-			 digest digest_gen) with
-	      | true ->
-		  Lwt.return (Some A.name)
-	      | false ->
-		  aux user server password digest digest_gen mods
-	)
+    | [] -> None
+    | m :: mods -> (
+      let module A = (val m : Auth) in
+      match A.check_password_digest user server password
+	      digest digest_gen with
+      | true ->
+	 Some A.name
+      | false ->
+	 aux user server password digest digest_gen mods
+    )
   in
-    aux user server password digest digest_gen (auth_modules server)
+  aux user server password digest digest_gen (auth_modules server)
 
 
 let get_password_with_authmodule user server =
   let rec aux user server =
     function
-      | [] -> Lwt.return None
-      | m :: mods -> (
-	  let module A = (val m : Auth) in
-	    match%lwt A.get_password user server with
-	      | Some password ->
-		  Lwt.return (Some (password, A.name))
-	      | None ->
-		  aux user server mods
-	)
+    | [] -> None
+    | m :: mods -> (
+      let module A = (val m : Auth) in
+      match A.get_password user server with
+      | Some password ->
+	 Some (password, A.name)
+      | None ->
+	 aux user server mods
+    )
   in
-    aux user server (auth_modules server)
+  aux user server (auth_modules server)
 
 let plain_password_required server =
   List.exists
@@ -116,79 +114,79 @@ let plain_password_required server =
 let does_user_exist user server =
   let rec aux user server =
     function
-      | [] -> Lwt.return false
-      | m :: mods -> (
-	  let module A = (val m : Auth) in
-	    match%lwt A.does_user_exist user server with
-	      | true ->
-		  Lwt.return true
-	      | false ->
-		  aux user server mods
-	)
+    | [] -> false
+    | m :: mods -> (
+      let module A = (val m : Auth) in
+      match A.does_user_exist user server with
+      | true ->
+	 true
+      | false ->
+	 aux user server mods
+    )
   in
-    aux user server (auth_modules server)
+  aux user server (auth_modules server)
 
 let set_password user server password =
-  if password = "" then Lwt.return Empty_password
+  if password = "" then Empty_password
   else
     let rec aux user server password = function
-      | [] -> Lwt.return Not_allowed
+      | [] -> Not_allowed
       | m :: mods -> (
-	  let module A = (val m : Auth) in
-	    match%lwt A.set_password user server password with
-	      | OK ->
-		  Lwt.return OK
-	      | _ ->
-		  aux user server password mods
-	)
+	let module A = (val m : Auth) in
+	match A.set_password user server password with
+	| OK ->
+	   OK
+	| _ ->
+	   aux user server password mods
+      )
     in
-      aux user server password (auth_modules server)
-    
+    aux user server password (auth_modules server)
+
 let try_register user server password =
-  if password = "" then Lwt.return Empty_password
+  if password = "" then Empty_password
   else
-    match%lwt does_user_exist user server with
-      | true ->
-	  Lwt.return Exists
-      | false ->
-	  if Jamler_config.is_my_host server then (
-	    let rec aux user server password = function
-	      | [] -> Lwt.return Not_allowed
-	      | m :: mods -> (
-		  let module A = (val m : Auth) in
-		    match%lwt A.try_register user server password with
-		      | OK ->
-			  Lwt.return OK
-		      | _ ->
-			  aux user server password mods
-		)
-	    in
-	      match%lwt aux user server password (auth_modules server) with
-		| OK ->
-		    let%lwt _ = Hooks.run register_user server (user, server) in
-		      Lwt.return OK
-		| res ->
-		    Lwt.return res
-	  ) else
-	    Lwt.return Not_allowed
+    match does_user_exist user server with
+    | true ->
+       Exists
+    | false ->
+       if Jamler_config.is_my_host server then (
+	 let rec aux user server password = function
+	   | [] ->  Not_allowed
+	   | m :: mods -> (
+	     let module A = (val m : Auth) in
+	     match A.try_register user server password with
+	     | OK ->
+		OK
+	     | _ ->
+		aux user server password mods
+	   )
+	 in
+	 match aux user server password (auth_modules server) with
+	 | OK ->
+	    Hooks.run register_user server (user, server);
+	    OK
+	 | res ->
+	    res
+       ) else
+	 Not_allowed
 
 let remove user server =
-  let%lwt _ = Lwt_list.iter_s
+  List.iter
     (fun m ->
-       let module A = (val m : Auth) in
-	 A.remove user server)
-    (auth_modules server) in
-  let%lwt _ = Hooks.run remove_user server (user, server) in
-    Lwt.return ()
+      let module A = (val m : Auth) in
+      A.remove user server)
+    (auth_modules server);
+  Hooks.run remove_user server (user, server);
+  ()
 
 let remove' user server password =
-  let%lwt _ = Lwt_list.iter_s
+  List.iter
     (fun m ->
-       let module A = (val m : Auth) in
-	 A.remove' user server password)
-    (auth_modules server) in
-  let%lwt _ = Hooks.run remove_user server (user, server) in
-    Lwt.return ()
+      let module A = (val m : Auth) in
+      A.remove' user server password)
+    (auth_modules server);
+  Hooks.run remove_user server (user, server);
+  ()
 
 let entropy s =
   match String.length s with
@@ -215,37 +213,36 @@ let entropy s =
 	  let sum = !digit + !printable + !lowletter + !hiletter + !other in
 	    (float_of_int len) *. (log (float_of_int sum)) /. (log 2.0)
 
-module BenignAuth : Auth =
-struct
+module BenignAuth : Auth = struct
   let name = "benign"
 
   let check_password _user _server _password =
-    Lwt.return true
+    true
 
   let check_password_digest
-      _user _server _password
-      _digest _digest_gen =
-    Lwt.return true
+        _user _server _password
+        _digest _digest_gen =
+    true
 
   let get_password _user _server =
-    Lwt.return (Some "test")
+    (Some "test")
 
   let plain_password_required = false
 
   let does_user_exist _user _server =
-    Lwt.return true
+    true
 
   let remove _user _server =
-    Lwt.return ()
+    ()
 
   let remove' _user _server _password =
-    Lwt.return ()
+    ()
 
   let set_password _user _server _password =
-    Lwt.return OK
+    OK
 
   let try_register _user _server _password =
-    Lwt.return OK
+    OK
 
 end
 

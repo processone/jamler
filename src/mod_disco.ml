@@ -141,7 +141,7 @@ struct
 		  else false
 	   ) roster_items) || (user = luser && server = lserver)) *)
 
-  let is_presence_subscribed _from _to' = Lwt.return false
+  let is_presence_subscribed _from _to' = false
 
   let get_user_resources ({Jlib.user = user;
 			   Jlib.luser = luser;
@@ -196,112 +196,109 @@ struct
 
   let get_local_services acc (_from, to', node, _lang) =
     match acc with
-      | IError _ ->
-	  Lwt.return (Hooks.OK, acc)
-      | _ when node = "" ->
-	  let items =
-            match acc with
-	    | Items its -> its
-	    | IEmpty -> []
-            | IError _ -> assert false
-	  in
-	  let host = to'.Jlib.lserver in
-	  let domains =
-	    (get_vh_services (host :> string)) @ (select_disco_extra_domains host) in
-	  let res = List.map domain_to_xml (usort domains) in
-	    Lwt.return (Hooks.OK, Items (res @ items))
-      | Items _ ->
-	  Lwt.return (Hooks.OK, acc)
-      | IEmpty ->
-	  Lwt.return (Hooks.OK, IError Jlib.err_item_not_found)
+    | IError _ ->
+       (Hooks.OK, acc)
+    | _ when node = "" ->
+       let items =
+         match acc with
+	 | Items its -> its
+	 | IEmpty -> []
+         | IError _ -> assert false
+       in
+       let host = to'.Jlib.lserver in
+       let domains =
+	 (get_vh_services (host :> string)) @ (select_disco_extra_domains host) in
+       let res = List.map domain_to_xml (usort domains) in
+       (Hooks.OK, Items (res @ items))
+    | Items _ ->
+       (Hooks.OK, acc)
+    | IEmpty ->
+       (Hooks.OK, IError Jlib.err_item_not_found)
 
   let get_local_identity acc (_from, _to, node, _lang) =
     match node with
-      | "" ->
-	  Lwt.return
-	    (Hooks.OK,
-	     acc @ [`XmlElement
-		      ("identity",
-		       [("category", "server");
-			("type", "im");
-			("name", Cfg.name)],
-		       [])])
-      | _ ->
-	  Lwt.return (Hooks.OK, acc)
+    | "" ->
+       (Hooks.OK,
+	acc @ [`XmlElement
+		 ("identity",
+		  [("category", "server");
+		   ("type", "im");
+		   ("name", Cfg.name)],
+		  [])])
+    | _ ->
+       (Hooks.OK, acc)
 
   let get_local_features acc (_from, to', node, _lang) =
     match acc with
-      | FError _ ->
-	  Lwt.return (Hooks.OK, acc)
-      | _ when node = "" ->
-	  let feats =
-            match acc with
-	    | Features features -> features
-	    | FEmpty -> []
-            | FError _ -> assert false
-	  in
-	  let host = to'.Jlib.lserver in
-	    Lwt.return
-	      (Hooks.OK, Features ((select_disco_features host) @ feats))
-      | Features _ ->
-	  Lwt.return (Hooks.OK, acc)
-      | FEmpty ->
-	  Lwt.return (Hooks.OK, FError Jlib.err_item_not_found)
+    | FError _ ->
+       (Hooks.OK, acc)
+    | _ when node = "" ->
+       let feats =
+         match acc with
+	 | Features features -> features
+	 | FEmpty -> []
+         | FError _ -> assert false
+       in
+       let host = to'.Jlib.lserver in
+       (Hooks.OK, Features ((select_disco_features host) @ feats))
+    | Features _ ->
+       (Hooks.OK, acc)
+    | FEmpty ->
+       (Hooks.OK, FError Jlib.err_item_not_found)
 
   let get_sm_items acc (from, to', node, _lang) =
     match acc with
-      | IError _ ->
-	  Lwt.return (Hooks.OK, acc)
-      | _ when node = "" ->
-	  let items =
-            match acc with
-	    | Items its -> its
-	    | IEmpty -> []
-            | IError _ -> assert false
-	  in
-	  let%lwt items1 =
-	    match%lwt is_presence_subscribed from to' with
-	      | true ->
-		  Lwt.return (get_user_resources to')
-	      | false ->
-		  Lwt.return []
-	  in
-	    Lwt.return (Hooks.OK, Items (items @ items1))
-      | Items _ ->
-	  Lwt.return (Hooks.OK, acc)
-      | IEmpty ->
-	  let {Jlib.luser = lfrom; Jlib.lserver = lsfrom; _} = from in
-	  let {Jlib.luser = lto; Jlib.lserver = lsto; _} = to' in
-	    if (lfrom = lto && lsfrom = lsto) then
-	      Lwt.return (Hooks.OK, IError Jlib.err_item_not_found)
-	    else
-	      Lwt.return (Hooks.OK, IError Jlib.err_not_allowed)
+    | IError _ ->
+       (Hooks.OK, acc)
+    | _ when node = "" ->
+       let items =
+         match acc with
+	 | Items its -> its
+	 | IEmpty -> []
+         | IError _ -> assert false
+       in
+       let items1 =
+	 match is_presence_subscribed from to' with
+	 | true ->
+	    get_user_resources to'
+	 | false ->
+	    []
+       in
+       (Hooks.OK, Items (items @ items1))
+    | Items _ ->
+       (Hooks.OK, acc)
+    | IEmpty ->
+       let {Jlib.luser = lfrom; Jlib.lserver = lsfrom; _} = from in
+       let {Jlib.luser = lto; Jlib.lserver = lsto; _} = to' in
+       if (lfrom = lto && lsfrom = lsto) then
+	 (Hooks.OK, IError Jlib.err_item_not_found)
+       else
+	 (Hooks.OK, IError Jlib.err_not_allowed)
 
   let get_sm_features acc (from, to', _node, _lang) =
     match acc with
-      | FEmpty ->
-	  let {Jlib.luser = lfrom; Jlib.lserver = lsfrom; _} = from in
-	  let {Jlib.luser = lto; Jlib.lserver = lsto; _} = to' in
-	    if (lfrom = lto && lsfrom = lsto) then
-	      Lwt.return (Hooks.OK, FError Jlib.err_item_not_found)
-	    else
-	      Lwt.return (Hooks.OK, FError Jlib.err_not_allowed)
-      | _ ->
-	  Lwt.return (Hooks.OK, acc)
+    | FEmpty ->
+       let {Jlib.luser = lfrom; Jlib.lserver = lsfrom; _} = from in
+       let {Jlib.luser = lto; Jlib.lserver = lsto; _} = to' in
+       if (lfrom = lto && lsfrom = lsto) then
+	 (Hooks.OK, FError Jlib.err_item_not_found)
+       else
+	 (Hooks.OK, FError Jlib.err_not_allowed)
+    | _ ->
+       (Hooks.OK, acc)
 
   let get_sm_identity acc (_from,
 			   {Jlib.luser = luser; Jlib.lserver = lserver; _},
 			   _node, _lang) =
-    match%lwt Auth.does_user_exist luser lserver with
-      | true ->
-	  Lwt.return
-	    (Hooks.OK, acc @
-	       [`XmlElement ("identity",
-			     [("category", "account");
-			      ("type", "registered")],
-			     [])])
-      | false ->
-	  Lwt.return (Hooks.OK, acc)
+    match Auth.does_user_exist luser lserver with
+    | true ->
+       (Hooks.OK, acc @
+	            [`XmlElement ("identity",
+			          [("category", "account");
+			           ("type", "registered")],
+			          [])])
+    | false ->
+       (Hooks.OK, acc)
 
   (* Support for: XEP-0157 Contact Addresses for XMPP Services *)
 
@@ -354,185 +351,180 @@ struct
       Lwt.return (Hooks.OK, acc) *)
 
   let get_info acc _ =
-    Lwt.return (Hooks.OK, acc)
+    (Hooks.OK, acc)
 
   let process_local_iq_items from to' iq =
     match iq.Jlib.iq_type with
-      | `Set subel ->
-	  Lwt.return (`IQ {iq with
-                             Jlib.iq_type =
-                          `Error (Jlib.err_not_allowed, Some subel)})
-      | `Get subel ->
-	  let node = Xml.get_tag_attr_s "node" subel in
-	  let host = to'.Jlib.lserver in
-	  let lang = iq.Jlib.iq_lang in
-	    match%lwt Hooks.run_fold disco_local_items
-	      host IEmpty (from, to', node, lang) with
-                | IEmpty -> assert false
-		| Items items ->
-		    let anode = match node with
-		      | "" -> []
-		      | _ -> [("node", node)]
-		    in
-		      Lwt.return
-			(`IQ {iq with
-				Jlib.iq_type =
-			     `Result
-			       (Some (`XmlElement
-					("query",
-					 ("xmlns", [%ns "DISCO_ITEMS"]) :: anode,
-					 (items :> Xml.element_cdata list))))})
-		| IError error ->
-		    Lwt.return (`IQ {iq with
-				       Jlib.iq_type =
-				    `Error (error, Some subel)})
+    | `Set subel ->
+       `IQ {iq with
+           Jlib.iq_type =
+             `Error (Jlib.err_not_allowed, Some subel)}
+    | `Get subel ->
+       let node = Xml.get_tag_attr_s "node" subel in
+       let host = to'.Jlib.lserver in
+       let lang = iq.Jlib.iq_lang in
+       match Hooks.run_fold disco_local_items
+	       host IEmpty (from, to', node, lang) with
+       | IEmpty -> assert false
+       | Items items ->
+	  let anode = match node with
+	    | "" -> []
+	    | _ -> [("node", node)]
+	  in
+	  `IQ {iq with
+	      Jlib.iq_type =
+		`Result
+		  (Some (`XmlElement
+			   ("query",
+			    ("xmlns", [%xmlns "DISCO_ITEMS"]) :: anode,
+			    (items :> Xml.element_cdata list))))}
+       | IError error ->
+	  `IQ {iq with
+	      Jlib.iq_type =
+		`Error (error, Some subel)}
 
   let process_local_iq_info from to' iq =
     match iq.Jlib.iq_type with
-      | `Set subel ->
-	  Lwt.return (`IQ {iq with
-                             Jlib.iq_type =
-                          `Error (Jlib.err_not_allowed, Some subel)})
-      | `Get subel ->
-	  let host = to'.Jlib.lserver in
-	  let node = Xml.get_tag_attr_s "node" subel in
-	  let lang = iq.Jlib.iq_lang in
-	  let%lwt identity = Hooks.run_fold disco_local_identity
-	    host [] (from, to', node, lang) in
-	  let%lwt info = Hooks.run_fold disco_info
-	    host [] (host, Some name, node, lang) in
-	    match%lwt Hooks.run_fold disco_local_features
-	      host FEmpty (from, to', node, lang) with
-                | FEmpty -> assert false
-		| Features features ->
-		    let anode = match node with
-		      | "" -> []
-		      | _ -> [("node", node)]
-		    in
-		    let res_els = identity @ info @ (features_to_xml features) in
-		      Lwt.return
-			(`IQ {iq with
-				Jlib.iq_type =
-			     `Result
-			       (Some (`XmlElement
-					("query",
-					 ("xmlns", [%ns "DISCO_INFO"]) :: anode,
-					 (res_els :> Xml.element_cdata list))))})
-		| FError error ->
-		    Lwt.return (`IQ {iq with
-				       Jlib.iq_type =
-				    `Error (error, Some subel)})
+    | `Set subel ->
+       `IQ {iq with
+           Jlib.iq_type =
+             `Error (Jlib.err_not_allowed, Some subel)}
+    | `Get subel ->
+       let host = to'.Jlib.lserver in
+       let node = Xml.get_tag_attr_s "node" subel in
+       let lang = iq.Jlib.iq_lang in
+       let identity =
+         Hooks.run_fold disco_local_identity
+	   host [] (from, to', node, lang) in
+       let info =
+         Hooks.run_fold disco_info
+	   host [] (host, Some name, node, lang) in
+       match Hooks.run_fold disco_local_features
+	       host FEmpty (from, to', node, lang) with
+       | FEmpty -> assert false
+       | Features features ->
+	  let anode = match node with
+	    | "" -> []
+	    | _ -> [("node", node)]
+	  in
+	  let res_els = identity @ info @ (features_to_xml features) in
+	  `IQ {iq with
+	      Jlib.iq_type =
+		`Result
+		  (Some (`XmlElement
+			   ("query",
+			    ("xmlns", [%xmlns "DISCO_INFO"]) :: anode,
+			    (res_els :> Xml.element_cdata list))))}
+       | FError error ->
+	  `IQ {iq with
+	      Jlib.iq_type =
+		`Error (error, Some subel)}
 
   let process_sm_iq_items from to' iq =
     match iq.Jlib.iq_type with
-      | `Set subel ->
-	  Lwt.return (`IQ {iq with
-                             Jlib.iq_type =
-                          `Error (Jlib.err_not_allowed, Some subel)})
-      | `Get subel ->
-	  match%lwt is_presence_subscribed from to' with
-	    | true -> (
-		let host = to'.Jlib.lserver in
-		let node = Xml.get_tag_attr_s "node" subel in
-		let lang = iq.Jlib.iq_lang in
-		  match%lwt Hooks.run_fold disco_sm_items
-		    host IEmpty (from, to', node, lang) with
-                      | IEmpty -> assert false
-		      | Items items ->
-			  let anode = match node with
-			    | "" -> []
-			    | _ -> [("node", node)]
-			  in
-			    Lwt.return
-			      (`IQ {iq with
-				      Jlib.iq_type =
-				   `Result
-				     (Some (`XmlElement
-					      ("query",
-					       ("xmlns", [%ns "DISCO_ITEMS"])
-					       :: anode,
-					       (items :> Xml.element_cdata list)
-					      )))})
-		      | IError error ->
-			  Lwt.return (`IQ {iq with
-					     Jlib.iq_type =
-					  `Error (error, Some subel)}))
-	    | false ->
-		Lwt.return
-		  (`IQ {iq with
-			  Jlib.iq_type =
-		       `Error (Jlib.err_service_unavailable, Some subel)})
+    | `Set subel ->
+       `IQ {iq with
+           Jlib.iq_type =
+             `Error (Jlib.err_not_allowed, Some subel)}
+    | `Get subel ->
+       match is_presence_subscribed from to' with
+       | true -> (
+	 let host = to'.Jlib.lserver in
+	 let node = Xml.get_tag_attr_s "node" subel in
+	 let lang = iq.Jlib.iq_lang in
+	 match Hooks.run_fold disco_sm_items
+		 host IEmpty (from, to', node, lang) with
+         | IEmpty -> assert false
+	 | Items items ->
+	    let anode = match node with
+	      | "" -> []
+	      | _ -> [("node", node)]
+	    in
+	    `IQ {iq with
+		Jlib.iq_type =
+		  `Result
+		    (Some (`XmlElement
+			     ("query",
+			      ("xmlns", [%xmlns "DISCO_ITEMS"])
+			      :: anode,
+			      (items :> Xml.element_cdata list)
+	      )))}
+	 | IError error ->
+	    `IQ {iq with
+		Jlib.iq_type =
+		  `Error (error, Some subel)})
+       | false ->
+	  `IQ {iq with
+	      Jlib.iq_type =
+		`Error (Jlib.err_service_unavailable, Some subel)}
 
   let process_sm_iq_info from to' iq =
     match iq.Jlib.iq_type with
-      | `Set subel ->
-	  Lwt.return (`IQ {iq with
-                             Jlib.iq_type =
-                          `Error (Jlib.err_not_allowed, Some subel)})
-      | `Get subel ->
-	  match%lwt is_presence_subscribed from to' with
-	    | true -> (
-		let host = to'.Jlib.lserver in
-		let node = Xml.get_tag_attr_s "node" subel in
-		let lang = iq.Jlib.iq_lang in
-		let%lwt identity = Hooks.run_fold disco_sm_identity
-		  host [] (from, to', node, lang) in
-		  match%lwt Hooks.run_fold disco_sm_features
-		    host FEmpty (from, to', node, lang) with
-                      | FEmpty -> assert false
-		      | Features features ->
-			  let anode = match node with
-			    | "" -> []
-			    | _ -> [("node", node)]
-			  in
-			  let res_els = identity @ (features_to_xml features) in
-			    Lwt.return
-			      (`IQ {iq with
-				      Jlib.iq_type =
-				   `Result
-				     (Some (`XmlElement
-					      ("query",
-					       ("xmlns", [%ns "DISCO_INFO"])
-					       :: anode,
-					       (res_els :> Xml.element_cdata list))))})
-		      | FError error ->
-			  Lwt.return (`IQ {iq with
-					     Jlib.iq_type =
-					  `Error (error, Some subel)}))
-	    | false ->
-		Lwt.return
-		  (`IQ {iq with
-			  Jlib.iq_type =
-		       `Error (Jlib.err_service_unavailable, Some subel)})
+    | `Set subel ->
+       `IQ {iq with
+           Jlib.iq_type =
+             `Error (Jlib.err_not_allowed, Some subel)}
+    | `Get subel ->
+       match is_presence_subscribed from to' with
+       | true -> (
+	 let host = to'.Jlib.lserver in
+	 let node = Xml.get_tag_attr_s "node" subel in
+	 let lang = iq.Jlib.iq_lang in
+	 let identity =
+           Hooks.run_fold disco_sm_identity
+	     host [] (from, to', node, lang) in
+	 match Hooks.run_fold disco_sm_features
+		 host FEmpty (from, to', node, lang) with
+         | FEmpty -> assert false
+	 | Features features ->
+	    let anode = match node with
+	      | "" -> []
+	      | _ -> [("node", node)]
+	    in
+	    let res_els = identity @ (features_to_xml features) in
+	    `IQ {iq with
+		Jlib.iq_type =
+		  `Result
+		    (Some (`XmlElement
+			     ("query",
+			      ("xmlns", [%xmlns "DISCO_INFO"])
+			      :: anode,
+			      (res_els :> Xml.element_cdata list))))}
+	 | FError error ->
+	    `IQ {iq with
+		Jlib.iq_type =
+		  `Error (error, Some subel)})
+       | false ->
+          `IQ {iq with
+	      Jlib.iq_type =
+		`Error (Jlib.err_service_unavailable, Some subel)}
 
   let start host =
     (* ejabberd_local:refresh_iq_handlers() *)
     register_feature host "iq";
     register_feature host "presence";
     register_feature host "presence-invisible";
-    register_feature host [%ns "DISCO_ITEMS"];
-    register_feature host [%ns "DISCO_INFO"];
+    register_feature host [%xmlns "DISCO_ITEMS"];
+    register_feature host [%xmlns "DISCO_INFO"];
     List.iter (fun domain -> register_extra_domain host domain) (extra_domains host);
-    Lwt.return (
-      [Gen_mod.iq_handler `Local host [%ns "DISCO_ITEMS"] process_local_iq_items ();
-       Gen_mod.iq_handler `Local host [%ns "DISCO_INFO"] process_local_iq_info ();
-       Gen_mod.iq_handler `SM host [%ns "DISCO_ITEMS"] process_sm_iq_items ();
-       Gen_mod.iq_handler `SM host [%ns "DISCO_INFO"] process_sm_iq_info ();
-       Gen_mod.fold_hook disco_local_items host get_local_services 100;
-       Gen_mod.fold_hook disco_local_features host get_local_features 100;
-       Gen_mod.fold_hook disco_local_identity host get_local_identity 100;
-       Gen_mod.fold_hook disco_sm_items host get_sm_items 100;
-       Gen_mod.fold_hook disco_sm_features host get_sm_features 100;
-       Gen_mod.fold_hook disco_sm_identity host get_sm_identity 100;
-       Gen_mod.fold_hook disco_info host get_info 100;
-      ]
-    )
+    [Gen_mod.iq_handler `Local host [%xmlns "DISCO_ITEMS"] process_local_iq_items ();
+     Gen_mod.iq_handler `Local host [%xmlns "DISCO_INFO"] process_local_iq_info ();
+     Gen_mod.iq_handler `SM host [%xmlns "DISCO_ITEMS"] process_sm_iq_items ();
+     Gen_mod.iq_handler `SM host [%xmlns "DISCO_INFO"] process_sm_iq_info ();
+     Gen_mod.fold_hook disco_local_items host get_local_services 100;
+     Gen_mod.fold_hook disco_local_features host get_local_features 100;
+     Gen_mod.fold_hook disco_local_identity host get_local_identity 100;
+     Gen_mod.fold_hook disco_sm_items host get_sm_items 100;
+     Gen_mod.fold_hook disco_sm_features host get_sm_features 100;
+     Gen_mod.fold_hook disco_sm_identity host get_sm_identity 100;
+     Gen_mod.fold_hook disco_info host get_info 100;
+    ]
 
   let stop host =
     let filter (_, h) = h <> host in
-      disco_features := DFTable.filter filter !disco_features;
-      disco_extra_domains := EDTable.filter filter !disco_extra_domains;
-      Lwt.return ()
+    disco_features := DFTable.filter filter !disco_features;
+    disco_extra_domains := EDTable.filter filter !disco_extra_domains;
+    ()
 
 end
 

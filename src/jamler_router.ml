@@ -1,6 +1,6 @@
 open Process
 
-let section = Jamler_log.new_section "router"
+let src = Jamler_log.new_src "router"
 
 type t = Jlib.jid -> Jlib.jid -> Xml.element -> unit
 
@@ -199,22 +199,18 @@ let do_route orig_from orig_to orig_packet =
           ()
 
 
-
-
 let route from to' packet =
   try
     do_route from to' packet
   with
     | exn ->
-	ignore (
-	  Lwt_log.error_f
-	    ~section
-	    ~exn:exn
-	    "exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
-            (Jlib.jid_to_string from)
-            (Jlib.jid_to_string to')
-            (Xml.element_to_string packet)
-	)
+       Logs.err ~src
+	 (fun m ->
+           m "exception when processing packet\nfrom: %s\nto: %s\npacket: %s\n%a"
+             (Jlib.jid_to_string from)
+             (Jlib.jid_to_string to')
+             (Xml.element_to_string packet)
+             Jamler_log.pp_exn exn)
 
 let dirty_get_all_domains () =
   Hashtbl.fold (fun route _ acc -> route :: acc) route_table []
@@ -247,28 +243,26 @@ struct
 
   let init () self =
     register self "ejabberd_router";
-    Lwt.return (`Continue {pid = self})
+    `Continue {pid = self}
 
   open Erlang
 
   let handle (msg : msg) state =
     match msg with
-      | Erl (ErlTuple [| ErlAtom "route"; _; _; _ |] as term) -> (
-	  try
-	    let `Route (from, to', msg) = term_to_route term in
-	      route from to' msg;
-	      Lwt.return (`Continue state)
-	  with
-	    | exn ->
-		let%lwt () =
-		  Lwt_log.error_f
-		    ~section
-		    ~exn:exn
-		    "exception on processing packet\npacket: %s\nexception"
-		    (Erlang.term_to_string term)
-		in
-		  Lwt.return (`Continue state)
-	)
+    | Erl (ErlTuple [| ErlAtom "route"; _; _; _ |] as term) -> (
+      try
+	let `Route (from, to', msg) = term_to_route term in
+	route from to' msg;
+	`Continue state
+      with
+      | exn ->
+         Logs.err ~src
+	   (fun m ->
+             m "exception on processing packet\npacket: %s\n%a"
+	       (Erlang.term_to_string term)
+               Jamler_log.pp_exn exn);
+	 `Continue state
+    )
 (*      | `Erl (ErlTuple
 		[| ErlAtom "send";
 		   ErlTuple [| ErlFloat ts;
@@ -308,24 +302,24 @@ struct
 		  Lwt.return (`Continue state)
 	)
 *)
-      | Erl term ->
-	  let%lwt () =
-	    Lwt_log.notice_f ~section
-	      "unexpected packet %s" (Erlang.term_to_string term)
-	  in
-	    Lwt.return (`Continue state)
-      | _ ->
-         (* TODO: add a warning *)
-	 Lwt.return (`Continue state)
+    | Erl term ->
+       Logs.info ~src
+	 (fun m ->
+           m "unexpected packet %s" (Erlang.term_to_string term));
+       `Continue state
+    | _ ->
+       (* TODO: add a warning *)
+       `Continue state
 
   let terminate _state _reason =
-    Lwt.return ()
+    ()
 
 end
 
 module JamlerRouterServer = GenServer.Make(JamlerRouter)
 
-let _ =
-  JamlerRouterServer.start ();
+let start () =
+  ignore (JamlerRouterServer.start ());
+  ()
 
 

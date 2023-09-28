@@ -4,10 +4,10 @@ type msg = ..
 
 val pid_to_proc : pid -> proc
 val proc_to_pid : proc -> pid
-val spawn : (pid -> unit Lwt.t) -> pid
+val spawn : (pid -> unit) -> pid
 (*val send : pid -> msg -> unit*)
 val ( $! ) : pid -> msg -> unit
-val receive : pid -> msg Lwt.t
+val receive : pid -> msg
 
 type msg += Erl of Erlang.erl_term
 
@@ -40,10 +40,17 @@ val monitor_nodes_iter : (pid -> unit) -> unit
 val is_overloaded : pid -> bool
 val pid_to_string : pid -> string
 val format_pid : unit -> pid -> string
+val pp_pid : pid Fmt.t
 
-type timer = unit Lwt.t
+type timer = Eio.Cancel.t
 type msg += TimerTimeout of timer * msg
 val send_after : float -> pid -> msg -> timer
-val apply_after : float -> (unit -> unit Lwt.t) -> timer
+val apply_after : float -> (unit -> unit) -> timer
 val start_timer : float -> pid -> msg -> timer
 val cancel_timer : timer -> unit
+
+val set_global_switch : Eio.Switch.t -> unit
+val get_global_switch : unit -> Eio.Switch.t
+
+val set_global_env : Eio_unix.Stdenv.base -> unit
+val get_global_env : unit -> Eio_unix.Stdenv.base

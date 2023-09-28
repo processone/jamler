@@ -145,73 +145,65 @@ struct
 
   let rec mech_step state client_in =
     match state, client_in with
-      | {step = One; nonce = nonce; _}, _ ->
-	  Lwt.return (
-	    SASL.Continue
-	      ("nonce=\"" ^ nonce ^
-		 "\",qop=\"auth\",charset=utf-8,algorithm=md5-sess",
-	       mech_step {state with step = Three}))
-      | {step = Three; nonce = nonce; _}, client_in -> (
-	  match parse client_in with
+    | {step = One; nonce = nonce; _}, _ ->
+       SASL.Continue
+	 ("nonce=\"" ^ nonce ^
+	    "\",qop=\"auth\",charset=utf-8,algorithm=md5-sess",
+	  mech_step {state with step = Three})
+    | {step = Three; nonce = nonce; _}, client_in -> (
+      match parse client_in with
+      | None ->
+	 SASL.Error "bad-protocol"
+      | Some key_vals -> (
+	let digest_uri = get_assoc_s "digest-uri" key_vals in
+	let username = get_assoc_s "username" key_vals in
+	match
+	  is_digesturi_valid digest_uri (state.host :> string),
+	  Jlib.nodeprep username
+	with
+	| true, Some lusername -> (
+	  let authzid = get_assoc_s "authzid" key_vals in
+	  match state.get_password lusername with
+	  | None ->
+	     SASL.ErrorUser ("not-authorized", username)
+	  | Some (passwd, auth_module) -> (
+	    match state.check_password_digest
+		    lusername ""
+		    (get_assoc_s "response" key_vals)
+		    (fun pw ->
+		      response key_vals username pw
+			nonce authzid "AUTHENTICATE")
+	    with
+	    | Some _ ->
+	       let rsp_auth =
+		 response key_vals
+		   username passwd
+		   nonce authzid ""
+	       in
+	       SASL.Continue
+		 ("rspauth=" ^ rsp_auth,
+		  mech_step
+		    {state with
+		      step = Five;
+		      auth_module;
+		      username;
+		      authzid}
+		 )
 	    | None ->
-		Lwt.return (
-		  SASL.Error "bad-protocol")
-	    | Some key_vals -> (
-		let digest_uri = get_assoc_s "digest-uri" key_vals in
-		let username = get_assoc_s "username" key_vals in
-		  match
-		    is_digesturi_valid digest_uri (state.host :> string),
-		    Jlib.nodeprep username
-		  with
-		    | true, Some lusername -> (
-			let authzid = get_assoc_s "authzid" key_vals in
-			  match%lwt state.get_password lusername with
-			    | None ->
-				Lwt.return (
-				  SASL.ErrorUser ("not-authorized", username))
-			    | Some (passwd, auth_module) -> (
-				match%lwt (state.check_password_digest
-					     lusername ""
-					     (get_assoc_s "response" key_vals)
-					     (fun pw ->
-						response key_vals username pw
-						  nonce authzid "AUTHENTICATE"))
-				with
-				  | Some _ ->
-				      let rsp_auth =
-					response key_vals
-					  username passwd
-					  nonce authzid ""
-				      in
-					Lwt.return (
-					  SASL.Continue
-					    ("rspauth=" ^ rsp_auth,
-					     mech_step
-					       {state with
-						  step = Five;
-						  auth_module;
-						  username;
-						  authzid})
-					)
-				  | None ->
-				      Lwt.return (
-					SASL.ErrorUser
-					  ("not-authorized", username))
-			      )
-		      )
-		    | _, _ ->
-			Lwt.return (
-			  SASL.ErrorUser ("not-authorized", username))
-	      )
+	       SASL.ErrorUser
+		 ("not-authorized", username)
+	  )
 	)
-      | {step = Five; auth_module; username; authzid; _}, "" ->
-	  Lwt.return (
-	    SASL.Done [(`Username, username);
-		       (`Authzid, authzid);
-		       (`Auth_module, auth_module)]);
-      | {step = Five; _}, _ ->
-	  Lwt.return (
-	    SASL.Error "bad-protocol")
+	| _, _ ->
+	   SASL.ErrorUser ("not-authorized", username)
+      )
+    )
+    | {step = Five; auth_module; username; authzid; _}, "" ->
+       SASL.Done [(`Username, username);
+		  (`Authzid, authzid);
+		  (`Auth_module, auth_module)];
+    | {step = Five; _}, _ ->
+       SASL.Error "bad-protocol"
 
 
   let mech_new host get_password _check_password check_password_digest

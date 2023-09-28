@@ -14,3 +14,5 @@ val dirty_get_all_domains: unit -> Jlib.namepreped list
 val dirty_get_all_routes: unit -> Jlib.namepreped list
 
 val register_s2s_route : t -> unit
+
+val start : unit -> unit

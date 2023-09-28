@@ -30,4 +30,4 @@ val myhosts : unit -> Jlib.namepreped list
 val is_my_host : Jlib.namepreped -> bool
 val auth_modules : Jlib.namepreped -> string list
 val modules : Jlib.namepreped -> string list
-val read_config : string -> unit Lwt.t
+val read_config : string -> unit

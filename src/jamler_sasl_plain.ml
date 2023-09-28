@@ -44,28 +44,24 @@ struct
 
 
   let mech_new _host _get_password check_password _check_password_digest
-      client_in =
+        client_in =
     match prepare client_in with
-      | Some (authzid, user, password) -> (
-	  match Jlib.nodeprep user with
-	    | Some user' -> (
-		match%lwt check_password user' password with
-		  | Some auth_module ->
-		      Lwt.return (
-			SASL.Done [(`Username, user);
-				   (`Authzid, authzid);
-				   (`Auth_module, auth_module)])
-		  | _ ->
-		      Lwt.return (
-			SASL.ErrorUser ("not-authorized", user))
-	      )
-	    | None ->
-		Lwt.return (
-		  SASL.ErrorUser ("not-authorized", user))
-	)
+    | Some (authzid, user, password) -> (
+      match Jlib.nodeprep user with
+      | Some user' -> (
+	match check_password user' password with
+	| Some auth_module ->
+	   SASL.Done [(`Username, user);
+		      (`Authzid, authzid);
+		      (`Auth_module, auth_module)]
+	| _ ->
+	   SASL.ErrorUser ("not-authorized", user)
+      )
       | None ->
-	  Lwt.return (
-	    SASL.Error "bad-protocol")
+	 SASL.ErrorUser ("not-authorized", user)
+    )
+    | None ->
+       SASL.Error "bad-protocol"
 
 end
 

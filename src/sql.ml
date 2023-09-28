@@ -1,27 +1,54 @@
-module Lwt_thread: PGOCaml_generic.THREAD with type 'a t = 'a Lwt.t =
+module Eio_thread: PGOCaml_generic.THREAD with type 'a t = 'a =
 struct
-  type 'a t = 'a Lwt.t
-  let return x = Lwt.return x
-  let (>>=) = Lwt.bind
-  let fail = Lwt.fail
-  let catch = Lwt.catch
- 
-  type in_channel = Lwt_io.input_channel
-  type out_channel = Lwt_io.output_channel
-  let open_connection sockaddr = Lwt_io.open_connection sockaddr
-  let output_char = Lwt_io.write_char
-  let output_binary_int = Lwt_io.BE.write_int
-  let output_string = Lwt_io.write
-  let flush = Lwt_io.flush
-  let input_char = Lwt_io.read_char
-  let input_binary_int = Lwt_io.BE.read_int
-  let really_input = Lwt_io.read_into_exactly
-  let close_in = Lwt_io.close
+  type 'a t = 'a
+  let return x = x
+  let (>>=) v f = f v
+  let fail = raise
+  let catch f fexn = try f () with e -> fexn e
+
+  type in_channel = Eio_unix.Net.stream_socket_ty Eio.Resource.t * Eio.Buf_read.t
+  type out_channel = Eio_unix.Net.stream_socket_ty Eio.Resource.t * Buffer.t
+  let open_connection sockaddr =
+    match sockaddr with
+    | Unix.ADDR_UNIX _ -> assert false
+    | Unix.ADDR_INET (addr, port) ->
+       let addr = Eio_unix.Net.Ipaddr.of_unix addr in
+       let flow =
+         Eio.Net.connect
+           ~sw:(Process.get_global_switch ())
+           (Process.get_global_env ())#net
+           (`Tcp (addr, port))
+       in
+       ((flow, Eio.Buf_read.of_flow ~max_size:1000000 flow),
+        (flow, Buffer.create 100))
+  let output_char (_flow, buf) c =
+    Buffer.add_char buf c
+  let output_binary_int (_flow, buf) x =
+    Buffer.add_int32_be buf (Int32.of_int x)
+  let output_string (_flow, buf) s =
+    Buffer.add_string buf s
+  let flush (flow, buf) =
+    if Buffer.length buf > 0 then (
+      let s = Buffer.contents buf in
+      Buffer.clear buf;
+      Eio.Flow.copy_string s flow
+    )
+  let input_char (_flow, buf) =
+    Eio.Buf_read.any_char buf
+  let input_binary_int (_flow, buf) =
+    let s = Eio.Buf_read.take 4 buf in
+    let s = Bytes.of_string s in
+    Int32.to_int (Bytes.get_int32_be s 0)
+  let really_input (_flow, buf) bs pos len =
+    let s = Eio.Buf_read.take len buf in
+    Bytes.blit_string s 0 bs pos len
+  let close_in (flow, _buf) =
+    Eio.Flow.close flow
 end
 
-module PG = PGOCaml_generic.Make(Lwt_thread)
+module PG = PGOCaml_generic.Make(Eio_thread)
 
-let section = Jamler_log.new_section "sql"
+let src = Jamler_log.new_src "sql"
 
 exception Error = PG.PostgreSQL_Error
 
@@ -83,20 +110,19 @@ let pools = Hashtbl.create 10
 
 let add_pool host =
   let pool =
-    Lwt_pool.create 10
+    Eio.Pool.create 10
       (fun () ->
-	 let%lwt dbh =
-	   PG.connect
-	     ~host:(get_sql_server ())
-	     ~user:(get_sql_username ())
-	     ~password:(get_sql_password ())
-	     ~database:(get_sql_database ()) ()
-	 in
-	 let%lwt () = PG.prepare dbh
-	   ~query:"SET default_transaction_isolation TO SERIALIZABLE" ()
-	 in
-	 let%lwt _ = PG.execute dbh ~params:[] () in
-	   Lwt.return {dbh; queries = Hashtbl.create 10}
+        let dbh =
+	  PG.connect
+	    ~host:(get_sql_server ())
+	    ~user:(get_sql_username ())
+	    ~password:(get_sql_password ())
+	    ~database:(get_sql_database ()) ()
+        in
+        ignore (PG.prepare dbh
+	          ~query:"SET default_transaction_isolation TO SERIALIZABLE" ());
+        ignore (PG.execute dbh ~params:[] ());
+        {dbh; queries = Hashtbl.create 10}
       )
   in
     Hashtbl.replace pools host pool
@@ -104,7 +130,9 @@ let add_pool host =
 let get_pool host =
   Hashtbl.find pools host
 
-let state_key = Lwt.new_key ()
+open Eio.Std
+
+let state_key = Fiber.create_key ()
 
 exception Aborted of string
 
@@ -133,141 +161,100 @@ let is_exn_unique_violation =
 let qcounter = ref 0
 
 let query' q st =
-  let%lwt name =
-    try%lwt
-      Lwt.return (Hashtbl.find st.queries q.query)
+  let name =
+    try
+      Hashtbl.find st.queries q.query
     with
-      | Not_found ->
-	  incr qcounter;
-	  let name = "q" ^ string_of_int !qcounter in
-	    Hashtbl.add st.queries q.query name;
-	    let%lwt () =
-	      PG.prepare st.dbh
-		~query:q.query ~name:name ()
-	    in
-	      Lwt.return name
+    | Not_found ->
+       incr qcounter;
+       let name = "q" ^ string_of_int !qcounter in
+       Hashtbl.add st.queries q.query name;
+       PG.prepare st.dbh ~query:q.query ~name:name ();
+       name
   in
-  let%lwt rows = PG.execute st.dbh ~name:name ~params:q.params () in
-    Lwt.return (process_results rows q.handler)
+  let rows = PG.execute st.dbh ~name:name ~params:q.params () in
+  process_results rows q.handler
 
 let query host q =
-  match Lwt.get state_key with
-    | Some _ ->
-	let%lwt () =
-	  Lwt_log.error ~section
-	    "Sql.query called inside transaction"
-	in
-	  raise (Aborted "Sql.query called inside transaction")
-    | None ->
-	let pool = get_pool host in
-	  Lwt_pool.use pool (query' q)
+  match Fiber.get state_key with
+  | Some _ ->
+     Logs.err ~src
+       (fun m ->
+         m "Sql.query called inside transaction");
+     raise (Aborted "Sql.query called inside transaction")
+  | None ->
+     let pool = get_pool host in
+     Eio.Pool.use pool (query' q)
 
 let query_t q =
-  match Lwt.get state_key with
-    | Some st ->
-	query' q st
-    | None ->
-	let%lwt () =
-	  Lwt_log.error ~section
-	    "Sql.query_t called outside transaction"
-	in
-	  raise (Aborted "Sql.query_t called outside transaction")
+  match Fiber.get state_key with
+  | Some st ->
+     query' q st
+  | None ->
+     Logs.err ~src
+       (fun m ->
+         m "Sql.query_t called outside transaction");
+     raise (Aborted "Sql.query_t called outside transaction")
 
 let max_transaction_restarts = 10
 
 let transaction host f =
-  match Lwt.get state_key with
-    | Some _ ->
-	f ()
-    | None ->
-	let transaction' f st =
-	  let rec loop f n () =
-	    let%lwt () = PG.begin_work st.dbh in
-	      try%lwt
-		let%lwt res = f () in
-		let%lwt () = PG.commit st.dbh in
-		  Lwt.return res
-	      with
-		| Error _ as exn when is_exn_rollback exn ->
-		    let%lwt () = PG.rollback st.dbh in
-		      if n > 0 then (
-			loop f (n - 1) ()
-		      ) else (
-			let%lwt () =
-			  Lwt_log.error ~section ~exn
-			    "sql transaction restarts exceeded"
-			in
-			  raise (Aborted "sql transaction restarts exceeded")
-		      )
-		| exn ->
-		    let%lwt () = PG.rollback st.dbh in
-		    let%lwt () =
-		      Lwt_log.error ~section ~exn "sql transaction failed"
-		    in
-		      Lwt.fail exn
-	  in
-	    Lwt.with_value state_key (Some st) (loop f max_transaction_restarts)
-	in
-	let pool = get_pool host in
-	  Lwt_pool.use pool (transaction' f)
+  match Fiber.get state_key with
+  | Some _ ->
+     f ()
+  | None ->
+     let transaction' f st =
+       let rec loop f n () =
+         PG.begin_work st.dbh;
+	 try
+	   let res = f () in
+           PG.commit st.dbh;
+           res
+	 with
+	 | Error _ as exn when is_exn_rollback exn ->
+            PG.rollback st.dbh;
+	    if n > 0 then (
+	      loop f (n - 1) ()
+	    ) else (
+              Logs.err ~src
+	        (fun m ->
+                  m "sql transaction restarts exceeded: %a"
+                    Jamler_log.pp_exn exn);
+	      raise (Aborted "sql transaction restarts exceeded")
+            )
+	 | exn ->
+            PG.rollback st.dbh;
+            Logs.err ~src
+	      (fun m ->
+                m "sql transaction failed: %a"
+                  Jamler_log.pp_exn exn);
+            raise exn
+       in
+       Fiber.with_binding state_key st (loop f max_transaction_restarts)
+     in
+     let pool = get_pool host in
+     Eio.Pool.use pool (transaction' f)
 
 let update_t insert_query update_query =
-  match Lwt.get state_key with
-    | Some st -> (
-	let%lwt () = PG.prepare st.dbh ~query:"SAVEPOINT update_sp" () in
-	let%lwt _ = PG.execute st.dbh ~params:[] () in
-	  try%lwt
-	    let%lwt _ = query_t insert_query in
-	      Lwt.return ()
-	  with
-	    | exn when is_exn_unique_violation exn ->
-		let%lwt () =
-		  PG.prepare st.dbh ~query:"ROLLBACK TO SAVEPOINT update_sp" ()
-		in
-		let%lwt _ = PG.execute st.dbh ~params:[] () in
-		let%lwt _ = query_t update_query in
-		  Lwt.return ()
-      )
-    | None ->
-	let%lwt () =
-	  Lwt_log.error ~section
-	    "Sql.update_t called outside transaction"
-	in
-	  raise (Aborted "Sql.update_t called outside transaction")
+  match Fiber.get state_key with
+  | Some st -> (
+    PG.prepare st.dbh ~query:"SAVEPOINT update_sp" ();
+    ignore (PG.execute st.dbh ~params:[] ());
+    try
+      let _ = query_t insert_query in
+      ()
+    with
+    | exn when is_exn_unique_violation exn ->
+       PG.prepare st.dbh ~query:"ROLLBACK TO SAVEPOINT update_sp" ();
+       ignore (PG.execute st.dbh ~params:[] ());
+       let _ = query_t update_query in
+       ()
+  )
+  | None ->
+     Logs.err ~src
+       (fun m ->
+         m "Sql.update_t called outside transaction");
+     raise (Aborted "Sql.update_t called outside transaction")
 
 let string_of_bool = PG.string_of_bool
 let bool_of_string = PG.bool_of_string
-
-
-(*
-let _ =
-  lwt dbh =
-    PG.connect
-      ~host:"localhost"
-      ~user:"ejabberd"
-      ~password:"ejabberd"
-      ~database:"ejabberd" ()
-  in
-  lwt () =
-    PG.prepare dbh ~query:"select * from users where username=$1" ~name:"four" ();
-  in
-  lwt rows =
-    PG.execute dbh ~name:"four" ~params:[Some "test10"] ();
-  in
-    List.iter
-      (function row ->
-	 List.iter
-	   (function
-	      | None ->
-		  Printf.printf "NULL "
-	      | Some s ->
-		  Printf.printf "%s " s
-	   ) row;
-	 Printf.printf "\n"
-      ) rows;
-    flush stdout;
-    Lwt.return ()
-
-*)
-
-

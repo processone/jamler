@@ -1,6 +1,6 @@
 open Process
 
-let _section = Jamler_log.new_section "s2s"
+let _src = Jamler_log.new_src "s2s"
 
 module LJID = Jlib.LJID
 module Hooks = Jamler_hooks
@@ -47,7 +47,9 @@ struct
         myserver server from from_to
         max_s2s_connections_number max_s2s_connections_number_per_node =
     let key = new_key () in
-    let pid = S2SOutServer.start (myserver, server, `New key) in
+    let pid =
+      S2SOutServer.start (myserver, server, `New key)
+    in
     let s2s_list = find_s2s_list from_to in
     let needed_connections =
       Jamler_s2s_lib.needed_connections_number
@@ -144,16 +146,14 @@ struct
     try
       do_route from to' packet
     with
-      | exn ->
-	ignore (
-          Lwt_log.error_f
-            ~section
-            ~exn:exn
-            "exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
-            (Jlib.jid_to_string from)
-            (Jlib.jid_to_string to')
-            (Xml.element_to_string packet)
-        )
+    | exn ->
+       Logs.err ~src
+	 (fun m ->
+           m "exception when processing packet\nfrom: %s\nto: %s\npacket: %s\n%a"
+             (Jlib.jid_to_string from)
+             (Jlib.jid_to_string to')
+             (Xml.element_to_string packet)
+             Jamler_log.pp_exn exn)
 
   let () =
     Jamler_router.register_s2s_route route

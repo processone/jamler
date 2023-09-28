@@ -1,4 +1,14 @@
-let section = Jamler_log.new_section "process"
+let src = Jamler_log.new_src "process"
+
+let (global_switch : Eio.Switch.t option ref) = ref None
+
+let set_global_switch sw = global_switch := Some sw
+let get_global_switch () = Option.get !global_switch
+
+let (global_env : Eio_unix.Stdenv.base option ref) = ref None
+
+let set_global_env sw = global_env := Some sw
+let get_global_env () = Option.get !global_env
 
 type msg = ..
 
@@ -6,9 +16,9 @@ type pid = int
 
 type proc = {id : int;
 	     queue : msg Queue.t;
-	     mutable t : unit Lwt.t;
+	     mutable t : Eio.Cancel.t option;
 	     mutable overloaded : bool;
-	     mutable wakener : msg Lwt.u option;
+	     mutable wakener : msg Eio.Promise.u option;
 	     mutable name : string option;
 	     mutable monitor_nodes : bool;
 	    }
@@ -61,7 +71,7 @@ let spawn f =
   let id = get_free_pid () in
   let proc = {id;
 	      queue = Queue.create ();
-	      t = Lwt.return ();
+	      t = None;
 	      overloaded = false;
 	      wakener = None;
 	      name = None;
@@ -70,58 +80,68 @@ let spawn f =
   in
   let () = processes.(id) <- Some proc in
   let pid = proc_to_pid proc in
-  let t =
-    try%lwt
-      Lwt.finalize (fun () -> f pid)
-	(fun () ->
-	   processes.(id) <- None;
-	   add_free_pid id;
-	   (match proc.name with
-	      | None -> ()
-	      | Some name ->
-		  Hashtbl.remove registered name
-	   );
-	   Lwt.return ()
-	)
-    with
+  Eio.Fiber.fork
+    ~sw:(get_global_switch ())
+    (fun () ->
+      try
+        Fun.protect
+          (fun () ->
+            Eio.Cancel.sub
+              (fun cancel ->
+                proc.t <- Some cancel;
+                f pid
+              )
+          )
+	  ~finally:(fun () ->
+	    processes.(id) <- None;
+	    add_free_pid id;
+	    (match proc.name with
+	     | None -> ()
+	     | Some name ->
+		Hashtbl.remove registered name
+	    )
+	  )
+      with
       | exn ->
-	  let%lwt () =
-            Lwt_log.error ~exn ~section "process raised an exception:"
-	  in
-            Lwt.fail exn
-  in
-    Lwt.on_cancel t (fun () -> Printf.printf "qwe\n%!");
-    proc.t <- t;
-    pid
+         Logs.err ~src
+	   (fun m ->
+             m "process raised an exception: %a"
+               Jamler_log.pp_exn exn);
+         raise exn
+    );
+  (*Lwt.on_cancel t (fun () -> Printf.printf "qwe\n%!");*)
+  pid
 
-(*exception Queue_limit*)
+exception Queue_limit
 
 let send pid msg =
-  let proc = pid_to_proc pid in
-    (match proc.wakener with
-       | None ->
-	   if Queue.length proc.queue > 10000
-	   then (
-	     proc.overloaded <- true;
-	     Lwt.cancel proc.t
-	   ) else Queue.add msg proc.queue
-       | Some wakener ->
-	   Lwt.wakeup wakener msg
-    )
+  match pid_to_proc pid with
+  | proc -> (
+    match proc.wakener with
+    | None ->
+       if Queue.length proc.queue > 10000
+       then (
+	 proc.overloaded <- true;
+	 Option.iter (fun t -> Eio.Cancel.cancel t Queue_limit) proc.t;
+       ) else Queue.add msg proc.queue
+    | Some wakener ->
+       proc.wakener <- None;
+       Eio.Promise.resolve wakener msg
+  )
+  | exception Not_found -> ()
 
 let ($!) = send
 
 let receive pid =
   let proc = pid_to_proc pid in
-    if Queue.is_empty proc.queue then (
-      let (waiter, wakener) = Lwt.wait () in
-	proc.wakener <- Some wakener;
-	let%lwt msg = waiter in
-          proc.wakener <- None;
-          Lwt.return msg
-    ) else (
-      Lwt.return (Queue.take proc.queue)
-    )
+  if Queue.is_empty proc.queue then (
+    let (waiter, wakener) = Eio.Promise.create () in
+    proc.wakener <- Some wakener;
+    let msg = Eio.Promise.await waiter in
+    msg
+  ) else (
+    Queue.take proc.queue
+  )
 
 let register pid name =
   let proc = pid_to_proc pid in
@@ -193,6 +213,7 @@ let pid_to_string pid =
   "<" ^ string_of_int pid ^ ">"
 
 let format_pid () pid = pid_to_string pid
+let pp_pid = Fmt.of_to_string pid_to_string
 
 module Pid :
 sig
@@ -208,34 +229,50 @@ struct
     Hashtbl.hash p
 end
 
-type timer = unit Lwt.t
+type timer = Eio.Cancel.t
 type msg += TimerTimeout of timer * msg
 
-let send_after timeout pid msg =
-  let%lwt () = Lwt_unix.sleep timeout in
-  pid $! msg;
-  Lwt.return ()
-
 let apply_after timeout f =
-  let%lwt () = Lwt_unix.sleep timeout in
-  let%lwt () = f () in
-  Lwt.return ()
+  let cancel = ref None in
+  Eio.Fiber.fork
+    ~sw:(get_global_switch ())
+    (fun () ->
+      try
+        Eio.Cancel.sub
+          (fun c ->
+            cancel := Some c;
+            Eio.Time.sleep (get_global_env ())#clock timeout;
+            f ();
+          )
+      with
+      | Eio.Cancel.Cancelled _ -> ()
+    );
+  match !cancel with
+  | None -> assert false
+  | Some cancel -> cancel
+
+let send_after timeout pid msg =
+  apply_after timeout (fun () -> pid $! msg)
 
 let start_timer timeout pid msg =
-  let t0 = Lwt.return () in
-  let timer = ref t0 in
-  let t =
-    let%lwt () = Lwt_unix.sleep timeout in
-    pid $! TimerTimeout (!timer, msg);
-    Lwt.return ()
-  in
-    match Lwt.state t with
-      | Lwt.Sleep ->
-	  timer := t;
-	  t
-      | Lwt.Return () ->
-	  t0
-      | Lwt.Fail _ -> assert false
+  let cancel = ref None in
+  Eio.Fiber.fork
+    ~sw:(get_global_switch ())
+    (fun () ->
+      try
+        Eio.Cancel.sub
+          (fun c ->
+            cancel := Some c;
+            Eio.Time.sleep (get_global_env ())#clock timeout;
+            pid $! TimerTimeout (c, msg);
+          )
+      with
+      | Eio.Cancel.Cancelled _ -> ()
+    );
+  match !cancel with
+  | None -> assert false
+  | Some cancel -> cancel
 
-let cancel_timer timer = Lwt.cancel timer
+exception Cancel
 
+let cancel_timer timer = Eio.Cancel.cancel timer Cancel

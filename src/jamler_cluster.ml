@@ -47,8 +47,8 @@ let hash_user (luser : Jlib.nodepreped) (lserver : Jlib.namepreped) =
     h := !h land 0x3fffffff;
     !h
 
-let node_up_hook : string Hooks.plain_hook = Hooks.create_plain ()
-let node_down_hook : string Hooks.plain_hook = Hooks.create_plain ()
+let node_up_hook : string Hooks.hook = Hooks.create ()
+let node_down_hook : string Hooks.hook = Hooks.create ()
 
 let sm_store = ref (fun _u _s _r _ts _priority _pid -> ())
 let sm_remove = ref (fun _u _s _r _ts _pid -> ())
@@ -72,7 +72,7 @@ struct
       {pid : pid;
       }
 
-  let section = Jamler_log.new_section "jamler_cluster"
+  let src = Jamler_log.new_src "jamler_cluster"
 
   let name = "ejabberd_cluster"
 
@@ -103,7 +103,7 @@ struct
     if not (Hashtbl.mem cluster_nodes node) then (
       Hashtbl.replace cluster_nodes node ();
       nodes_hash := IntMap.add (hash node) node !nodes_hash;
-      Jamler_hooks.run_plain node_up_hook global_host node
+      Jamler_hooks.run node_up_hook global_host node
 ; dump_nodes ()
     )
 
@@ -111,7 +111,7 @@ struct
     if Hashtbl.mem cluster_nodes node then (
       Hashtbl.remove cluster_nodes node;
       nodes_hash := IntMap.remove (hash node) !nodes_hash;
-      Jamler_hooks.run_plain node_down_hook global_host node
+      Jamler_hooks.run node_down_hook global_host node
 ; dump_nodes ()
     )
 
@@ -151,15 +151,15 @@ struct
     monitor_nodes self true;
     List.iter
       (fun node ->
-	 dist_send_by_name name node
-	   (ErlTuple [| ErlAtom "ready";
-			ErlAtom (Erl_epmd.node ()) |]);
-	 dist_send_by_name name node
-	   (ErlTuple [| ErlAtom "node_up";
-			ErlAtom (Erl_epmd.node ());
-			ErlCons (ErlAtom (Erl_epmd.node ()), ErlNil) |])
+	dist_send_by_name name node
+	  (ErlTuple [| ErlAtom "ready";
+		       ErlAtom (Erl_epmd.node ()) |]);
+	dist_send_by_name name node
+	  (ErlTuple [| ErlAtom "node_up";
+		       ErlAtom (Erl_epmd.node ());
+		       ErlCons (ErlAtom (Erl_epmd.node ()), ErlNil) |])
       ) (Erl_epmd.get_nodes ());
-    Lwt.return (`Continue {pid = self})
+    `Continue {pid = self}
 
 (*
   let handle_call request from state =
@@ -183,100 +183,92 @@ struct
 	    handle_call m state*)
       (*| `Erl (ErlTuple [| ErlAtom "$gen_call"; from; request |]) ->
 	  handle_call request from state*)
-      | Erl (ErlTuple [| ErlAtom "node_up"; ErlAtom node;
-			  nodes |] as term) -> (
-	  let%lwt () =
-	    Lwt_log.notice_f ~section
-	      "node_up from %s" node
-	  in
-	    try
-	      let nodes = ErlType.(from_term (list atom) nodes) in
-		add_node node;
-		List.iter
-		  (fun n ->
-		     Erl_epmd.try_connect n
-		       (*add_node n*)
-		  ) nodes;
-		Lwt.return (`Continue state)
-	    with
-	      | Invalid_argument "from_term" ->
-		  let%lwt () =
-		    Lwt_log.notice_f ~section
-		      "invalid node_up packet from %s %s"
-		      node
-		      (Erlang.term_to_string term)
-		  in
-		    Lwt.return (`Continue state)
-	)
-      | Erl (ErlTuple
-		[| ErlAtom "store";
-		   ErlTuple [| ErlBinary u; ErlBinary s; ErlBinary r |];
-		   ErlFloat ts;
-		   priority;
-		   (ErlPid _ | ErlTuple [| ErlAtom _; _ |] ) as owner
-		|] as term) -> (
-	  let%lwt () =
-	    Lwt_log.notice_f ~section
-	      "store %s" (Erlang.term_to_string term)
-	  in
-	    !sm_store u s r ts priority owner;
-	    Lwt.return (`Continue state)
-	)
-      | Erl (ErlTuple
-		[| ErlAtom "remove";
-		   ErlTuple [| ErlBinary u; ErlBinary s; ErlBinary r |];
-		   ErlFloat ts;
-		   (ErlPid _ | ErlTuple [| ErlAtom _; _ |] ) as owner
-		|] as term) -> (
-	  let%lwt () =
-	    Lwt_log.notice_f ~section
-	      "remove %s" (Erlang.term_to_string term)
-	  in
-	    !sm_remove u s r ts owner;
-	    Lwt.return (`Continue state)
-	)
-      | Node_up node ->
-	  let%lwt () =
-	    Lwt_log.notice_f ~section
-	      "node %s goes up" node
-	  in
-	  let nodes = get_nodes () in
-	    dist_send_by_name name node
-	      (ErlTuple [| ErlAtom "ready";
-			   ErlAtom (Erl_epmd.node ()) |]);
-	    dist_send_by_name name node
-	      (ErlTuple [| ErlAtom "node_up";
-			   ErlAtom (Erl_epmd.node ());
-			   ErlType.(to_term (list atom) nodes) |]);
-	    Lwt.return (`Continue state)
-      | Erl (ErlTuple [| ErlAtom "ready"; ErlAtom node |]) ->
-	  let%lwt () =
-	    Lwt_log.notice_f ~section
-	      "node %s is ready" node
-	  in
-	  let nodes = get_nodes () in
-	    dist_send_by_name name node
-	      (ErlTuple [| ErlAtom "node_up";
-			   ErlAtom (Erl_epmd.node ());
-			   ErlType.(to_term (list atom) nodes) |]);
-	    Lwt.return (`Continue state)
-      | Node_down node ->
-	  let%lwt () =
-	    Lwt_log.notice_f ~section
-	      "node %s goes down" node
-	  in
-	    delete_node node;
-	    Lwt.return (`Continue state)
-      | Erl term ->
-	  let%lwt () =
-	    Lwt_log.notice_f ~section
-	      "unexpected packet %s" (Erlang.term_to_string term)
-	  in
-	    Lwt.return (`Continue state)
-      | _ -> assert false
+    | Erl (ErlTuple [| ErlAtom "node_up"; ErlAtom node;
+		       nodes |] as term) -> (
+      Logs.info ~src
+	(fun m ->
+          m "node_up from %s" node);
+      try
+	let nodes = ErlType.(from_term (list atom) nodes) in
+	add_node node;
+	List.iter
+	  (fun n ->
+	    Erl_epmd.try_connect n
+	  (*add_node n*)
+	  ) nodes;
+	`Continue state
+      with
+      | Invalid_argument "from_term" ->
+         Logs.info ~src
+	   (fun m ->
+             m "invalid node_up packet from %s %s"
+	       node
+	       (Erlang.term_to_string term));
+	 `Continue state
+    )
+    | Erl (ErlTuple
+	     [| ErlAtom "store";
+		ErlTuple [| ErlBinary u; ErlBinary s; ErlBinary r |];
+		ErlFloat ts;
+		priority;
+		(ErlPid _ | ErlTuple [| ErlAtom _; _ |] ) as owner
+	     |] as term) -> (
+      Logs.info ~src
+	(fun m ->
+          m "store %s" (Erlang.term_to_string term));
+      !sm_store u s r ts priority owner;
+      `Continue state
+    )
+    | Erl (ErlTuple
+	     [| ErlAtom "remove";
+		ErlTuple [| ErlBinary u; ErlBinary s; ErlBinary r |];
+		ErlFloat ts;
+		(ErlPid _ | ErlTuple [| ErlAtom _; _ |] ) as owner
+	     |] as term) -> (
+      Logs.info ~src
+	(fun m ->
+          m "remove %s" (Erlang.term_to_string term));
+      !sm_remove u s r ts owner;
+      `Continue state
+    )
+    | Node_up node ->
+       Logs.info ~src
+	 (fun m ->
+           m "node %s goes up" node);
+       let nodes = get_nodes () in
+       dist_send_by_name name node
+	 (ErlTuple [| ErlAtom "ready";
+		      ErlAtom (Erl_epmd.node ()) |]);
+       dist_send_by_name name node
+	 (ErlTuple [| ErlAtom "node_up";
+		      ErlAtom (Erl_epmd.node ());
+		      ErlType.(to_term (list atom) nodes) |]);
+       `Continue state
+    | Erl (ErlTuple [| ErlAtom "ready"; ErlAtom node |]) ->
+       Logs.info ~src
+	 (fun m ->
+           m "node %s is ready" node);
+       let nodes = get_nodes () in
+       dist_send_by_name name node
+	 (ErlTuple [| ErlAtom "node_up";
+		      ErlAtom (Erl_epmd.node ());
+		      ErlType.(to_term (list atom) nodes) |]);
+       `Continue state
+    | Node_down node ->
+       Logs.info ~src
+	 (fun m ->
+           m "node %s goes down" node);
+       delete_node node;
+       `Continue state
+    | Erl term ->
+       Logs.info ~src
+	 (fun m ->
+           m "unexpected packet %s" (Erlang.term_to_string term));
+       `Continue state
+    | _ -> assert false
 
   let terminate _state _reason =
-    Lwt.return ()
+    ()
 
 end
 

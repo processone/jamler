@@ -1,4 +1,4 @@
-let section = Jamler_log.new_section "gen_mod"
+let src = Jamler_log.new_src "gen_mod"
 
 type mod_info = (unit -> unit) * (unit -> unit)
 
@@ -6,8 +6,8 @@ module type Module =
 sig
   val name : string
 
-  val start : Jlib.namepreped -> mod_info list Lwt.t
-  val stop : Jlib.namepreped -> unit Lwt.t
+  val start : Jlib.namepreped -> mod_info list
+  val stop : Jlib.namepreped -> unit
 end
 
 let mods : (string, (module Module)) Hashtbl.t =
@@ -22,16 +22,18 @@ let start_module host mod_name =
   try
     let m = Hashtbl.find mods mod_name in
     let module M = (val m : Module) in
-    let%lwt mod_info = M.start host in
-      (* TODO: store mod_info *)
-      List.iter (fun (f, _) -> f ()) mod_info;
-      Lwt_log.notice_f ~section
-	"started module %s for \"%s\"" mod_name (host :> string)
+    let mod_info = M.start host in
+    (* TODO: store mod_info *)
+    List.iter (fun (f, _) -> f ()) mod_info;
+    Logs.info ~src
+      (fun m -> m "started module %s for \"%s\"" mod_name (host :> string));
+    ()
   with
-    | exn ->
-	Lwt_log.error_f ~exn ~section
-	  "problem starting the module %s for host %s"
-	  mod_name (host :> string)
+  | exn ->
+     Logs.err ~src
+       (fun m -> m "problem starting the module %s for host %s: %a"
+	           mod_name (host :> string) Jamler_log.pp_exn exn);
+     ()
 
 let hook hook host f seq =
   ((fun () -> Jamler_hooks.add hook host f seq),
@@ -41,16 +43,6 @@ let hook hook host f seq =
 let fold_hook hook host f seq =
   ((fun () -> Jamler_hooks.add_fold hook host f seq),
    (fun () -> Jamler_hooks.delete_fold hook host f seq)
-  )
-
-let plain_hook hook host f seq =
-  ((fun () -> Jamler_hooks.add_plain hook host f seq),
-   (fun () -> Jamler_hooks.delete_plain hook host f seq)
-  )
-
-let fold_plain_hook hook host f seq =
-  ((fun () -> Jamler_hooks.add_fold_plain hook host f seq),
-   (fun () -> Jamler_hooks.delete_fold_plain hook host f seq)
   )
 
 let iq_handler component host ns f type' =

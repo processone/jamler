@@ -132,7 +132,7 @@ let stanza_error code type' condition =
   `XmlElement
     ("error",
      [("code", code); ("type", type')],
-     [`XmlElement (condition, [("xmlns", [%ns "STANZAS"])], [])])
+     [`XmlElement (condition, [("xmlns", [%xmlns "STANZAS"])], [])])
 
 let err_bad_request =
   stanza_error "400" "modify" "bad-request"
@@ -185,8 +185,8 @@ let stanza_errort code type' condition lang text =
   `XmlElement
     ("error",
      [("code", code); ("type", type')],
-     [`XmlElement (condition, [("xmlns", [%ns "STANZAS"])], []);
-      `XmlElement ("text", [("xmlns", [%ns "STANZAS"])],
+     [`XmlElement (condition, [("xmlns", [%xmlns "STANZAS"])], []);
+      `XmlElement ("text", [("xmlns", [%xmlns "STANZAS"])],
 		   [`XmlCdata (translate lang text)])])
 
 let errt_bad_request lang text =
@@ -244,7 +244,7 @@ let stream_error condition cdata =
   `XmlElement
     ("stream:error",
      [],
-     [`XmlElement (condition, [("xmlns", [%ns "STREAMS"])],
+     [`XmlElement (condition, [("xmlns", [%xmlns "STREAMS"])],
 		   [`XmlCdata cdata])])
 
 let serr_bad_format = stream_error "bad-format" ""
@@ -519,17 +519,11 @@ let decode_base64 s =
     Cryptokit.transform_string t s
 
 let encode_base64 s =
-  let t = Cryptokit.Base64.encode_multiline () in
-  let res = Cryptokit.transform_string t s in
-  let buf = Buffer.create (String.length res) in
-  String.iter (function
-    | '\n' | '\r' | '\t' | ' ' -> ()
-    | c -> Buffer.add_char buf c)
-    res;
-  Buffer.contents buf
+  let t = Cryptokit.Base64.encode_compact_pad () in
+  Cryptokit.transform_string t s
 
-let get_random_string () =		(* TODO *)
-  string_of_int (Random.int 1000000000)
+let get_random_string () =		(* TODO: use Eio secure_random? *)
+  encode_base64 (Cryptokit.Random.(string secure_rng 15))
 
 type timezone = | UTC
 		| Shift of int * int
@@ -569,7 +563,7 @@ let timestamp_to_xml tfloat tz from_jid desc =
   let (t_string, tz_string) = timestamp_to_iso tfloat tz in
   let text = [`XmlCdata desc] in
   let from = jid_to_string from_jid in
-    `XmlElement ("delay", [("xmlns", [%ns "DELAY"]);
+    `XmlElement ("delay", [("xmlns", [%xmlns "DELAY"]);
 			   ("from", from);
 			   ("stamp", t_string ^ tz_string)],
 		 text)
@@ -581,7 +575,7 @@ let timestamp_to_xml' tm =
     (tm.Unix.tm_year + 1900) (tm.Unix.tm_mon + 1)
     tm.Unix.tm_mday tm.Unix.tm_hour
     tm.Unix.tm_min tm.Unix.tm_sec in
-    `XmlElement ("x", [("xmlns", [%ns "DELAY91"]);
+    `XmlElement ("x", [("xmlns", [%xmlns "DELAY91"]);
 		       ("stamp", stamp)], [])
 
 let uptime () = (Unix.time ()) -. start_time
@@ -599,11 +593,4 @@ struct
   let to_string (u, s, r) = jid_to_string' u s r
 end
 
-module LJIDSet =
-struct
-  include Set.Make(LJID)
-
-  let from_list xs =
-    List.fold_left
-      (fun s x -> add x s) empty xs
-end
+module LJIDSet = Set.Make(LJID)

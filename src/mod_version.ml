@@ -17,46 +17,44 @@ struct
 				 name ["show_os"] bool true)
 
   let process_local_iq _from to'
-      ({Jlib.iq_id = _ID;
-	Jlib.iq_type = iq_type;
-	Jlib.iq_xmlns = _xmlns; _} as iq) =
+        ({Jlib.iq_id = _ID;
+	  Jlib.iq_type = iq_type;
+	  Jlib.iq_xmlns = _xmlns; _} as iq) =
     let iq_res =
       match iq_type with
-	| `Set subel ->
-	    {iq with
-	       Jlib.iq_type = `Error (Jlib.err_not_allowed, Some subel)};
-	| `Get _subel ->
-	    let host = to'.Jlib.lserver in
-	    let os =
-	      if show_os host
-	      then [get_os]
-	      else []
-	    in
-	      {iq with
-		 Jlib.iq_type =
-		  `Result
-		    (Some (`XmlElement
-			     ("query",
-			      [("xmlns", [%ns "VERSION"])],
-			      [`XmlElement ("name", [],
-					    [`XmlCdata Cfg.name]);
-			       `XmlElement ("version", [],
-					    [`XmlCdata Cfg.version])
-			      ] @ os
-			     )))}
+      | `Set subel ->
+	 {iq with
+	   Jlib.iq_type = `Error (Jlib.err_not_allowed, Some subel)};
+      | `Get _subel ->
+	 let host = to'.Jlib.lserver in
+	 let os =
+	   if show_os host
+	   then [get_os]
+	   else []
+	 in
+	 {iq with
+	   Jlib.iq_type =
+	     `Result
+	       (Some (`XmlElement
+			("query",
+			 [("xmlns", [%xmlns "VERSION"])],
+			 [`XmlElement ("name", [],
+				       [`XmlCdata Cfg.name]);
+			  `XmlElement ("version", [],
+				       [`XmlCdata Cfg.version])
+			 ] @ os
+	 )))}
     in
-      Lwt.return (`IQ iq_res)
+    `IQ iq_res
 
   let start host =
-    Mod_disco.register_feature host [%ns "VERSION"];
-    Lwt.return (
-      [Gen_mod.iq_handler `Local host [%ns "VERSION"] process_local_iq ();
-      ]
-    )
+    Mod_disco.register_feature host [%xmlns "VERSION"];
+    [Gen_mod.iq_handler `Local host [%xmlns "VERSION"] process_local_iq ();
+    ]
 
   let stop host =
-    Mod_disco.unregister_feature host [%ns "VERSION"];
-    Lwt.return ()
+    Mod_disco.unregister_feature host [%xmlns "VERSION"];
+    ()
 
 end
 

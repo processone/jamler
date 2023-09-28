@@ -170,10 +170,4 @@ sig
   val to_string : t -> string
 end
 
-module LJIDSet :
-sig
-  include Set.S with type elt = LJID.t
-
-  val from_list : LJID.t list -> t
-end
-
+module LJIDSet : Set.S with type elt = LJID.t

@@ -10,7 +10,7 @@
 value domain_utf8_to_ascii(value s)
 {
     CAMLparam1(s);
-    char *input = String_val(s);
+    const char *input = String_val(s);
     char *output;
     int pos;
     int rc;
@@ -21,7 +21,7 @@ value domain_utf8_to_ascii(value s)
 	CAMLlocal1(res);
 	pos = strlen(output);
 	res = caml_alloc_string(pos);
-	memcpy(String_val(res), output, pos);
+	memcpy((char *)String_val(res), output, pos);
 	free(output);
 	CAMLreturn(res);
     } else {

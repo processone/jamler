@@ -1,7 +1,7 @@
 module Translate = Jamler_translate
 module Config = Jamler_config
 
-let section = Jamler_log.new_section "captcha"
+let src = Jamler_log.new_src "captcha"
 
 let prefix pref string =
   let len = String.length pref in
@@ -118,38 +118,45 @@ let is_limited = function
     )
 
 let cmd cmdline key =
-  let args = [|cmdline; key|] in
-    Lwt_process.pread ~timeout:cmd_timeout (cmdline, args)
+  (*let args = [|cmdline; key|] in
+  Lwt_process.pread ~timeout:cmd_timeout (cmdline, args)*)
+  let args = [cmdline; key] in
+  (* TODO: use timeout *)
+  Eio.Process.parse_out (Process.get_global_env ())#process_mgr
+    Eio.Buf_read.take_all args
 
 let do_create_image key =
   let filename = captcha_cmd () in
-    match%lwt cmd filename key with
-      | "" ->
-	  let%lwt () = Lwt_log.error_f ~section
-	    "failed to process output from '%s %s': no data"
-	    filename key in
-	    Lwt.fail Err_nodata
-      | data ->
-	  if prefix "\x89PNG\r\n\x1a\n" data then
-	    Lwt.return ("image/png", key, data)
-	  else if prefix "\xff\xd8" data then
-	    Lwt.return ("image/jpeg", key, data)
-	  else if prefix "GIF87a" data then
-	    Lwt.return ("image/gif", key, data)
-	  else if prefix "GIF89a" data then
-	    Lwt.return ("image/gif", key, data)
-	  else
-	    let%lwt () = Lwt_log.error_f ~section
-	      "failed to process output from '%s %s': malformed image"
-	      filename key in
-	      Lwt.fail Err_malformed_image
+  match cmd filename key with
+  | "" ->
+     Logs.err ~src
+       (fun m ->
+         m "failed to process output from '%s %s': no data"
+	   filename key);
+     raise Err_nodata
+  | data ->
+     if prefix "\x89PNG\r\n\x1a\n" data then
+       ("image/png", key, data)
+     else if prefix "\xff\xd8" data then
+       ("image/jpeg", key, data)
+     else if prefix "GIF87a" data then
+       ("image/gif", key, data)
+     else if prefix "GIF89a" data then
+       ("image/gif", key, data)
+     else (
+       Logs.err ~src
+	 (fun m ->
+           m "failed to process output from '%s %s': malformed image"
+	     filename key);
+       raise Err_malformed_image
+     )
 
 let create_image' limiter key =
   match is_limited limiter with
-    | true ->
-	Lwt.fail Err_limit
-    | false ->
-	do_create_image key
+  | true ->
+     raise Err_limit
+  | false ->
+     do_create_image key
 
 let create_image limiter =
   (* Six numbers from 1 to 9. *)
@@ -167,21 +174,19 @@ let lookup_captcha id =
 	None
 
 let remove_id id () =
-  let%lwt _ = Lwt_log.debug_f ~section "captcha %s timed out" id in
-  let _ = match lookup_captcha id with
-    | Some {callback = callback; _} -> (
-	Hashtbl.remove captcha_tbl id;
-	match callback with
-	  | Some f -> f Invalid
-	  | None -> ()
-      )
-    | _ ->
-	()
-  in
-    Lwt.return ()
+  Logs.debug ~src (fun m -> m "captcha %s timed out" id);
+  match lookup_captcha id with
+  | Some {callback = callback; _} -> (
+    Hashtbl.remove captcha_tbl id;
+    match callback with
+    | Some f -> f Invalid
+    | None -> ()
+  )
+  | _ ->
+     ()
 
 let create_captcha_exn sid _from to' lang limiter callback =
-  let%lwt type', key, image = create_image limiter in
+  let type', key, image = create_image limiter in
     (* TODO:
        Id = randoms:get_string() ++ "-" ++ ejabberd_cluster:node_id(), *)
   let id = Jlib.get_random_string () in
@@ -189,15 +194,15 @@ let create_captcha_exn sid _from to' lang limiter callback =
   (*let jid = Jlib.jid_to_string from in*)
   let cid = "sha1+" ^ (Jlib.sha1 image) ^ "@bob.xmpp.org" in
   let data = `XmlElement ("data",
-			  [("xmlns", [%ns "BOB"]); ("cid", cid);
+			  [("xmlns", [%xmlns "BOB"]); ("cid", cid);
 			   ("max-age", "0"); ("type", type')],
 			  [`XmlCdata b64image]) in
   let captcha =
     `XmlElement
-      ("captcha", [("xmlns", [%ns "CAPTCHA"])],
+      ("captcha", [("xmlns", [%xmlns "CAPTCHA"])],
        [`XmlElement
-	  ("x", [("xmlns", [%ns "XDATA"]); ("type", "form")],
-	   [vfield "hidden" "FORM_TYPE" (`XmlCdata [%ns "CAPTCHA"]);
+	  ("x", [("xmlns", [%xmlns "XDATA"]); ("type", "form")],
+	   [vfield "hidden" "FORM_TYPE" (`XmlCdata [%xmlns "CAPTCHA"]);
 	    vfield "hidden" "from" (`XmlCdata (Jlib.jid_to_string to'));
 	    vfield "hidden" "challenge" (`XmlCdata id);
 	    vfield "hidden" "sid" (`XmlCdata sid);
@@ -205,7 +210,7 @@ let create_captcha_exn sid _from to' lang limiter callback =
 	      ("field", [("var", "ocr"); ("label", captcha_text lang)],
 	       [`XmlElement ("required", [], []);
 		`XmlElement
-		  ("media", [("xmlns", [%ns "MEDIA"])],
+		  ("media", [("xmlns", [%xmlns "MEDIA"])],
 		   [`XmlElement
 		      ("uri", [("type", type')],
 		       [`XmlCdata ("cid:" ^ cid)])])])])]) in
@@ -215,23 +220,23 @@ let create_captcha_exn sid _from to' lang limiter callback =
      let body_string = Printf.sprintf body_string1 jid (get_url id) in *)
   let body_string = "Your messages are being blocked" in
   let body = `XmlElement ("body", [], [`XmlCdata body_string]) in
-  let oob = `XmlElement ("x", [("xmlns", [%ns "OOB"])],
+  let oob = `XmlElement ("x", [("xmlns", [%xmlns "OOB"])],
 			 [`XmlElement ("url", [],
 				       [`XmlCdata (get_url id)])]) in
   let timer = Process.apply_after captcha_lifetime (remove_id id) in
   let _ = Hashtbl.replace captcha_tbl id
-    {key; timer; callback = Some callback} in
-    Lwt.return (id, [body; oob; captcha; data])
+            {key; timer; callback = Some callback} in
+  (id, [body; oob; captcha; data])
 
 let create_captcha_x_exn sid to' lang limiter head_els tail_els =
-  let%lwt type', key, image = create_image limiter in
+  let type', key, image = create_image limiter in
     (* TODO:
        Id = randoms:get_string() ++ "-" ++ ejabberd_cluster:node_id(), *)
   let id = Jlib.get_random_string () in
   let b64image = Jlib.encode_base64 image in
   let cid = "sha1+" ^ (Jlib.sha1 image) ^ "@bob.xmpp.org" in
   let data = `XmlElement ("data",
-			  [("xmlns", [%ns "BOB"]); ("cid", cid);
+			  [("xmlns", [%xmlns "BOB"]); ("cid", cid);
 			   ("max-age", "0"); ("type", type')],
 			  [`XmlCdata b64image]) in
   let help_txt = Translate.translate lang
@@ -239,8 +244,8 @@ let create_captcha_x_exn sid to' lang limiter head_els tail_els =
   let image_url = get_url (id ^ "/image") in
   let captcha =
     `XmlElement
-      ("x", [("xmlns", [%ns "XDATA"]); ("type", "form")],
-       ((vfield "hidden" "FORM_TYPE" (`XmlCdata [%ns "CAPTCHA"])) :: head_els @
+      ("x", [("xmlns", [%xmlns "XDATA"]); ("type", "form")],
+       ((vfield "hidden" "FORM_TYPE" (`XmlCdata [%xmlns "CAPTCHA"])) :: head_els @
 	  [`XmlElement ("field", [("type", "fixed")],
 			[`XmlElement ("value", [], [`XmlCdata help_txt])]);
 	   `XmlElement ("field", [("type", "hidden");
@@ -259,13 +264,13 @@ let create_captcha_x_exn sid to' lang limiter head_els tail_els =
 	     ("field", [("var", "ocr"); ("label", captcha_text lang)],
 	      [`XmlElement ("required", [], []);
 	       `XmlElement
-		 ("media", [("xmlns", [%ns "MEDIA"])],
+		 ("media", [("xmlns", [%xmlns "MEDIA"])],
 		  [`XmlElement
 		     ("uri", [("type", type')],
 		      [`XmlCdata ("cid:" ^ cid)])])])] @ tail_els)) in
   let timer = Process.apply_after captcha_lifetime (remove_id id) in
   let _ = Hashtbl.replace captcha_tbl id {key; timer; callback = None} in
-    Lwt.return [captcha; data]
+  [captcha; data]
 
 let create_captcha_x_exn' sid to' lang limiter head_els =
   create_captcha_x_exn sid to' lang limiter head_els []
@@ -442,15 +447,16 @@ process(_Handlers, _Request) ->
 
 let check_captcha_setup () =
   match is_feature_available () with
-    | true -> (
-	try%lwt
-	  let%lwt _ = create_image None in
-	    Lwt.return ()
-	with
-	  | _ ->
-	      Lwt_log.warning ~section
-		("captcha is enabled in the option captcha_cmd, " ^
-		   "but it can't generate images")
-      )
-    | false ->
-	Lwt.return ()
+  | true -> (
+    try
+      let _ = create_image None in
+      ()
+    with
+    | _ ->
+       Logs.warn ~src
+	 (fun m ->
+           m "captcha is enabled in the option captcha_cmd, but it can't generate images");
+       ()
+  )
+  | false ->
+     ()

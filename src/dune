@@ -1,7 +1,9 @@
 (executable
  (name main)
- (libraries yojson lwt lwt_log lwt_ssl cryptokit pgocaml)
- (preprocess (pps lwt_ppx ppx_sql ppx_jlib))
+ (libraries yojson eio_main
+  ;eio_ssl
+  cryptokit pgocaml str ptime.clock.os logs.fmt fmt.tty)
+ (preprocess (pps ppx_sql ppx_jlib))
  (link_flags :standard -cclib -lexpat -cclib -lidn)
  (foreign_stubs
   (language c)

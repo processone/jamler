@@ -10,17 +10,19 @@ type xml_msg =
 type msg += Xml of xml_msg
 
 type t = {pid : pid;
-	  mutable xml_parser : Xml.t}
+	  mutable xml_parser : Xml.t;
+          queue : msg list ref}
 
 let create pid =
+  let queue = ref [] in
   let element_callback el =
-    pid $! Xml (`XmlStreamElement el)
+    queue := Xml (`XmlStreamElement el) :: !queue
   in
   let start_callback name attrs =
-    pid $! Xml (`XmlStreamStart (name, attrs))
+    queue := Xml (`XmlStreamStart (name, attrs)) :: !queue
   in
   let end_callback name =
-    pid $! Xml (`XmlStreamEnd name)
+    queue := Xml (`XmlStreamEnd name) :: !queue
   in
   let xml_parser =
     Xml.create_parser
@@ -31,29 +33,32 @@ let create pid =
       ()
   in
     {pid;
-     xml_parser}
+     xml_parser;
+     queue}
 
 let parse st data =
   try
-    Xml.parse st.xml_parser data false
+    Xml.parse st.xml_parser data false;
+    List.iter (fun msg -> st.pid $! msg) (List.rev !(st.queue));
+    st.queue := []
   with
-    | Expat.Parse_error error ->
-	st.pid $! Xml (`XmlStreamError error)
+  | Expat.Parse_error error ->
+     st.pid $! Xml (`XmlStreamError error)
 
 let free st =
   Expat.parser_free st.xml_parser
 
 let reset_stream st =
   Expat.parser_free st.xml_parser;
-  let pid = st.pid in
+  let queue = st.queue in
   let element_callback el =
-    pid $! Xml (`XmlStreamElement el)
+    queue := Xml (`XmlStreamElement el) :: !queue
   in
   let start_callback name attrs =
-    pid $! Xml (`XmlStreamStart (name, attrs))
+    queue := Xml (`XmlStreamStart (name, attrs)) :: !queue
   in
   let end_callback name =
-    pid $! Xml (`XmlStreamEnd name)
+    queue := Xml (`XmlStreamEnd name) :: !queue
   in
   let xml_parser =
     Xml.create_parser
@@ -63,5 +68,6 @@ let reset_stream st =
       ~end_callback
       ()
   in
-    st.xml_parser <- xml_parser
+  st.xml_parser <- xml_parser;
+  queue := []
 

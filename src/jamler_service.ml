@@ -14,7 +14,7 @@ module ACL = Jamler_acl
 module ExtService :
 sig
   include GenServer.Type with
-    type init_data = Lwt_unix.file_descr
+    type init_data = Eio_unix.Net.stream_socket_ty Eio.Std.r
     and type stop_reason = GenServer.reason
 end =
 struct
@@ -35,21 +35,25 @@ struct
        access: bool Jamler_acl.access_rule;
       }
 
-  type init_data = Lwt_unix.file_descr
+  type init_data = Eio_unix.Net.stream_socket_ty Eio.Std.r
 
   type stop_reason = GenServer.reason
 
-  let section = Jamler_log.new_section "service"
+  let src = Jamler_log.new_src "service"
 
   let new_id () =
     Jlib.get_random_string ()
 
   let init socket self =
-    let%lwt () = Lwt_log.notice_f ~section "external service connected from %s"
-      (Jamler_listener.sockaddr_to_string (Lwt_unix.getpeername socket)) in
+    let fd = Eio_unix.Net.fd socket in
+    let peername = Eio_unix.Fd.use_exn "getpeername" fd Unix.getpeername in
+    Logs.info ~src
+      (fun m ->
+        m "external service connected from %s"
+          (Jamler_listener.sockaddr_to_string peername));
     let socket = Socket.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
-      (* TODO *)
+    (* TODO *)
     let access = Jamler_acl.all in
       (*
     Access = case lists:keysearch(access, 1, Opts) of
@@ -101,8 +105,8 @@ struct
 		 password = "password";
 		 hosts = [Jlib.nameprep_exn "mrim.zinid.ru"];}
     in
-      ignore (Socket.activate socket self);
-      Lwt.return (`Continue state)
+    ignore (Socket.activate socket self);
+    `Continue state
 
   let myname = "localhost"              (* TODO *)
   let _invalid_ns_err = Jlib.serr_invalid_namespace
@@ -121,7 +125,7 @@ struct
       "</stream:stream>"
 
   let send_text state text =
-    Socket.send_async state.socket text
+    Socket.send state.socket text
 
   let send_string state text =
     send_text state (Bytes.of_string text)
@@ -145,115 +149,118 @@ struct
 
   let wait_for_stream msg state =
     match msg with
-      | `XmlStreamStart (_name, attrs) -> (
-	match Xml.get_attr_s "xmlns" attrs with
-	  | "jabber:component:accept" ->
-	    let to' = Xml.get_attr_s "to" attrs in
-	    let header = stream_header state.streamid (Xml.crypt to') in
-	    send_string state header;
-	    Lwt.return (`Continue {state with state = Wait_for_handshake})
-	  | _ ->
-	    send_string state invalid_header_err;
-	    Lwt.return (`Stop state))
-      | `XmlStreamError _ ->
-	let header = stream_header "none" myname in
-	send_string state header;
-	send_element state invalid_xml_err;
-	send_trailer state;
-	Lwt.return (`Stop state)
-      | `XmlStreamEnd _ ->
-	Lwt.return (`Stop state)
-      | `XmlStreamElement _ ->
-	Lwt.return (`Stop state)
+    | `XmlStreamStart (_name, attrs) -> (
+      match Xml.get_attr_s "xmlns" attrs with
+      | "jabber:component:accept" ->
+	 let to' = Xml.get_attr_s "to" attrs in
+	 let header = stream_header state.streamid (Xml.crypt to') in
+	 send_string state header;
+	 `Continue {state with state = Wait_for_handshake}
+      | _ ->
+	 send_string state invalid_header_err;
+	 `Stop state)
+    | `XmlStreamError _ ->
+       let header = stream_header "none" myname in
+       send_string state header;
+       send_element state invalid_xml_err;
+       send_trailer state;
+       `Stop state
+    | `XmlStreamEnd _ ->
+       `Stop state
+    | `XmlStreamElement _ ->
+       `Stop state
 
   let wait_for_handshake msg state =
     match msg with
-      | `XmlStreamElement (`XmlElement (name, _attrs, els)) -> (
-	match name, (Xml.get_cdata els) with
-	  | "handshake", digest -> (
-	      if Jlib.sha1 (state.streamid ^ state.password) = digest then (
-		send_string state "<handshake/>";
-		let%lwt () =
-		  Lwt_list.iter_s
-		    (fun (h : Jlib.namepreped) ->
-		       Router.register_route h state.pid;
-		       Lwt_log.notice_f ~section
-			 "route registered for service %s\n" (h :> string)
-		    )
-		  state.hosts
-		in
-		  Lwt.return (`Continue {state with state = Stream_established})
-	      ) else (
-		send_string state invalid_handshake_err;
-		Lwt.return (`Stop state)
-	      )
+    | `XmlStreamElement (`XmlElement (name, _attrs, els)) -> (
+      match name, (Xml.get_cdata els) with
+      | "handshake", digest -> (
+	if Jlib.sha1 (state.streamid ^ state.password) = digest then (
+	  send_string state "<handshake/>";
+	  List.iter
+	    (fun (h : Jlib.namepreped) ->
+	      Router.register_route h state.pid;
+              Logs.info ~src
+	        (fun m ->
+                  m "route registered for service %s\n" (h :> string));
 	    )
-	  | _ ->
-	    Lwt.return (`Continue state))
-      | `XmlStreamEnd _ ->
-	Lwt.return (`Stop state)
-      | `XmlStreamError _ ->
-	send_element state invalid_xml_err;
-	send_trailer state;
-	Lwt.return (`Stop state)
-      | `XmlStreamStart _ -> assert false
+	    state.hosts;
+	  `Continue {state with state = Stream_established}
+	) else (
+	  send_string state invalid_handshake_err;
+	  `Stop state
+	)
+      )
+      | _ ->
+	 `Continue state
+    )
+    | `XmlStreamEnd _ ->
+       `Stop state
+    | `XmlStreamError _ ->
+       send_element state invalid_xml_err;
+       send_trailer state;
+       `Stop state
+    | `XmlStreamStart _ -> assert false
 
   let stream_established msg state =
     match msg with
-      | `XmlStreamElement el ->
-	let newel = Jlib.remove_attr "xmlns" el in
-	let `XmlElement (name, attrs, _els) = newel in
-	let from = Xml.get_attr_s "from" attrs in
-	let from_jid = match state.check_from with
-	  | false ->
+    | `XmlStreamElement el ->
+       let newel = Jlib.remove_attr "xmlns" el in
+       let `XmlElement (name, attrs, _els) = newel in
+       let from = Xml.get_attr_s "from" attrs in
+       let from_jid = match state.check_from with
+	 | false ->
 	    (* If the admin does not want to check the from field
                when accept packets from any address.
                In this case, the component can send packet of
                behalf of the server users. *)
 	    Jlib.string_to_jid from
-	  | true ->
+	 | true ->
 	    (* The default is the standard behaviour in XEP-0114 *)
 	    match Jlib.string_to_jid from with
-	      | Some jid -> (
-		match List.mem jid.Jlib.lserver state.hosts with
-		  | true -> Some jid
-		  | false -> None)
-	      | None ->
-		None
-	in
-	let to' = Xml.get_attr_s "to" attrs in
-	let to_jid = Jlib.string_to_jid to' in
-	let _ = match to_jid, from_jid with
-	  | Some to', Some from when (name = "iq"
-				      || name = "message"
-				      || name = "presence") ->
+	    | Some jid -> (
+	      match List.mem jid.Jlib.lserver state.hosts with
+	      | true -> Some jid
+	      | false -> None)
+	    | None ->
+	       None
+       in
+       let to' = Xml.get_attr_s "to" attrs in
+       let to_jid = Jlib.string_to_jid to' in
+       let _ = match to_jid, from_jid with
+	 | Some to', Some from when (name = "iq"
+				     || name = "message"
+				     || name = "presence") ->
 	    Router.route from to' newel
-	  | _ ->
+	 | _ ->
 	    let err = Jlib.make_error_reply el Jlib.err_bad_request in
 	    send_element state err
-	in Lwt.return (`Continue state)
-      | `XmlStreamEnd _ ->
-	(* TODO *)
-	Lwt.return (`Stop state)
-      | `XmlStreamError _ ->
-	send_element state invalid_xml_err;
-	send_trailer state;
-	Lwt.return (`Stop state)
-      | `XmlStreamStart _ -> assert false
-	  
+       in
+       `Continue state
+    | `XmlStreamEnd _ ->
+       (* TODO *)
+       `Stop state
+    | `XmlStreamError _ ->
+       send_element state invalid_xml_err;
+       send_trailer state;
+       `Stop state
+    | `XmlStreamStart _ -> assert false
+
 
   let handle_route from to' packet state =
-    let _ = match ACL.match_global_rule state.access from false with
+    let () =
+      match ACL.match_global_rule state.access from false with
       | true ->
-	let `XmlElement (name, attrs, els) = packet in
-	let attrs' = Jlib.replace_from_to_attrs
-	  (Jlib.jid_to_string from) (Jlib.jid_to_string to') attrs in
-	send_element state (`XmlElement (name, attrs', els))
+	 let `XmlElement (name, attrs, els) = packet in
+	 let attrs' = Jlib.replace_from_to_attrs
+	                (Jlib.jid_to_string from) (Jlib.jid_to_string to') attrs in
+	 send_element state (`XmlElement (name, attrs', els))
       | false ->
-	let err = Jlib.make_error_reply packet Jlib.err_not_allowed in
-	Router.route to' from err
-    in Lwt.return (`Continue state)
-    
+	 let err = Jlib.make_error_reply packet Jlib.err_not_allowed in
+	 Router.route to' from err
+    in
+    `Continue state
+
   let handle_xml msg state =
     match state.state with
       | Wait_for_stream -> wait_for_stream msg state
@@ -262,47 +269,45 @@ struct
 
   let handle msg state =
     match msg with
-      | Socket.Tcp_data (socket, data) when socket == state.socket ->
-          let%lwt () =
-	    Lwt_log.debug_f ~section
-	      "tcp data %d %S\n" (String.length data) data
-	  in
-            XMLReceiver.parse state.xml_receiver data;
-            ignore (Socket.activate state.socket state.pid);
-            Lwt.return (`Continue state)
-      | Socket.Tcp_data (_socket, _data) -> assert false
-      | Socket.Tcp_close socket when socket == state.socket ->
-          let%lwt () = Lwt_log.debug ~section "tcp close\n" in
-            (*Gc.print_stat stdout;
-            Gc.compact ();
-            Gc.print_stat stdout; flush stdout;*)
-            Lwt.return (`Stop state)
-      | Socket.Tcp_close _socket -> assert false
-      | XMLReceiver.Xml m ->
-          handle_xml m state
-      | Router.Route (from, to', packet) ->
-          handle_route from to' packet state
-      | _ ->
-         (* TODO: add a warning *)
-	 Lwt.return (`Continue state)
+    | Socket.Tcp_data (socket, data) when socket == state.socket ->
+       Logs.debug ~src
+	 (fun m ->
+           m "tcp data %d %S" (String.length data) data);
+       XMLReceiver.parse state.xml_receiver data;
+       ignore (Socket.activate state.socket state.pid);
+       `Continue state
+    | Socket.Tcp_data (_socket, _data) -> assert false
+    | Socket.Tcp_close socket when socket == state.socket ->
+       Logs.debug ~src (fun m -> m "tcp close");
+       (*Gc.print_stat stdout;
+         Gc.compact ();
+         Gc.print_stat stdout; flush stdout;*)
+       `Stop state
+    | Socket.Tcp_close _socket -> assert false
+    | XMLReceiver.Xml m ->
+       handle_xml m state
+    | Router.Route (from, to', packet) ->
+       handle_route from to' packet state
+    | _ ->
+       (* TODO: add a warning *)
+       `Continue state
 
   let terminate state _reason =
     XMLReceiver.free state.xml_receiver;
-    let%lwt () = Socket.close state.socket in
-      match state.state with
-	| Stream_established ->
-	    let%lwt () =
-	      Lwt_list.iter_s
-		(fun (h : Jlib.namepreped) ->
-		   Router.unregister_route h state.pid;
-		   Lwt_log.notice_f ~section
-		     "route unregistered for service %s\n" (h :> string)
-		)
-		state.hosts
-	    in
-	      Lwt.return ()
-	| _ ->
-	    Lwt.return ()
+    Socket.close state.socket;
+    match state.state with
+    | Stream_established ->
+       List.iter
+	 (fun (h : Jlib.namepreped) ->
+	   Router.unregister_route h state.pid;
+           Logs.info ~src
+	     (fun m ->
+               m "route unregistered for service %s\n" (h :> string));
+           ()
+	 )
+	 state.hosts
+    | _ ->
+       ()
 end
 
 module Service = GenServer.Make(ExtService)

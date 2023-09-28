@@ -1,8 +1,8 @@
-type get_password = Jlib.nodepreped -> (string * string) option Lwt.t
-type check_password = Jlib.nodepreped -> string -> string option Lwt.t
+type get_password = Jlib.nodepreped -> (string * string) option
+type check_password = Jlib.nodepreped -> string -> string option
 type check_password_digest =
     Jlib.nodepreped -> string -> string -> (string -> string) ->
-      string option Lwt.t
+      string option
 
 type props = ([ `Username | `Auth_module | `Authzid ] * string) list
 
@@ -11,12 +11,12 @@ type step_result =
   | Continue of string * t
   | ErrorUser of string * string
   | Error of string
-and t = string -> step_result Lwt.t
+and t = string -> step_result
 
 module type SASLMechanism =
 sig
   val mech_new : Jlib.namepreped -> get_password ->
-    check_password -> check_password_digest -> string -> step_result Lwt.t
+    check_password -> check_password_digest -> string -> step_result
 end
 
 let mechanisms : (string, (module SASLMechanism)) Hashtbl.t =
@@ -41,31 +41,31 @@ let check_credentials props =
 
 let rec process_mech_result =
   function
-    | Done props ->
-	check_credentials props
-    | Continue (server_out, f) ->
-	Continue (server_out,
-		  fun s ->
-		    let%lwt res = f s in
-		      Lwt.return (process_mech_result res)
-		 )
-    | (ErrorUser _ | Error _) as error -> error
+  | Done props ->
+     check_credentials props
+  | Continue (server_out, f) ->
+     Continue (server_out,
+	       fun s ->
+	       let res = f s in
+	       process_mech_result res
+       )
+  | (ErrorUser _ | Error _) as error -> error
 
 let server_start ~service:_service ~server_fqdn ~user_realm:_user_realm
-    ~get_password ~check_password ~check_password_digest ~mech client_in =
+      ~get_password ~check_password ~check_password_digest ~mech client_in =
   try
     let mech_mod = Hashtbl.find mechanisms mech in
     let module Mech = (val mech_mod : SASLMechanism) in
-    let%lwt mech =
+    let mech =
       Mech.mech_new server_fqdn
 	get_password check_password check_password_digest client_in
     in
-      Lwt.return (process_mech_result mech)
+    process_mech_result mech
   with
-    | Not_found ->
-	Lwt.return (Error "no-mechanism")
+  | Not_found ->
+     Error "no-mechanism"
 
 let server_step f client_in =
-  let%lwt res = f client_in in
-    Lwt.return (process_mech_result res)
+  let res = f client_in in
+    process_mech_result res
 

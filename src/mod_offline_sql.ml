@@ -3,7 +3,7 @@ module Hooks = Jamler_hooks
 module Router = Jamler_router
 module Auth = Jamler_auth
 
-let section = Jamler_log.new_section "mod_offline_sql"
+let src = Jamler_log.new_src "mod_offline_sql"
 
 open Mod_disco
 
@@ -32,17 +32,17 @@ struct
     let username = (luser : Jlib.nodepreped :> string) in
     let query =
       [%sql {|
-	select @()d count( * ) from spool
-	where username=%(username)s
-      |}]
+	     select @()d count( * ) from spool
+	     where username=%(username)s
+             |}]
     in
-      try%lwt
-	(match%lwt Sql.query lserver query with
-	   | [] -> Lwt.return 0
-	   | count :: _ -> Lwt.return count)
-      with
-	| _ ->
-	    Lwt.return 0
+    try
+      (match Sql.query lserver query with
+       | [] -> 0
+       | count :: _ -> count)
+    with
+    | _ ->
+       0
 
   let discard_warn_sender msg =
     let packet = msg.packet in
@@ -62,14 +62,14 @@ struct
        User, Host), *)
     let max_offline_msgs = max_int in
     let host = (msg.to').Jlib.lserver in
-    let%lwt count =
+    let count =
       if max_offline_msgs <> max_int then (
 	count_offline_messages msg.user host
-      ) else Lwt.return 0
+      ) else 0
     in
       if count > max_offline_msgs then (
 	discard_warn_sender msg;
-	Lwt.return ()
+	()
       ) else (
 	let username = ((msg.to').Jlib.luser : Jlib.nodepreped :> string) in
 	let from = msg.from in
@@ -90,8 +90,8 @@ struct
 	    values (%(username)s, %(xml)s)
 	  |}]
 	in
-	let%lwt _ = Sql.transaction host (fun () -> Sql.query_t query) in
-	  Lwt.return ()
+        let _ = Sql.transaction host (fun () -> Sql.query_t query) in
+        ()
       )
 
   let rec find_x_event_chatstates els' (a, b, c) =
@@ -102,9 +102,9 @@ struct
 	  find_x_event_chatstates els (a, b, c)
       | ((`XmlElement _) as el) :: els -> (
 	  match Xml.get_tag_attr_s "xmlns" el with
-	    | [%ns "EVENT"] ->
+	    | [%xmlns "EVENT"] ->
 	      find_x_event_chatstates els (el, b, c)
-	    | [%ns "CHATSTATES"] ->
+	    | [%xmlns "CHATSTATES"] ->
 	      find_x_event_chatstates els (a, el, c)
 	    | _ ->
 		find_x_event_chatstates els (a, b, `True))
@@ -139,7 +139,7 @@ struct
 			    (`XmlElement (name, attrs,
 					  [`XmlElement
 					     ("x",
-					      [("xmlns", [%ns "EVENT"])],
+					      [("xmlns", [%xmlns "EVENT"])],
 					      [id;
 					       `XmlElement ("offline", [], [])])]));
 			  true)
@@ -154,7 +154,7 @@ struct
 	  find_x_expire timestamp els
       | ((`XmlElement _) as el) :: els -> (
 	  match Xml.get_tag_attr_s "xmlns" el with
-	    | [%ns "EXPIRE"] ->
+	    | [%xmlns "EXPIRE"] ->
 	      let val' = Xml.get_tag_attr_s "seconds" el in (
 		  try
 		    let int = int_of_string val' in
@@ -168,86 +168,88 @@ struct
 
   let store_packet (from, to', packet) =
     let type' = Xml.get_tag_attr_s "type" packet in
-      if (type' <> "error"
-	  && type' <> "groupchat"
-	  && type' <> "headline") then (
-	match check_event_chatstates from to' packet with
-	  | true ->
-	      let luser = to'.Jlib.luser in
-	      let timestamp = Unix.time () in
-	      let `XmlElement (_name, _attrs, els) = packet in
-	      let expire = find_x_expire timestamp els in
-	      let%lwt _ = store_packet' {user = luser;
-				     timestamp = timestamp;
-				     expire = expire;
-				     from = from;
-				     to' = to';
-				     packet = packet} in
-		Lwt.return (Hooks.Stop)
-	  | false ->
-	      Lwt.return (Hooks.OK)
-      ) else
-	Lwt.return (Hooks.OK)
+    if (type' <> "error"
+	&& type' <> "groupchat"
+	&& type' <> "headline") then (
+      match check_event_chatstates from to' packet with
+      | true ->
+	 let luser = to'.Jlib.luser in
+	 let timestamp = Unix.time () in
+	 let `XmlElement (_name, _attrs, els) = packet in
+	 let expire = find_x_expire timestamp els in
+	 store_packet' {user = luser;
+			timestamp = timestamp;
+			expire = expire;
+			from = from;
+			to' = to';
+			packet = packet};
+	 Hooks.Stop
+      | false ->
+	 Hooks.OK
+    ) else
+      Hooks.OK
 
   let get_and_del_spool_msg_t luser =
     let euser = (luser : Jlib.nodepreped :> string) in
     let select_query =
       [%sql {|
-	select @(username)s, @(xml)s from spool
-	  where username = %(euser)s order by sec
-      |}] in
+	     select @(username)s, @(xml)s from spool
+	     where username = %(euser)s order by sec
+             |}] in
     let delete_query =
       [%sql {|delete from spool where username = %(euser)s|}]
     in
-    let%lwt res = Sql.query_t select_query in
-    let%lwt _ = Sql.query_t delete_query in
-      Lwt.return res
+    let res = Sql.query_t select_query in
+    let _ = Sql.query_t delete_query in
+    res
 
   let pop_offline_messages ls (luser, lserver) =
-    try%lwt
-      let%lwt rs = Sql.transaction lserver
-	(fun () -> get_and_del_spool_msg_t luser) in
-      let%lwt route_msgs =
-	Lwt_list.fold_right_s
+    try
+      let rs =
+        Sql.transaction lserver
+	  (fun () -> get_and_del_spool_msg_t luser)
+      in
+      let route_msgs =
+	List.fold_right
 	  (fun (_, xml) acc ->
-	     try
-	       let el = Xml.parse_element xml in
-	       let to' = Jlib.string_to_jid_exn (Xml.get_tag_attr_s "to" el) in
-	       let from = Jlib.string_to_jid_exn (Xml.get_tag_attr_s "from" el) in
-		 Lwt.return ((`Route (from, to', el)) :: acc)
-	     with
-	       | _ ->
-		   Lwt.return acc
+	    try
+	      let el = Xml.parse_element xml in
+	      let to' = Jlib.string_to_jid_exn (Xml.get_tag_attr_s "to" el) in
+	      let from = Jlib.string_to_jid_exn (Xml.get_tag_attr_s "from" el) in
+	      `Route (from, to', el) :: acc
+	    with
+	    | _ ->
+	       acc
 	  ) rs [] in
-	Lwt.return (Hooks.OK, ls @ route_msgs)
+      (Hooks.OK, ls @ route_msgs)
     with
-      | _ ->
-	  Lwt.return (Hooks.OK, ls)
+    | _ ->
+       (Hooks.OK, ls)
 
   let remove_user (luser, lserver) =
     let username = (luser : Jlib.nodepreped :> string) in
     let delete_query =
       [%sql {|
-	delete from spool where username = %(username)s
-      |}]
+	     delete from spool where username = %(username)s
+             |}]
     in
-    let%lwt _ = Sql.query lserver delete_query in
-      Lwt.return (Hooks.OK)
+    let _ = Sql.query lserver delete_query in
+    Hooks.OK
 
   let get_sm_features acc (_from, _to, node, _lang) =
     match node with
-      | "" ->
-	  let feats =
-	    match acc with
-	      | Features i -> i
-	      | _ -> []
-	  in
-	    Lwt.return (Hooks.OK, Features (feats @ [ [%ns "FEATURE_MSGOFFLINE"]]))
-      | [%ns "FEATURE_MSGOFFLINE"] ->
-	(* override all lesser features... *)
-	Lwt.return (Hooks.OK, Features [])
-      | _ ->
-	  Lwt.return (Hooks.OK, acc)
+    | "" ->
+       let feats =
+	 match acc with
+	 | Features i -> i
+	 | _ -> []
+       in
+       (Hooks.OK, Features (feats @ [ [%xmlns "FEATURE_MSGOFFLINE"]]))
+    | [%xmlns "FEATURE_MSGOFFLINE"] ->
+       (* override all lesser features... *)
+       (Hooks.OK, Features [])
+    | _ ->
+       (Hooks.OK, acc)
 
   let start host =
     (* ejabberd_hooks:add(webadmin_page_host, Host,
@@ -257,18 +259,16 @@ struct
     ejabberd_hooks:add(webadmin_user_parse_query, Host,
                        ?MODULE, webadmin_user_parse_query, 50),
     AccessMaxOfflineMsgs = gen_mod:get_opt(access_max_user_messages, Opts, max_user_offline_messages), *)
-    Lwt.return (
-      [Gen_mod.hook offline_message_hook host store_packet 50;
-       Gen_mod.fold_hook resend_offline_messages_hook host pop_offline_messages 50;
-       Gen_mod.hook Auth.remove_user host remove_user 50;
-       Gen_mod.hook anonymous_purge_hook host remove_user 50;
-       Gen_mod.fold_hook disco_sm_features host get_sm_features 50;
-       Gen_mod.fold_hook disco_local_features host get_sm_features 50;
-      ]
-    )
+    [Gen_mod.hook offline_message_hook host store_packet 50;
+     Gen_mod.fold_hook resend_offline_messages_hook host pop_offline_messages 50;
+     Gen_mod.hook Auth.remove_user host remove_user 50;
+     Gen_mod.hook anonymous_purge_hook host remove_user 50;
+     Gen_mod.fold_hook disco_sm_features host get_sm_features 50;
+     Gen_mod.fold_hook disco_local_features host get_sm_features 50;
+    ]
 
   let stop _host =
-    Lwt.return ()
+    ()
 
 end
 

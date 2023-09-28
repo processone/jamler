@@ -1,6 +1,6 @@
 open Process
 
-let section = Jamler_log.new_section "gen_server"
+let src = Jamler_log.new_src "gen_server"
 
 type reason = [ `Normal | `Exception of exn ]
 type ('a, 'b) plain_result =
@@ -9,8 +9,8 @@ type ('a, 'b) plain_result =
     | `Stop of 'a
     | `StopReason of 'a * 'b
     ]
-type ('a, 'b) init_result = [ ('a, 'b) plain_result | `Init_failed ] Lwt.t
-type ('a, 'b) result = ('a, 'b) plain_result Lwt.t
+type ('a, 'b) init_result = [ ('a, 'b) plain_result | `Init_failed ]
+type ('a, 'b) result = ('a, 'b) plain_result
 
 type msg +=
    (*| System*)
@@ -23,7 +23,7 @@ sig
   type stop_reason
   val init : init_data -> pid -> (state, stop_reason) init_result
   val handle : Process.msg -> state -> (state, stop_reason) result
-  val terminate : state -> stop_reason -> unit Lwt.t
+  val terminate : state -> stop_reason -> unit
 end
 
 module type S =
@@ -36,57 +36,60 @@ module Make (T : Type with type stop_reason = private [> reason ]) :
 sig
   type init_data = T.init_data
   val start : init_data -> pid
-end =
-struct
+end = struct
   type init_data = T.init_data
   let start init_data =
     let rec loop self state timeout =
       if is_overloaded self then (
-	let%lwt () =
-          Lwt_log.error ~section
-	    "gen_server overloaded"
-	in
-          T.terminate state `Normal
+        Logs.err ~src
+	  (fun m ->
+            m "gen_server overloaded");
+        T.terminate state `Normal
       ) else (
-	let%lwt msg =
+	let msg =
 	  match timeout with
-	    | None -> receive self
-	    | Some timeout ->
-		Lwt.pick [receive self;
-			  (let%lwt () = Lwt_unix.sleep timeout in
-                           Lwt.return Timeout)]
+	  | None -> receive self
+	  | Some timeout ->
+             Eio.Fiber.first
+               (fun () -> receive self)
+               (fun () ->
+                 Eio.Time.sleep (Process.get_global_env ())#clock timeout;
+                 Timeout
+               )
 	in
-          match msg with
-	    (*| System ->
-		loop self state timeout*)
-	    | m ->
-		let%lwt result =
-	          try%lwt
-		    T.handle m state
-		  with
-		    | exn ->
-			let%lwt () =
-                          Lwt_log.error ~exn ~section
-			    "gen_server raised an exception"
-			in
-                          Lwt.return (`StopReason (state, `Exception exn))
-		in
-		  process_result self result
+        match msg with
+	(*| System ->
+	  loop self state timeout*)
+	| m ->
+	   let result =
+	     try
+	       T.handle m state
+	     with
+	     | exn ->
+                Logs.err ~src
+	          (fun m ->
+                    m "gen_server raised an exception: %a"
+                      Jamler_log.pp_exn exn);
+                `StopReason (state, `Exception exn)
+	   in
+	   process_result self result
       )
     and process_result self =
       function
-	| `Continue state ->
-	    loop self state None
-	| `ContinueTimeout (state, timeout) ->
-	    loop self state (Some timeout)
-	| `Stop state ->
-	    T.terminate state `Normal
-	| `StopReason (state, reason) ->
-	    T.terminate state reason
+      | `Continue state ->
+	 loop self state None
+      | `ContinueTimeout (state, timeout) ->
+	 loop self state (Some timeout)
+      | `Stop state ->
+	 T.terminate state `Normal
+      | `StopReason (state, reason) ->
+	 T.terminate state reason
     in
-      spawn (fun self ->
-	       let%lwt result = T.init init_data self in
-		 match result with
-		   | `Init_failed -> Lwt.return ()
-		   | #plain_result as result -> process_result self result)
+    spawn (fun self ->
+	let result = T.init init_data self in
+	match result with
+	| `Init_failed -> ()
+	| #plain_result as result ->
+           process_result self result
+      )
 end

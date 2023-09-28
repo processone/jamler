@@ -1,6 +1,6 @@
 open Process
 
-let section = Jamler_log.new_section "s2s_lib"
+let src = Jamler_log.new_src "s2s_lib"
 
 type s2s_out_msg =
     [ `Send_element of Xml.element

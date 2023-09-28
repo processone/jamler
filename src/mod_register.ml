@@ -15,7 +15,7 @@ end
   =
 struct
   let name = "mod_register"
-  let _section = Jamler_log.new_section name
+  let _src = Jamler_log.new_src name
 
   let is_captcha_enabled =
     Config.(get_module_opt_with_default
@@ -162,43 +162,43 @@ struct
 
   let send_welcome_message jid =
     let host = jid.Jlib.lserver in
-      match (welcome_message_subject host, welcome_message_body host) with
-	| "", "" ->
-	    ()
-	| subj, body ->
-	    Router.route
-	      (Jlib.make_jid_exn "" (host:>string) "")
-	      jid
-	      (`XmlElement
-		 ("message", [("type", "normal")], 
-		  [`XmlElement ("subject", [], [`XmlCdata subj]);
-		   `XmlElement ("body", [], [`XmlCdata body])]))
+    match (welcome_message_subject host, welcome_message_body host) with
+    | "", "" ->
+       ()
+    | subj, body ->
+       Router.route
+	 (Jlib.make_jid_exn "" (host:>string) "")
+	 jid
+	 (`XmlElement
+	    ("message", [("type", "normal")], 
+	     [`XmlElement ("subject", [], [`XmlCdata subj]);
+	      `XmlElement ("body", [], [`XmlCdata body])]))
 
   let send_registration_notifications ujid source =
     let host = ujid.Jlib.lserver in
-      match registration_watchers host with
-	| [] ->
-	    ()
-	| jids ->
-	    let body = Printf.sprintf
-	      ("[%s] The account %s was registered from IP address %s " ^^
-		 "on node ~w using %s.")
-	      (get_time_string ()) (Jlib.jid_to_string ujid)
-	      (source_to_string source) (* node() *) name in
-	      List.iter
-		(fun jid ->
-		   Router.route
-		     (Jlib.make_jid_exn "" (host:>string) "")
-		     jid
-		     (`XmlElement ("message", [("type", "chat")],
-				   [`XmlElement ("body", [],
-						 [`XmlCdata body])])))
-		jids
+    match registration_watchers host with
+    | [] ->
+       ()
+    | jids ->
+       let body = Printf.sprintf
+	            ("[%s] The account %s was registered from IP address %s " ^^
+		       "on node ~w using %s.")
+	            (get_time_string ()) (Jlib.jid_to_string ujid)
+	            (source_to_string source) (* node() *) name in
+       List.iter
+	 (fun jid ->
+	   Router.route
+	     (Jlib.make_jid_exn "" (host :> string) "")
+	     jid
+	     (`XmlElement ("message", [("type", "chat")],
+			   [`XmlElement ("body", [],
+					 [`XmlCdata body])])))
+	 jids
 
   let try_register luser (lserver:Jlib.namepreped)
-      password source_raw lang =
+        password source_raw lang =
     if luser = (Jlib.nodeprep_exn "") then
-      Lwt.return (`Error Jlib.err_bad_request)
+      `Error Jlib.err_bad_request
     else (
       let jid = Jlib.make_jid_exn (luser:>string) (lserver:>string) "" in
 	(* TODO
@@ -206,320 +206,300 @@ struct
            IPAccess = get_ip_access(Server),
 	   case {acl:match_rule(Server, Access, JID),
 		  check_ip_access(SourceRaw, IPAccess)} of *)
-	match (`Allow, `Allow) with
-	  | `Deny, _ ->
-	      Lwt.return (`Error Jlib.err_forbidden)
-	  | _, `Deny ->
-	      Lwt.return (`Error Jlib.err_forbidden)
-	  | `Allow, `Allow -> (
-	      let source = may_remove_resource source_raw in
-		if check_timeout source then (
-		  if is_strong_password lserver password then (
-		    match%lwt Auth.try_register luser lserver password with
-		      | Auth.OK ->
-			  send_welcome_message jid;
-			  send_registration_notifications jid source;
-			  Lwt.return `OK
-		      | err ->
-			  remove_timeout source;
-			  match err with
-			    | Auth.Exists ->
-				Lwt.return (`Error Jlib.err_conflict)
-			    | Auth.Invalid_jid ->
-				Lwt.return (`Error Jlib.err_jid_malformed)
-			    | Auth.Not_allowed ->
-				Lwt.return (`Error Jlib.err_not_allowed)
-			    | _ ->
-				Lwt.return (`Error Jlib.err_internal_server_error)
-		  ) else
-		    let errtxt = "The password is too weak" in
-		      Lwt.return (`Error (Jlib.errt_not_acceptable lang errtxt))
-		) else
-		  let errtxt = "Users are not allowed to register " ^
-		    "accounts so quickly" in
-		    Lwt.return (`Error (Jlib.errt_resource_constraint lang errtxt))
-	    )
+      match (`Allow, `Allow) with
+      | `Deny, _ ->
+	 `Error Jlib.err_forbidden
+      | _, `Deny ->
+	 `Error Jlib.err_forbidden
+      | `Allow, `Allow -> (
+	let source = may_remove_resource source_raw in
+	if check_timeout source then (
+	  if is_strong_password lserver password then (
+	    match Auth.try_register luser lserver password with
+	    | Auth.OK ->
+	       send_welcome_message jid;
+	       send_registration_notifications jid source;
+	       `OK
+	    | err ->
+	       remove_timeout source;
+	       match err with
+	       | Auth.Exists ->
+		  `Error Jlib.err_conflict
+	       | Auth.Invalid_jid ->
+		  `Error Jlib.err_jid_malformed
+	       | Auth.Not_allowed ->
+		  `Error Jlib.err_not_allowed
+	       | _ ->
+		  `Error Jlib.err_internal_server_error
+	  ) else
+	    let errtxt = "The password is too weak" in
+	    `Error (Jlib.errt_not_acceptable lang errtxt)
+	) else
+	  let errtxt = "Users are not allowed to register " ^
+		         "accounts so quickly" in
+	  `Error (Jlib.errt_resource_constraint lang errtxt)
+      )
     )
 
   let try_set_password luser lserver password iq subel lang =
     if is_strong_password lserver password then (
-      match%lwt Auth.set_password luser lserver password with
-	| Auth.OK ->
-	    Lwt.return (`IQ {iq with Jlib.iq_type = `Result (Some subel)})
-	| Auth.Empty_password ->
-	    Lwt.return (`IQ {iq with Jlib.iq_type =
-			    `Error (Jlib.err_bad_request, Some subel)})
-	| Auth.Not_allowed ->
-	    Lwt.return (`IQ {iq with Jlib.iq_type =
-			    `Error (Jlib.err_not_allowed, Some subel)})
-	| Auth.Invalid_jid ->
-	    Lwt.return (`IQ {iq with Jlib.iq_type =
-			    `Error (Jlib.err_item_not_found, Some subel)})
-	| _ ->
-	    Lwt.return (`IQ {iq with Jlib.iq_type =
-			    `Error (Jlib.err_internal_server_error, Some subel)})
+      match Auth.set_password luser lserver password with
+      | Auth.OK ->
+	 `IQ {iq with Jlib.iq_type = `Result (Some subel)}
+      | Auth.Empty_password ->
+	 `IQ {iq with Jlib.iq_type =
+			`Error (Jlib.err_bad_request, Some subel)}
+      | Auth.Not_allowed ->
+	 `IQ {iq with Jlib.iq_type =
+			`Error (Jlib.err_not_allowed, Some subel)}
+      | Auth.Invalid_jid ->
+	 `IQ {iq with Jlib.iq_type =
+			`Error (Jlib.err_item_not_found, Some subel)}
+      | _ ->
+	 `IQ {iq with Jlib.iq_type =
+			`Error (Jlib.err_internal_server_error, Some subel)}
     ) else
       let errtxt = "The password is too weak" in
-	Lwt.return (`IQ {iq with Jlib.iq_type =
-			`Error (Jlib.errt_not_acceptable lang errtxt, Some subel)})
+      `IQ {iq with Jlib.iq_type =
+		     `Error (Jlib.errt_not_acceptable lang errtxt, Some subel)}
 
   let try_register_or_set_password
-      luser lserver password from iq
-      subel source lang is_captcha_succeed =
+        luser lserver password from iq
+        subel source lang is_captcha_succeed =
     match from with
-      | {Jlib.luser = u; Jlib.lserver = s; _} when u = luser && s = lserver ->
-	  try_set_password luser lserver password iq subel lang
-      | _ when is_captcha_succeed -> (
-	  match check_from from lserver with
-	    | true -> (
-		match%lwt try_register luser lserver password source lang with
-		  | `OK ->
-		      Lwt.return
-			(`IQ {iq with Jlib.iq_type = 
-			     `Result (Some subel)})
-		  | `Error error ->
-		      Lwt.return
-			(`IQ {iq with
-				Jlib.iq_type =
-			     `Error (error, Some subel)}))
-	    | false ->
-		Lwt.return
-		  (`IQ {iq with
-			  Jlib.iq_type =
-		       `Error (Jlib.err_forbidden, Some subel)}))
-      | _ ->
-	  Lwt.return
-	    (`IQ {iq with
-		    Jlib.iq_type =
-		 `Error (Jlib.err_not_allowed, Some subel)})
+    | {Jlib.luser = u; Jlib.lserver = s; _} when u = luser && s = lserver ->
+       try_set_password luser lserver password iq subel lang
+    | _ when is_captcha_succeed -> (
+      match check_from from lserver with
+      | true -> (
+	match try_register luser lserver password source lang with
+	| `OK ->
+	   `IQ {iq with Jlib.iq_type = 
+			  `Result (Some subel)}
+	| `Error error ->
+	   `IQ {iq with
+	       Jlib.iq_type =
+		 `Error (error, Some subel)})
+      | false ->
+	 `IQ {iq with
+	     Jlib.iq_type =
+	       `Error (Jlib.err_forbidden, Some subel)})
+    | _ ->
+       `IQ {iq with
+	   Jlib.iq_type =
+	     `Error (Jlib.err_not_allowed, Some subel)}
 
   let process_iq' from to'
-      ({Jlib.iq_type = type';
-	Jlib.iq_lang = lang;
-	Jlib.iq_id = id; _} as iq) source =
+        ({Jlib.iq_type = type';
+	  Jlib.iq_lang = lang;
+	  Jlib.iq_id = id; _} as iq) source =
     match type' with
-      | `Set subel -> (
-	  let utag_opt = Xml.get_subtag subel "username" in
-	  let ptag_opt = Xml.get_subtag subel "password" in
-	  let rtag_opt = Xml.get_subtag subel "remove" in
-	  let lserver = to'.Jlib.lserver in
-	  (* Access = gen_mod:get_module_opt(Server, ?MODULE, access, all),
-	     AllowRemove = (allow == acl:match_rule(Server, Access, From)), *)
-	  let allow_remove = true in
-	    match utag_opt, ptag_opt, rtag_opt, allow_remove with
-	      | Some utag, _, Some _rtag, true -> (
-		  match Jlib.nodeprep (Xml.get_tag_cdata utag) with
-		    | Some luser -> (
-			match from with
-			  | {Jlib.luser = u; Jlib.lserver = s; _}
-			      when u = luser && s = lserver ->
-			      let%lwt _ = Auth.remove luser lserver in
-				Lwt.return
-				  (`IQ {iq with Jlib.iq_type =
-				       `Result (Some subel)})
-			  | _ -> (
-			      match ptag_opt with
-				| Some ptag ->
-				    let password = Xml.get_tag_cdata ptag in
-				    let%lwt _ = Auth.remove'
-				      luser lserver password in
-				      Lwt.return
-					(`IQ {iq with Jlib.iq_type =
-					     `Result (Some subel)})
-				| _ ->
-				    Lwt.return
-				      (`IQ {iq with
-					      Jlib.iq_type =
-					   `Error (Jlib.err_bad_request,
-						   Some subel)})))
-		    | None ->
-			Lwt.return
-			  (`IQ {iq with
-				  Jlib.iq_type =
-			       `Error (Jlib.err_jid_malformed, Some subel)}))
-	      | None, _, Some _rtag, true -> (
-		  match from with
-		    | {Jlib.luser = luser;
-		       Jlib.lserver = s; _} when s = lserver ->
-			let res_iq = {Jlib.iq_xmlns = [%ns "REGISTER"];
-				      Jlib.iq_id = id;
-				      Jlib.iq_lang = "";
-				      Jlib.iq_type = `Result (Some subel)} in
-			  Router.route from from (Jlib.iq_to_xml res_iq);
-			  let%lwt _ = Auth.remove luser lserver in
-			    Lwt.return `Ignore
-		    | _ ->
-			Lwt.return
-			  (`IQ {iq with
-				  Jlib.iq_type =
-			       `Error (Jlib.err_not_allowed,
-				       Some subel)}))
-	      | Some utag, Some ptag, _, _ -> (
-		  match Jlib.nodeprep (Xml.get_tag_cdata utag) with
-		    | Some luser ->
-			let password = Xml.get_tag_cdata ptag in
-			  try_register_or_set_password
-			    luser lserver password from
-			    iq subel source lang
-			    (not (is_captcha_enabled lserver))
-		    | None ->
-			Lwt.return
-			  (`IQ {iq with
-				  Jlib.iq_type =
-			       `Error (Jlib.err_jid_malformed, Some subel)}))
-	      | _ ->
-		  if is_captcha_enabled lserver then (
-		    try (
-		      let () = Captcha.process_reply_exn subel in
-			match process_xdata_submit subel with
-			  | Some (luser, password) ->
-			      try_register_or_set_password
-				luser lserver password from
-				iq subel source lang true
-			  | None ->
-			      Lwt.return
-				(`IQ {iq with
-					Jlib.iq_type =
-				     `Error (Jlib.err_bad_request, Some subel)})
-		    ) with
-		      | Captcha.Err_malformed ->
-			  Lwt.return
-			    (`IQ {iq with
-				    Jlib.iq_type =
-				 `Error (Jlib.err_bad_request, Some subel)})
-		      | _ ->
-			  let errtxt = "The CAPTCHA verification has failed" in
-			    Lwt.return
-			      (`IQ {iq with
-				      Jlib.iq_type =
-				   `Error ((Jlib.errt_not_allowed
-					      lang errtxt), Some subel)})
-		  ) else (
-		    Lwt.return
-		      (`IQ {iq with
-			      Jlib.iq_type =
-			   `Error (Jlib.err_bad_request, Some subel)})))
-      | `Get subel ->
-	  let%lwt is_registered, username_subels, query_subels =
-	    let {Jlib.user = user;
-		 Jlib.luser = luser;
-		 Jlib.lserver = lserver; _} = from in
-	      match%lwt Auth.does_user_exist luser lserver with
-		| true ->
-		    Lwt.return (true, [`XmlCdata user],
-				[`XmlElement ("registered", [], [])])
-		| false ->
-		    Lwt.return (false, [`XmlCdata user], [])
-	  in
-	    if (is_captcha_enabled to'.Jlib.lserver) && not is_registered then (
-	      let top_instr_el =
-		`XmlElement ("instructions", [],
-			     [`XmlCdata
-				(Translate.translate
-				   lang
-				   ("You need a client that supports x:data "
-				    ^ "and CAPTCHA to register"))]) in
-	      let instr_el =
-		`XmlElement ("instructions", [],
-			     [`XmlCdata
-				(Translate.translate
-				   lang
-				   ("Choose a username and password "
-				    ^ "to register with this server"))]) in
-	      let ufield =
-		`XmlElement ("field",
-			     [("type", "text-single");
-			      ("label", Translate.translate lang "User");
-			      ("var", "username")],
-			     [`XmlElement ("required", [], [])]) in
-	      let pfield =
-		`XmlElement ("field",
-			     [("type", "text-private");
-			      ("label", Translate.translate lang "Password");
-			      ("var", "password")],
-			     [`XmlElement ("required", [], [])]) in
-		try%lwt (
-		  let%lwt captcha_els = Captcha.create_captcha_x_exn
-		    id to' lang (Some source) [instr_el; ufield; pfield] [] in
-		    Lwt.return
-		      (`IQ {iq with Jlib.iq_type =
-			   `Result (Some (`XmlElement
-					    ("query",
-					     [("xmlns", "jabber:iq:register")],
-					     top_instr_el :: captcha_els)))})
-		) with
-		  | Captcha.Err_limit ->
-		      let errtext = "Too many CAPTCHA requests" in
-			Lwt.return
-			  (`IQ {iq with
-				  Jlib.iq_type =
-			       `Error ((Jlib.errt_resource_constraint
-					  lang errtext),
-				       Some subel)})
-		  | _ ->
-		      let errtext = "Unable to generate a CAPTCHA" in
-			Lwt.return
-			  (`IQ {iq with
-				  Jlib.iq_type =
-			       `Error ((Jlib.errt_internal_server_error
-					  lang errtext),
-				       Some subel)})
-	    ) else (
-	      Lwt.return
-		(`IQ {iq with Jlib.iq_type =
-		     `Result
-		       (Some
-			  (`XmlElement
-			     ("query",
-			      [("xmlns", "jabber:iq:register")],
-			      [`XmlElement
-				 ("instructions", [],
-				  [`XmlCdata
-				     (Translate.translate lang
-					("Choose a username and password " ^
-					   "to register with this server"))]);
-			       `XmlElement ("username", [], username_subels);
-			       `XmlElement ("password", [], [])]
-			      @ query_subels)))}))
+    | `Set subel -> (
+      let utag_opt = Xml.get_subtag subel "username" in
+      let ptag_opt = Xml.get_subtag subel "password" in
+      let rtag_opt = Xml.get_subtag subel "remove" in
+      let lserver = to'.Jlib.lserver in
+      (* Access = gen_mod:get_module_opt(Server, ?MODULE, access, all),
+	 AllowRemove = (allow == acl:match_rule(Server, Access, From)), *)
+      let allow_remove = true in
+      match utag_opt, ptag_opt, rtag_opt, allow_remove with
+      | Some utag, _, Some _rtag, true -> (
+	match Jlib.nodeprep (Xml.get_tag_cdata utag) with
+	| Some luser -> (
+	  match from with
+	  | {Jlib.luser = u; Jlib.lserver = s; _}
+	       when u = luser && s = lserver ->
+	     Auth.remove luser lserver;
+	     `IQ {iq with Jlib.iq_type =
+			    `Result (Some subel)}
+	  | _ -> (
+	    match ptag_opt with
+	    | Some ptag ->
+	       let password = Xml.get_tag_cdata ptag in
+	       Auth.remove' luser lserver password;
+	       `IQ {iq with Jlib.iq_type =
+			      `Result (Some subel)}
+	    | _ ->
+	       `IQ {iq with
+		   Jlib.iq_type =
+		     `Error (Jlib.err_bad_request,
+			     Some subel)}))
+	| None ->
+           `IQ {iq with
+	       Jlib.iq_type =
+		 `Error (Jlib.err_jid_malformed, Some subel)})
+      | None, _, Some _rtag, true -> (
+	match from with
+	| {Jlib.luser = luser;
+	   Jlib.lserver = s; _} when s = lserver ->
+	   let res_iq = {Jlib.iq_xmlns = [%xmlns "REGISTER"];
+			 Jlib.iq_id = id;
+			 Jlib.iq_lang = "";
+			 Jlib.iq_type = `Result (Some subel)} in
+	   Router.route from from (Jlib.iq_to_xml res_iq);
+	   Auth.remove luser lserver;
+	   `Ignore
+	| _ ->
+	   `IQ {iq with
+	       Jlib.iq_type =
+		 `Error (Jlib.err_not_allowed,
+			 Some subel)})
+      | Some utag, Some ptag, _, _ -> (
+	match Jlib.nodeprep (Xml.get_tag_cdata utag) with
+	| Some luser ->
+	   let password = Xml.get_tag_cdata ptag in
+	   try_register_or_set_password
+	     luser lserver password from
+	     iq subel source lang
+	     (not (is_captcha_enabled lserver))
+	| None ->
+	   `IQ {iq with
+	       Jlib.iq_type =
+		 `Error (Jlib.err_jid_malformed, Some subel)})
+      | _ ->
+	 if is_captcha_enabled lserver then (
+	   try (
+	     let () = Captcha.process_reply_exn subel in
+	     match process_xdata_submit subel with
+	     | Some (luser, password) ->
+		try_register_or_set_password
+		  luser lserver password from
+		  iq subel source lang true
+	     | None ->
+		`IQ {iq with
+		    Jlib.iq_type =
+		      `Error (Jlib.err_bad_request, Some subel)}
+	   ) with
+	   | Captcha.Err_malformed ->
+	      `IQ {iq with
+		  Jlib.iq_type =
+		    `Error (Jlib.err_bad_request, Some subel)}
+	   | _ ->
+	      let errtxt = "The CAPTCHA verification has failed" in
+	      `IQ {iq with
+		  Jlib.iq_type =
+		    `Error ((Jlib.errt_not_allowed
+			       lang errtxt), Some subel)}
+	 ) else (
+	   `IQ {iq with
+	       Jlib.iq_type =
+		 `Error (Jlib.err_bad_request, Some subel)}))
+    | `Get subel ->
+       let is_registered, username_subels, query_subels =
+	 let {Jlib.user = user;
+	      Jlib.luser = luser;
+	      Jlib.lserver = lserver; _} = from in
+	 match Auth.does_user_exist luser lserver with
+	 | true ->
+	    (true, [`XmlCdata user],
+	     [`XmlElement ("registered", [], [])])
+	 | false ->
+	    (false, [`XmlCdata user], [])
+       in
+       if (is_captcha_enabled to'.Jlib.lserver) && not is_registered then (
+	 let top_instr_el =
+	   `XmlElement ("instructions", [],
+			[`XmlCdata
+			   (Translate.translate
+			      lang
+			      ("You need a client that supports x:data "
+			       ^ "and CAPTCHA to register"))]) in
+	 let instr_el =
+	   `XmlElement ("instructions", [],
+			[`XmlCdata
+			   (Translate.translate
+			      lang
+			      ("Choose a username and password "
+			       ^ "to register with this server"))]) in
+	 let ufield =
+	   `XmlElement ("field",
+			[("type", "text-single");
+			 ("label", Translate.translate lang "User");
+			 ("var", "username")],
+			[`XmlElement ("required", [], [])]) in
+	 let pfield =
+	   `XmlElement ("field",
+			[("type", "text-private");
+			 ("label", Translate.translate lang "Password");
+			 ("var", "password")],
+			[`XmlElement ("required", [], [])]) in
+	 try (
+	   let captcha_els =
+             Captcha.create_captcha_x_exn
+	       id to' lang (Some source) [instr_el; ufield; pfield] []
+           in
+	   `IQ {iq with Jlib.iq_type =
+			  `Result (Some (`XmlElement
+					   ("query",
+					    [("xmlns", "jabber:iq:register")],
+					    top_instr_el :: captcha_els)))}
+	 ) with
+	 | Captcha.Err_limit ->
+	    let errtext = "Too many CAPTCHA requests" in
+	    `IQ {iq with
+		Jlib.iq_type =
+		  `Error ((Jlib.errt_resource_constraint
+			     lang errtext),
+			  Some subel)}
+	 | _ ->
+	    let errtext = "Unable to generate a CAPTCHA" in
+	    `IQ {iq with
+		Jlib.iq_type =
+		  `Error ((Jlib.errt_internal_server_error
+			     lang errtext),
+			  Some subel)}
+       ) else (
+	 `IQ {iq with Jlib.iq_type =
+		        `Result
+		          (Some
+			     (`XmlElement
+			        ("query",
+			         [("xmlns", "jabber:iq:register")],
+			         [`XmlElement
+				    ("instructions", [],
+				     [`XmlCdata
+				        (Translate.translate lang
+					   ("Choose a username and password " ^
+					      "to register with this server"))]);
+			          `XmlElement ("username", [], username_subels);
+			          `XmlElement ("password", [], [])]
+			         @ query_subels)))})
 
   let process_iq from to' iq =
     process_iq' from to' iq (`JID (Jlib.jid_tolower from))
 
   let stream_feature_register acc _host =
-    Lwt.return
-      (Hooks.OK, (`XmlElement ("register",
-			       [("xmlns", [%ns "FEATURE_IQREGISTER"])],
-			       [])) :: acc)
+    (Hooks.OK, (`XmlElement ("register",
+			     [("xmlns", [%xmlns "FEATURE_IQREGISTER"])],
+			     [])) :: acc)
 
   let unauthenticated_iq_register _acc ((lserver : Jlib.namepreped), iq, ip) =
     let address = `IP ip in
-      match%lwt process_iq' (Jlib.make_jid_exn "" "" "")
-	(Jlib.make_jid_exn "" (lserver :> string) "") iq address with
-	  | `IQ res_iq ->
-	      let res1 = Jlib.replace_from_to
-		(Jlib.make_jid_exn "" (lserver :> string) "")
-		(Jlib.make_jid_exn "" "" "")
-		(Jlib.iq_to_xml res_iq) in
-	      let res2 = Jlib.remove_attr "to" res1 in
-		Lwt.return (Hooks.OK, Some (res2 :> Xml.element_cdata))
-	  | `Ignore ->
-	      assert false
+    match process_iq' (Jlib.make_jid_exn "" "" "")
+	    (Jlib.make_jid_exn "" (lserver :> string) "") iq address with
+    | `IQ res_iq ->
+       let res1 = Jlib.replace_from_to
+		    (Jlib.make_jid_exn "" (lserver :> string) "")
+		    (Jlib.make_jid_exn "" "" "")
+		    (Jlib.iq_to_xml res_iq) in
+       let res2 = Jlib.remove_attr "to" res1 in
+       (Hooks.OK, Some (res2 :> Xml.element_cdata))
+    | `Ignore ->
+       assert false
 
   let start host =
-    Mod_disco.register_feature host [%ns "REGISTER"];
-    Lwt.return (
-      [Gen_mod.iq_handler `Local host [%ns "REGISTER"] process_iq ();
-       Gen_mod.iq_handler `SM host [%ns "REGISTER"] process_iq ();
-       Gen_mod.fold_hook Jamler_c2s.c2s_stream_features host
- 	 stream_feature_register 50;
-       Gen_mod.fold_hook Jamler_c2s.c2s_unauthenticated_iq host
-	 unauthenticated_iq_register 50
-      ]
-    )
+    Mod_disco.register_feature host [%xmlns "REGISTER"];
+    [Gen_mod.iq_handler `Local host [%xmlns "REGISTER"] process_iq ();
+     Gen_mod.iq_handler `SM host [%xmlns "REGISTER"] process_iq ();
+     Gen_mod.fold_hook Jamler_c2s.c2s_stream_features host
+       stream_feature_register 50;
+     Gen_mod.fold_hook Jamler_c2s.c2s_unauthenticated_iq host
+       unauthenticated_iq_register 50
+    ]
 
   let stop host =
-    Mod_disco.unregister_feature host [%ns "REGISTER"];
-    Lwt.return ()
+    Mod_disco.unregister_feature host [%xmlns "REGISTER"];
+    ()
 
 end
 

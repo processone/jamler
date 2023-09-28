@@ -1,6 +1,6 @@
 open Process
 
-let section = Jamler_log.new_section "erl_epmd"
+let src = Jamler_log.new_src "erl_epmd"
 
 module Packet = Jamler_packet
 module GenServer = Gen_server
@@ -30,23 +30,24 @@ let add_int32_be buf x =
   Buffer.add_char buf (Char.chr (x land 0xff))
 
 type msg += Packet of string
+type unit_promise = (unit, exn) result Eio.Promise.u
 
 module ErlEPMD :
 sig
   include GenServer.Type with
-    type init_data = unit Lwt.u
+    type init_data = unit_promise
     and type stop_reason = GenServer.reason
 end =
 struct
   type msg += Init
 
-  type init_data = unit Lwt.u
+  type init_data = unit_promise
 
   type stop_reason = GenServer.reason
 
   type conn_state =
-    | Open_socket of unit Lwt.u
-    | Wait_for_alive2_resp of unit Lwt.u * Socket.socket
+    | Open_socket of unit_promise
+    | Wait_for_alive2_resp of unit_promise * Socket.socket
     | Connection_established of Socket.socket
 
   type state =
@@ -56,29 +57,31 @@ struct
       }
 
   let send_text socket text =
-    Socket.send_async socket text
+    Socket.send socket text
 
   let send_packet state packet =
     send_text state (Packet.decorate `BE2 packet)
 
   let init wakener self =
     let state = Open_socket wakener in
-      self $! Init;
-      Lwt.return
-	(`Continue
-	   {pid = self;
-	    state;
-	    p = Packet.create `BE2;
-	   })
+    self $! Init;
+    `Continue
+      {pid = self;
+       state;
+       p = Packet.create `BE2;
+      }
 
   let open_socket addr port self =
     (*let timeout = 1.0 in*)
-    let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-    let addr = Unix.ADDR_INET (addr, port) in
-    let%lwt () = Lwt_unix.connect socket addr in
+    let socket =
+      Eio.Net.connect
+        ~sw:(Process.get_global_switch ())
+        (Process.get_global_env ())#net
+        (`Tcp (Eio_unix__Net.Ipaddr.of_unix addr, port))
+    in
     let tcpsock = Socket.of_fd socket self in
-      ignore (Socket.activate tcpsock self);
-      Lwt.return tcpsock
+    ignore (Socket.activate tcpsock self);
+    tcpsock
 
   let _close_socket socket =
     Socket.close socket
@@ -98,81 +101,76 @@ struct
 
   let handle_msg msg state =
     match state.state, msg with
-      | Open_socket wakener, Init ->
-	  let%lwt socket =
-	    try%lwt
-	      open_socket Unix.inet_addr_loopback epmd_port state.pid
-	    with
-	      | exn ->
-		  let%lwt () = Lwt_log.fatal ~exn ~section
-		    "failed to open epmd connection"
-		  in
-		    Lwt.fail exn
-	  in
-	    send_packet socket (make_alive2_req !node_port !nodename);
-	    Lwt.return
-	      (`Continue
-		 {state with
-		    state = Wait_for_alive2_resp (wakener, socket)})
-      | Open_socket _, _ -> assert false
-      | Wait_for_alive2_resp (wakener, socket), Packet data ->
-	  if String.length data >= 4 &&
+    | Open_socket wakener, Init ->
+       let socket =
+	 try
+	   open_socket Unix.inet_addr_loopback epmd_port state.pid
+	 with
+	 | exn ->
+            Logs.err ~src
+	      (fun m ->
+                m "failed to open epmd connection: %a"
+                  Jamler_log.pp_exn exn);
+	    raise exn
+       in
+       send_packet socket (make_alive2_req !node_port !nodename);
+       `Continue
+	 {state with
+	   state = Wait_for_alive2_resp (wakener, socket)}
+    | Open_socket _, _ -> assert false
+    | Wait_for_alive2_resp (wakener, socket), Packet data ->
+       if String.length data >= 4 &&
 	    data.[0] = '\121' &&
 	      data.[1] = '\000'
-	  then (
-	    let creation = Char.code data.[3] land 3 in
-	      node_creation := creation;
-	      Lwt.wakeup wakener ();
-	      Lwt.return
-		(`Continue
-		   {state with
-		      state = Connection_established socket})
-	  ) else (
-	    Lwt.wakeup_exn wakener (Failure "can't register nodename");
-	    Lwt.return (`Stop state)
-	  )
-      | Wait_for_alive2_resp (_wakener, _socket), _ -> assert false
-      | Connection_established _socket, _ -> assert false
+       then (
+	 let creation = Char.code data.[3] land 3 in
+	 node_creation := creation;
+	 Eio.Promise.resolve_ok wakener ();
+	 `Continue
+	   {state with
+	     state = Connection_established socket}
+       ) else (
+	 Eio.Promise.resolve_error wakener (Failure "can't register nodename");
+	 `Stop state
+       )
+    | Wait_for_alive2_resp (_wakener, _socket), _ -> assert false
+    | Connection_established _socket, _ -> assert false
 
   let handle (msg : msg) state =
     match msg with
       | Socket.Tcp_data (socket, data) -> (
-	  let%lwt () =
-	    Lwt_log.notice_f ~section
-	      "tcp data %d %S" (String.length data) data
-	  in
-	    (*Packet.parse state.p data;*)
-	    state.pid $! Packet data;
-	    ignore (Socket.activate socket state.pid);
-	    Lwt.return (`Continue state)
-	)
+        Logs.debug ~src
+	  (fun m ->
+            m "tcp data %d %S" (String.length data) data);
+	(*Packet.parse state.p data;*)
+	state.pid $! Packet data;
+	ignore (Socket.activate socket state.pid);
+	`Continue state
+      )
       | Socket.Tcp_close _socket -> (
-	  let%lwt () = Lwt_log.debug ~section "tcp close" in
-	    Lwt.return (`Stop state)
-	)
+        Logs.debug ~src (fun m -> m "tcp close");
+	`Stop state
+      )
       | Packet _
       | Init as m ->
 	 handle_msg m state
       | _ ->
          (* TODO: add a warning *)
-	 Lwt.return (`Continue state)
+	 `Continue state
 
   let terminate state _reason =
     let () =
       match state.state with
-	| Open_socket wakener
-	| Wait_for_alive2_resp (wakener, _) ->
-	    Lwt.wakeup_exn wakener (Failure "can't register nodename");
-	| Connection_established _ -> ()
+      | Open_socket wakener
+      | Wait_for_alive2_resp (wakener, _) ->
+	 Eio.Promise.resolve_error wakener (Failure "can't register nodename");
+      | Connection_established _ -> ()
     in
-    let%lwt () =
-      match state.state with
-	| Open_socket _wakener -> Lwt.return ()
-	| Wait_for_alive2_resp (_, socket)
-	| Connection_established socket ->
-	    Socket.close socket
-    in
-      Lwt.return ()
+    match state.state with
+    | Open_socket _wakener -> ()
+    | Wait_for_alive2_resp (_, socket)
+    | Connection_established socket ->
+       Socket.close socket
 
 
 end
@@ -187,39 +185,37 @@ let start node cookie' =
     nodehost := hostname';
     full_nodename := node;
     cookie := cookie';
-    let (waiter, wakener) = Lwt.wait () in
+    let (waiter, wakener) = Eio.Promise.create () in
       ignore (ErlEPMDServer.start wakener);
-      waiter
+      Eio.Promise.await_exn waiter
 
 let get_addr_exn ascii_addr =
-  let%lwt h = Lwt_unix.gethostbyname ascii_addr in
-    match Array.to_list h.Unix.h_addr_list with
-      | [] -> raise Not_found
-      | addr :: _ -> Lwt.return addr
+  let h =
+    Eio_unix.run_in_systhread (fun () -> Unix.gethostbyname ascii_addr)
+  in
+  match Array.to_list h.Unix.h_addr_list with
+  | [] -> raise Not_found
+  | addr :: _ -> addr
 
 let open_socket addr port f =
-  let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-    try%lwt
-      let addr = Unix.ADDR_INET (addr, port) in
-      let%lwt () = Lwt_unix.connect socket addr in
-      let%lwt res = f socket in
-      let%lwt () = Lwt_unix.close socket in
-	Lwt.return res
-    with
-      | exn ->
-	  ignore (Lwt_unix.close socket);
-	  Lwt.fail exn
+  Eio.Net.with_tcp_connect
+    ~host:(Unix.string_of_inet_addr addr)
+    ~service:(string_of_int port)
+    (Process.get_global_env ())#net
+    f
 
 let open_socket' addr port =
-  let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-    try%lwt
-      let addr = Unix.ADDR_INET (addr, port) in
-      let%lwt () = Lwt_unix.connect socket addr in
-	Lwt.return (Some socket)
-    with
-      | _exn ->
-	  ignore (Lwt_unix.close socket);
-	  Lwt.return None
+  try
+    let socket =
+      Eio.Net.connect
+        ~sw:(Process.get_global_switch ())
+        (Process.get_global_env ())#net
+        (`Tcp (Eio_unix__Net.Ipaddr.of_unix addr, port))
+    in
+    Some socket
+  with
+  | _exn ->
+     None
 
 let node_to_namehost node =
     let idx = String.index node '@' in
@@ -228,24 +224,22 @@ let node_to_namehost node =
       (nodename, hostname)
 
 let lookup_node node =
-  try%lwt
+  try
     let (nodename, hostname) = node_to_namehost node in
-    let%lwt addr = get_addr_exn hostname in
-      open_socket addr epmd_port
-	(fun socket ->
-	   let packet = Packet.decorate `BE2 (Bytes.of_string ("\122" ^ nodename)) in
-	   let%lwt _ = Lwt_unix.write socket packet 0 (Bytes.length packet) in
-	   let%lwt () = Lwt_unix.wait_read socket in
-	   let buf = Bytes.make 64 '\000' in
-	   let%lwt c = Lwt_unix.read socket buf 0 64 in
-	     if c >= 4 && Bytes.get buf 1 = '\000' then (
-	       Lwt.return
-		 (Some ((Char.code (Bytes.get buf 2) lsl 8) lor
-                          Char.code (Bytes.get buf 3)))
-	     ) else raise Not_found
-	)
+    let addr = get_addr_exn hostname in
+    open_socket addr epmd_port
+      (fun socket ->
+	let packet = Packet.decorate `BE2 (Bytes.of_string ("\122" ^ nodename)) in
+        Eio.Flow.copy_string (Bytes.to_string packet) socket;
+        let buf = Cstruct.create 64 in
+        let c = Eio.Flow.single_read socket buf in
+	if c >= 4 && Cstruct.get_byte buf 1 = 0 then (
+	  Some (((Cstruct.get_byte buf 2) lsl 8) lor
+                  (Cstruct.get_byte buf 3))
+	) else raise Not_found
+      )
   with
-    | _ -> Lwt.return None
+  | _ -> None
 
 (*
 let _ =
@@ -294,13 +288,13 @@ let get_nodes () =
 module ErlNodeConnection :
 sig
   include GenServer.Type with
-    type init_data = [ `Out of string | `In of Lwt_unix.file_descr ]
+    type init_data = [ `Out of string | `In of Eio_unix.Net.stream_socket_ty Eio.Std.r ]
     and type stop_reason = GenServer.reason
 end =
 struct
   type msg += Parse
 
-  type init_data = [ `Out of string | `In of Lwt_unix.file_descr ]
+  type init_data = [ `Out of string | `In of Eio_unix.Net.stream_socket_ty Eio.Std.r ]
 
   type stop_reason = GenServer.reason
 
@@ -322,7 +316,7 @@ struct
       }
 
   let send_text socket text =
-    Socket.send_async socket text
+    Socket.send socket text
 
   let send_packet state packet =
     let packet_type =
@@ -382,53 +376,53 @@ struct
 
   let init node self =
     match node with
-      | `Out node -> (
-	  add_node_connection node self;
-	  try%lwt
-	    (match%lwt lookup_node node with
-	       | Some port -> (
-		   let (_nodename, hostname) = node_to_namehost node in
-		   let%lwt addr = get_addr_exn hostname in
-		     match%lwt open_socket' addr port with
-		       | Some socket -> (
-			   let socket = Socket.of_fd socket self in
-			     ignore (Socket.activate socket self);
-			     let state = Recv_status in
-			     let state =
-			       {pid = self;
-				node;
-				socket;
-				state;
-				p = Packet.create `BE2;
-				queue = Queue.create ();
-			       }
-			     in
-			       send_packet state (make_send_name_req ());
-			       Lwt.return (`Continue state)
-			 )
-		       | None -> raise Not_found
-		 )
-	       | None -> raise Not_found
-	    )
-	  with
-	    | _exn ->
-		remove_node_connection node;
-		Lwt.return `Init_failed
+    | `Out node -> (
+      add_node_connection node self;
+      try
+	(match lookup_node node with
+	 | Some port -> (
+	   let (_nodename, hostname) = node_to_namehost node in
+	   let addr = get_addr_exn hostname in
+	   match open_socket' addr port with
+	   | Some socket -> (
+	     let socket = Socket.of_fd socket self in
+	     ignore (Socket.activate socket self);
+	     let state = Recv_status in
+	     let state =
+	       {pid = self;
+		node;
+		socket;
+		state;
+		p = Packet.create `BE2;
+		queue = Queue.create ();
+	       }
+	     in
+	     send_packet state (make_send_name_req ());
+	     `Continue state
+	   )
+	   | None -> raise Not_found
+	 )
+	 | None -> raise Not_found
 	)
-      | `In socket ->
-	  let socket = Socket.of_fd socket self in
-	    ignore (Socket.activate socket self);
-	    let state = Recv_name in
-	      Lwt.return
-		(`Continue
-		   {pid = self;
-		    node = "";
-		    socket;
-		    state;
-		    p = Packet.create `BE2;
-		    queue = Queue.create ();
-		   })
+      with
+      | _exn ->
+	 remove_node_connection node;
+	 `Init_failed
+    )
+    | `In socket ->
+       let socket = Socket.of_fd socket self in
+       ignore (Socket.activate socket self);
+       let state = Recv_name in
+       `Continue
+	 {pid = self;
+	  node = "";
+	  socket;
+	  state;
+	  p = Packet.create `BE2;
+	  queue = Queue.create ();
+	 }
 
+(*
   let _open_socket addr port self =
     (*let timeout = 1.0 in*)
     let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
@@ -440,147 +434,160 @@ struct
 
   let _close_socket socket =
     Socket.close socket
+ *)
 
   let switch_to_connection_established state =
     monitor_nodes_iter (fun pid -> pid $! Node_up state.node);
     Packet.change state.p Packet.BE4;
-    Lwt.return (`Continue {state with
-			     state = Connection_established})
+    `Continue {state with
+	state = Connection_established}
 
   let handle_msg msg state =
     match state.state, msg with
-      | Recv_name, `Packet data ->
-	  if data.[0] = 'n' && String.length data > 7 then (
-	    let node = String.sub data 7 (String.length data - 7) in
-	      send_packet state (Bytes.of_string "sok");
-	      let challege = Random.int 1000000000 in
-		send_packet state (make_challenge_req challege);
-		Lwt.return
-		  (`Continue
-		     {state with
-			state = Recv_challenge_reply challege;
-			node})
-	  ) else (
-	    Lwt.return (`Stop state)
-	  )
-      | Recv_status, `Packet data ->
-	  if data.[0] = 's' then (
-	    match data with
-	      | "sok"
-	      | "sok_simultaneous" ->
-		  Lwt.return (`Continue {state with state = Recv_challenge})
-	      | "salive" ->
-		  send_packet state (Bytes.of_string "strue");
-		  Lwt.return (`Continue {state with state = Recv_challenge})
-	      | "snok"
-	      | "snot_allowed"
-	      | _ ->
-		  let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
-		    Lwt.return (`Stop state)
-	  ) else (
-	    let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
-	      Lwt.return (`Stop state)
-	  )
-      | Recv_challenge, `Packet data ->
-	  if data.[0] = 'n' then (
-	    let schallenge = String.sub data 7 4 in
-	    let challenge =
-	      Int64.logor
-		(Int64.shift_left (Int64.of_int (Char.code schallenge.[0])) 24)
-		(Int64.of_int
-		   ((Char.code schallenge.[1] lsl 16) lor
-		      (Char.code schallenge.[2] lsl 8) lor
-		      (Char.code schallenge.[3])))
-	    in
-	    let digest = Jlib.md5 (!cookie ^ Int64.to_string challenge) in
-	    let mychallenge = Random.int 1000000000 in
-	      send_packet state
-		(make_challenge_reply mychallenge digest);
-	      Lwt.return (`Continue {state with
-				       state = Recv_challenge_ack mychallenge})
-	  ) else (
-	    let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
-	      Lwt.return (`Stop state)
-	  )
-      | Recv_challenge_reply mychallenge, `Packet data ->
-	  if data.[0] = 'r' && String.length data >= 5 then (
-	    let digest = Jlib.md5 (!cookie ^ string_of_int mychallenge) in
-	    let digest' = String.sub data 5 (String.length data - 5) in
-	      if digest = digest' then (
-		let schallenge = String.sub data 1 4 in
-		let challenge =
-		  Int64.logor
-		    (Int64.shift_left
-		       (Int64.of_int (Char.code schallenge.[0])) 24)
-		    (Int64.of_int
-		       ((Char.code schallenge.[1] lsl 16) lor
-			  (Char.code schallenge.[2] lsl 8) lor
-			  (Char.code schallenge.[3])))
-		in
-		let digest = Jlib.md5 (!cookie ^ Int64.to_string challenge) in
-		  send_packet state (make_challenge_ack digest);
-		  add_node_connection state.node state.pid;
-		  switch_to_connection_established state
-	      ) else (
-		let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
-		  Lwt.return (`Stop state)
-	      )
-	  ) else (
-	    let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
-	      Lwt.return (`Stop state)
-	  )
-      | Recv_challenge_ack mychallenge, `Packet data ->
-	  if data.[0] = 'a' then (
-	    let digest = Jlib.md5 (!cookie ^ string_of_int mychallenge) in
-	    let digest' = String.sub data 1 (String.length data - 1) in
-	      if digest = digest' then (
-		switch_to_connection_established state
-	      ) else (
-		let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
-		  Lwt.return (`Stop state)
-	      )
-	  ) else (
-	    let%lwt () = Lwt_log.error_f "Can't connect to %s" state.node in
-	      Lwt.return (`Stop state)
-	  )
-      | Connection_established, `Packet data ->
-	  if String.length data = 0 then (
-	    send_packet state Bytes.empty;
-	    Lwt.return (`Continue state)
-	  ) else if data.[0] = 'p' then (
-	    let (control, pos) = Erlang.binary_to_term data 1 in
-	    let%lwt () =
-	      Lwt_log.debug_f ~section
-		"%a control message %s"
-		format_pid state.pid (Erlang.term_to_string control)
-	    in
-	    let open Erlang in
-	      match control with
-		| ErlTuple [| ErlInt 2; _; _ |] ->
-		    let (message, _pos) = Erlang.binary_to_term data pos in
-		    let%lwt () =
-		      Lwt_log.debug_f ~section
-			"message %s" (Erlang.term_to_string message)
-		    in
-		      Lwt.return (`Continue state)
-		| ErlTuple [| ErlInt 6; _; _; ErlAtom name |] ->
-		    let (message, _pos) = Erlang.binary_to_term data pos in
-		    let%lwt () =
-		      Lwt_log.debug_f ~section
-			"message %s" (Erlang.term_to_string message)
-		    in
-		      (try
-			 name $!! Erl message
-		       with
-			 | _ -> ()
-		      );
-		      Lwt.return (`Continue state)
-		| _ ->
-		    Lwt.return (`Continue state)
-	  ) else (
-	    let%lwt () = Lwt_log.error_f "Protocol error from %s" state.node in
-	      Lwt.return (`Stop state)
-	  )
+    | Recv_name, `Packet data ->
+       if data.[0] = 'n' && String.length data > 7 then (
+	 let node = String.sub data 7 (String.length data - 7) in
+	 send_packet state (Bytes.of_string "sok");
+	 let challege = Random.int 1000000000 in
+	 send_packet state (make_challenge_req challege);
+	 `Continue
+	   {state with
+	     state = Recv_challenge_reply challege;
+	     node}
+       ) else (
+	 `Stop state
+       )
+    | Recv_status, `Packet data ->
+       if data.[0] = 's' then (
+	 match data with
+	 | "sok"
+	 | "sok_simultaneous" ->
+	    `Continue {state with state = Recv_challenge}
+	 | "salive" ->
+	    send_packet state (Bytes.of_string "strue");
+	    `Continue {state with state = Recv_challenge}
+	 | "snok"
+	 | "snot_allowed"
+	 | _ ->
+            Logs.err ~src
+	      (fun m ->
+                m "Can't connect to %s" state.node);
+	    `Stop state
+       ) else (
+         Logs.err ~src
+	   (fun m ->
+             m "Can't connect to %s" state.node);
+	 `Stop state
+       )
+    | Recv_challenge, `Packet data ->
+       if data.[0] = 'n' then (
+	 let schallenge = String.sub data 7 4 in
+	 let challenge =
+	   Int64.logor
+	     (Int64.shift_left (Int64.of_int (Char.code schallenge.[0])) 24)
+	     (Int64.of_int
+		((Char.code schallenge.[1] lsl 16) lor
+		   (Char.code schallenge.[2] lsl 8) lor
+		     (Char.code schallenge.[3])))
+	 in
+	 let digest = Jlib.md5 (!cookie ^ Int64.to_string challenge) in
+	 let mychallenge = Random.int 1000000000 in
+	 send_packet state
+	   (make_challenge_reply mychallenge digest);
+	 `Continue {state with
+	     state = Recv_challenge_ack mychallenge}
+       ) else (
+         Logs.err ~src
+	   (fun m ->
+             m "Can't connect to %s" state.node);
+	 `Stop state
+       )
+    | Recv_challenge_reply mychallenge, `Packet data ->
+       if data.[0] = 'r' && String.length data >= 5 then (
+	 let digest = Jlib.md5 (!cookie ^ string_of_int mychallenge) in
+	 let digest' = String.sub data 5 (String.length data - 5) in
+	 if digest = digest' then (
+	   let schallenge = String.sub data 1 4 in
+	   let challenge =
+	     Int64.logor
+	       (Int64.shift_left
+		  (Int64.of_int (Char.code schallenge.[0])) 24)
+	       (Int64.of_int
+		  ((Char.code schallenge.[1] lsl 16) lor
+		     (Char.code schallenge.[2] lsl 8) lor
+		       (Char.code schallenge.[3])))
+	   in
+	   let digest = Jlib.md5 (!cookie ^ Int64.to_string challenge) in
+	   send_packet state (make_challenge_ack digest);
+	   add_node_connection state.node state.pid;
+	   switch_to_connection_established state
+	 ) else (
+           Logs.err ~src
+	     (fun m ->
+               m "Can't connect to %s" state.node);
+	   `Stop state
+	 )
+       ) else (
+         Logs.err ~src
+	   (fun m ->
+             m "Can't connect to %s" state.node);
+	 `Stop state
+       )
+    | Recv_challenge_ack mychallenge, `Packet data ->
+       if data.[0] = 'a' then (
+	 let digest = Jlib.md5 (!cookie ^ string_of_int mychallenge) in
+	 let digest' = String.sub data 1 (String.length data - 1) in
+	 if digest = digest' then (
+	   switch_to_connection_established state
+	 ) else (
+           Logs.err ~src
+	     (fun m ->
+               m "Can't connect to %s" state.node);
+	   `Stop state
+	 )
+       ) else (
+         Logs.err ~src
+	   (fun m ->
+             m "Can't connect to %s" state.node);
+	 `Stop state
+       )
+    | Connection_established, `Packet data ->
+       if String.length data = 0 then (
+	 send_packet state Bytes.empty;
+	 `Continue state
+       ) else if data.[0] = 'p' then (
+	 let (control, pos) = Erlang.binary_to_term data 1 in
+         Logs.debug ~src
+	   (fun m ->
+             m "%a control message %s"
+	       pp_pid state.pid (Erlang.term_to_string control));
+	 let open Erlang in
+	 match control with
+	 | ErlTuple [| ErlInt 2; _; _ |] ->
+	    let (message, _pos) = Erlang.binary_to_term data pos in
+            Logs.debug ~src
+	      (fun m ->
+                m "message %s" (Erlang.term_to_string message));
+	    `Continue state
+	 | ErlTuple [| ErlInt 6; _; _; ErlAtom name |] ->
+	    let (message, _pos) = Erlang.binary_to_term data pos in
+            Logs.debug ~src
+	      (fun m ->
+                m "message %s" (Erlang.term_to_string message));
+	    (try
+	       name $!! Erl message
+	     with
+	     | _ -> ()
+	    );
+	    `Continue state
+	 | _ ->
+	    `Continue state
+       ) else (
+         Logs.err ~src
+	   (fun m ->
+             m "Protocol error from %s" state.node);
+	 `Stop state
+       )
 
   let parse state data =
     match Packet.parse state.p data with
@@ -597,89 +604,82 @@ struct
     | _, Recv_challenge
     | _, Recv_challenge_reply _
     | _, Recv_challenge_ack _ ->
-	Queue.add msg state.queue;
-	Lwt.return (`Continue state)
-	  (* TODO: send queue *)
+       Queue.add msg state.queue;
+       `Continue state
+    (* TODO: send queue *)
     | `Send (pid, term), Connection_established ->
-	let open Erlang in
-	let control = ErlTuple [| ErlInt 2; ErlAtom ""; ErlPid pid |] in
-	let b = Buffer.create 10 in
-	  Buffer.add_char b 'p';
-	  term_to_buffer b control;
-	  term_to_buffer b term;
-	  let%lwt () =
-	    Lwt_log.debug_f ~section
-	      "%a send %S"
-	      format_pid state.pid
-	      (Buffer.contents b)
-	  in
-	    send_packet state (Buffer.to_bytes b);
-	    Lwt.return (`Continue state)
+       let open Erlang in
+       let control = ErlTuple [| ErlInt 2; ErlAtom ""; ErlPid pid |] in
+       let b = Buffer.create 10 in
+       Buffer.add_char b 'p';
+       term_to_buffer b control;
+       term_to_buffer b term;
+       Logs.debug ~src
+	 (fun m ->
+           m "%a send %S"
+	     pp_pid state.pid
+	     (Buffer.contents b));
+       send_packet state (Buffer.to_bytes b);
+       `Continue state
     | `SendName (name, term), Connection_established ->
-	let open Erlang in
-	let pid = make_pid (node ()) 0 0 in
-	let control =
-	  ErlTuple [| ErlInt 6; ErlPid pid; ErlAtom ""; ErlAtom name |]
-	in
-	let b = Buffer.create 10 in
-	  Buffer.add_char b 'p';
-	  term_to_buffer b control;
-	  term_to_buffer b term;
-	  let%lwt () =
-	    Lwt_log.debug_f ~section
-	      "%a send %S"
-	      format_pid state.pid
-	      (Buffer.contents b)
-	  in
-	    send_packet state (Buffer.to_bytes b);
-	    Lwt.return (`Continue state)
+       let open Erlang in
+       let pid = make_pid (node ()) 0 0 in
+       let control =
+	 ErlTuple [| ErlInt 6; ErlPid pid; ErlAtom ""; ErlAtom name |]
+       in
+       let b = Buffer.create 10 in
+       Buffer.add_char b 'p';
+       term_to_buffer b control;
+       term_to_buffer b term;
+       Logs.debug ~src
+	 (fun m ->
+           m "%a send %S"
+	     pp_pid state.pid
+	     (Buffer.contents b));
+       send_packet state (Buffer.to_bytes b);
+       `Continue state
 
   let handle (msg : msg) state =
     match msg with
-      | Socket.Tcp_data (socket, data) -> (
-	  let%lwt () =
-	    Lwt_log.debug_f ~section
-	      "%a tcp data %d %S"
-	      format_pid state.pid
-	      (String.length data) data
-	  in
-	    parse state data;
-	    ignore (Socket.activate socket state.pid);
-	    Lwt.return (`Continue state)
-	)
-      | Socket.Tcp_close _socket -> (
-	  let%lwt () = Lwt_log.debug ~section "tcp close" in
-	    Lwt.return (`Stop state)
-	)
-      | Packet data ->
-	  let%lwt () =
-	    Lwt_log.debug_f ~section
-	      "packet %S" data
-	  in
-	  handle_msg (`Packet data) state
-      | Parse ->
-	  parse state "";
-	  Lwt.return (`Continue state)
-      | Node_connection m ->
-	  handle_send m state
-      | _ ->
-         (* TODO: add a warning *)
-	 Lwt.return (`Continue state)
+    | Socket.Tcp_data (socket, data) -> (
+      Logs.debug ~src
+	(fun m ->
+          m "%a tcp data %d %S"
+	    pp_pid state.pid
+	    (String.length data) data);
+      parse state data;
+      ignore (Socket.activate socket state.pid);
+      `Continue state
+    )
+    | Socket.Tcp_close _socket -> (
+      Logs.debug ~src (fun m -> m "tcp close");
+      `Stop state
+    )
+    | Packet data ->
+       Logs.debug ~src (fun m -> m "packet %S" data);
+       handle_msg (`Packet data) state
+    | Parse ->
+       parse state "";
+       `Continue state
+    | Node_connection m ->
+       handle_send m state
+    | _ ->
+       (* TODO: add a warning *)
+       `Continue state
 
   let terminate state _reason =
-    let%lwt () =
-      Lwt_log.notice_f ~section
-	"%a terminated connection to %S" format_pid state.pid state.node
-    in
-      remove_node_connection state.node;
-      (match state.state with
-	 | Connection_established ->
-	     monitor_nodes_iter (fun pid -> pid $! Node_down state.node);
-	 | _ ->
-	     ()
-      );
-      let%lwt () = Socket.close state.socket in
-	Lwt.return ()
+    Logs.info ~src
+      (fun m ->
+        m "%a terminated connection to %S" pp_pid state.pid state.node);
+    remove_node_connection state.node;
+    (match state.state with
+     | Connection_established ->
+	monitor_nodes_iter (fun pid -> pid $! Node_down state.node);
+     | _ ->
+	()
+    );
+    Socket.close state.socket;
+    ()
 
 
 end
@@ -696,20 +696,20 @@ let try_connect node =
 
 let dist_send pid term =
   let node = Erlang.node_of_pid pid in
-    match find_node_connection node with
-      | Some conn ->
-	  conn $! Node_connection (`Send (pid, term))
-      | None ->
-	  let conn = ErlNodeConnectionServer.start (`Out node) in
-	    conn $! Node_connection (`Send (pid, term))
+  match find_node_connection node with
+  | Some conn ->
+     conn $! Node_connection (`Send (pid, term))
+  | None ->
+     let conn = ErlNodeConnectionServer.start (`Out node) in
+     conn $! Node_connection (`Send (pid, term))
 
 let dist_send_by_name name node term =
   match find_node_connection node with
-    | Some conn ->
-	conn $! Node_connection (`SendName (name, term))
-    | None ->
-	let conn = ErlNodeConnectionServer.start (`Out node) in
-	  conn $! Node_connection (`SendName (name, term))
+  | Some conn ->
+     conn $! Node_connection (`SendName (name, term))
+  | None ->
+     let conn = ErlNodeConnectionServer.start (`Out node) in
+     conn $! Node_connection (`SendName (name, term))
 
 module ErlListener =
 struct
@@ -720,29 +720,30 @@ struct
       nameinfo.Unix.ni_hostname ^ ":" ^ nameinfo.Unix.ni_service
 
   let rec accept start listen_socket =
-    let%lwt (socket, _) = Lwt_unix.accept listen_socket in
-    let peername = Lwt_unix.getpeername socket in
-    let sockname = Lwt_unix.getsockname socket in
-    let%lwt () =
-      Lwt_log.notice_f
-	~section
-	"accepted connection %s -> %s"
-	(sockaddr_to_string peername)
-	(sockaddr_to_string sockname)
+    let (socket, _peer) =
+      Eio.Net.accept
+        ~sw:(Process.get_global_switch ())
+        listen_socket
     in
+    let fd = Eio_unix.Net.fd socket in
+    let peername = Eio_unix.Fd.use_exn "getpeername" fd Unix.getpeername in
+    let sockname = Eio_unix.Fd.use_exn "getsockname" fd Unix.getsockname in
+    Logs.info ~src
+      (fun m ->
+        m "accepted connection %s -> %s"
+	  (sockaddr_to_string peername)
+	  (sockaddr_to_string sockname));
     let pid = ErlNodeConnectionServer.start (`In socket) in
-    let%lwt () =
-      Lwt_log.notice_f
-	~section
-	"%a is handling connection %s -> %s"
-	format_pid pid
-	(sockaddr_to_string peername)
-	(sockaddr_to_string sockname)
-    in
-      accept start listen_socket
+    Logs.info ~src
+      (fun m ->
+        m "%a is handling connection %s -> %s"
+	  pp_pid pid
+	  (sockaddr_to_string peername)
+	  (sockaddr_to_string sockname));
+    accept start listen_socket
 
   let set_port socket =
-    let addr = Lwt_unix.getsockname socket in
+    let addr = Unix.getsockname socket in
     let nameinfo =
       Unix.getnameinfo addr [Unix.NI_NUMERICHOST; Unix.NI_NUMERICSERV]
     in
@@ -751,12 +752,15 @@ struct
   let start _self =
     Process.dist_send_ref := dist_send;
     Process.dist_send_by_name_ref := dist_send_by_name;
-    let socket = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-    let addr = Unix.ADDR_INET (Unix.inet_addr_any, 0) in
-    Lwt_unix.setsockopt socket Unix.SO_REUSEADDR true;
-    let%lwt () = Lwt_unix.bind socket addr in
-    set_port socket;
-    Lwt_unix.listen socket 1024;
+    let addr = `Tcp (Eio.Net.Ipaddr.V4.any, 0) in
+    let socket =
+      Eio.Net.listen ~reuse_addr:true ~backlog:1024
+        ~sw:(Process.get_global_switch ())
+        (Process.get_global_env ())#net
+        addr
+    in
+    let fd = Eio_unix.Net.fd socket in
+    Eio_unix.Fd.use_exn "set_port" fd set_port;
     accept start socket
 end
 
@@ -777,18 +781,18 @@ struct
 
   let init () self =
     register self "net_kernel";
-    Lwt.return (`Continue {pid = self})
+    `Continue {pid = self}
 
   open Erlang
 
   let handle_call request from state =
     match request, from with
-      | ErlTuple [| ErlAtom "is_auth"; _ |], ErlTuple [| ErlPid pid; tag |] ->
-	  let m = ErlTuple [| tag; ErlAtom "yes" |] in
-	    pid $!!! m;
-	    Lwt.return (`Continue state)
-      | _ ->
-	  Lwt.return (`Continue state)
+    | ErlTuple [| ErlAtom "is_auth"; _ |], ErlTuple [| ErlPid pid; tag |] ->
+       let m = ErlTuple [| tag; ErlAtom "yes" |] in
+       pid $!!! m;
+       `Continue state
+    | _ ->
+       `Continue state
 
   let handle (msg : msg) state =
     match msg with
@@ -799,18 +803,17 @@ struct
 		"packet %S" data
 	  in
 	    handle_call m state*)
-      | Erl (ErlTuple [| ErlAtom "$gen_call"; from; request |]) ->
-	  handle_call request from state
-      | Erl term ->
-	  let%lwt () =
-	    Lwt_log.notice_f ~section
-	      "unexpected packet %s" (Erlang.term_to_string term)
-	  in
-	    Lwt.return (`Continue state)
-      | _ -> assert false
+    | Erl (ErlTuple [| ErlAtom "$gen_call"; from; request |]) ->
+       handle_call request from state
+    | Erl term ->
+       Logs.info ~src
+	 (fun m ->
+           m "unexpected packet %s" (Erlang.term_to_string term));
+       `Continue state
+    | _ -> assert false
 
   let terminate _state _reason =
-    Lwt.return ()
+    ()
 
 end
 
@@ -968,8 +971,9 @@ module ErlGlobalServer = GenServer.Make(ErlGlobal)
 *)
 
 
-let _ =
+let start_net () =
   ignore (ErlNetKernelServer.start ());
   (*ErlGlobalServer.start ();*)
-  spawn ErlListener.start
+  ignore (spawn ErlListener.start);
   (*ErlNodeConnectionServer.start (`Out "asd@localhost")*)
+  ()

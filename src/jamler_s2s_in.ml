@@ -1,6 +1,6 @@
 open Process
 
-let section = Jamler_log.new_section "s2s_in"
+let src = Jamler_log.new_src "s2s_in"
 
 module XMLReceiver = Jamler_receiver
 module GenServer = Gen_server
@@ -18,7 +18,7 @@ module S2SIn :
 sig
   type validation_msg = Jamler_s2s_lib.validation_msg
   include GenServer.Type with
-    type init_data = Lwt_unix.file_descr
+    type init_data = Eio_unix.Net.stream_socket_ty Eio.Std.r
     and type stop_reason = GenServer.reason
 
   val s2s_stream_features :
@@ -60,7 +60,7 @@ struct
 	  shaper,
 	  timer *)}
 
-  type init_data = Lwt_unix.file_descr
+  type init_data = Eio_unix.Net.stream_socket_ty Eio.Std.r
 
   type stop_reason = GenServer.reason
 
@@ -72,7 +72,7 @@ struct
     Jlib.get_random_string ()
 
   let send_text state text =
-    Socket.send_async state.socket text
+    Socket.send state.socket text
 
   let send_string state text =
     send_text state (Bytes.of_string text)
@@ -96,7 +96,7 @@ struct
     send_string state stream_trailer
 
   let init socket self =
-    let%lwt () = Lwt_log.debug ~section "started" in
+    Logs.debug ~src (fun m -> m "started");
     let socket = Socket.of_fd socket self in
     let xml_receiver = XMLReceiver.create self in
     let state = {pid = self;
@@ -116,8 +116,8 @@ struct
 		 auth_domain = Jlib.nameprep_exn "";
 		 (* shaper, timer *)}
     in
-      ignore (Socket.activate socket self);
-      Lwt.return (`Continue state)
+    ignore (Socket.activate socket self);
+    `Continue state
 
   let invalid_ns_err = Jlib.serr_invalid_namespace
   let invalid_xml_err = Jlib.serr_xml_not_well_formed
@@ -142,14 +142,14 @@ struct
 
   let wait_for_stream msg state =
     match msg with
-      | `XmlStreamStart (_name, attrs) -> (
-	match (Xml.get_attr_s "xmlns" attrs,
-	       Xml.get_attr_s "xmlns:db" attrs,
-	       Jlib.nameprep (Xml.get_attr_s "to" attrs),
-	       (Xml.get_attr_s "version" attrs) = "1.0") with
-	  | "jabber:server", _, (Some lserver), true
-	    when (state.tls && not state.authenticated) ->
-	    send_string state (stream_header state.streamid " version='1.0'");
+    | `XmlStreamStart (_name, attrs) -> (
+      match (Xml.get_attr_s "xmlns" attrs,
+	     Xml.get_attr_s "xmlns:db" attrs,
+	     Jlib.nameprep (Xml.get_attr_s "to" attrs),
+	     (Xml.get_attr_s "version" attrs) = "1.0") with
+      | "jabber:server", _, (Some lserver), true
+	   when (state.tls && not state.authenticated) ->
+	 send_string state (stream_header state.streamid " version='1.0'");
 	    (* SASL =
 		if
 		    StateData#state.tls_enabled ->
@@ -174,17 +174,17 @@ struct
 		    true ->
 			[]
 		end, *)
-	    let sasl = [] in
-	    let starttls =
-	      if state.tls_enabled then
-		[]
-	      else if (not state.tls_enabled && not state.tls_required) then
-		[`XmlElement ("starttls", [("xmlns", [%ns "TLS"])], [])]
-	      else if (not state.tls_enabled && state.tls_required) then
-		[`XmlElement ("starttls", [("xmlns", [%ns "TLS"])],
-			      [`XmlElement ("required", [], [])])]
-	      else
-		assert false in
+	 let sasl = [] in
+	 let starttls =
+	   if state.tls_enabled then
+	     []
+	   else if (not state.tls_enabled && not state.tls_required) then
+	     [`XmlElement ("starttls", [("xmlns", [%xmlns "TLS"])], [])]
+	   else if (not state.tls_enabled && state.tls_required) then
+	     [`XmlElement ("starttls", [("xmlns", [%xmlns "TLS"])],
+			   [`XmlElement ("required", [], [])])]
+	   else
+	     assert false in
 	      (* case SASL of
 		{error_cert_verif, CertVerifyResult, Certificate} ->
 		    CertError = tls:get_cert_verify_string(CertVerifyResult, Certificate),
@@ -196,171 +196,172 @@ struct
 
 		    {stop, normal, StateData};
 		*)
-	    let%lwt feats = Hooks.run_fold s2s_stream_features lserver [] lserver in
-	    send_element state (`XmlElement ("stream:features", [],
-					     sasl @ starttls @ feats));
-	    Lwt.return (`Continue {state
-				   with state = Wait_for_feature_request;
-				     server = lserver})
-	  | "jabber:server", _, (Some lserver), true when state.authenticated ->
-	    send_string state (stream_header state.streamid " version='1.0'");
-	    let%lwt feats = Hooks.run_fold s2s_stream_features lserver [] lserver in
-	    send_element state (`XmlElement ("stream:features", [], feats));
-	    Lwt.return (`Continue {state
-				   with state = Stream_established;
-				     server = lserver})
-	  | "jabber:server", "jabber:server:dialback", (Some lserver), _ ->
-	    send_string state (stream_header state.streamid "");
-	    Lwt.return (`Continue {state
-				   with state = Stream_established;
-				     server = lserver})
-	  | _ ->
-	    send_element state invalid_ns_err;
-	    Lwt.return (`Stop state))
-      | `XmlStreamError _ ->
-	send_string state (stream_header state.streamid "");
-	send_element state invalid_xml_err;
-	send_trailer state;
-	Lwt.return (`Stop state)
-      | `XmlStreamEnd _ ->
-	send_trailer state;
-	Lwt.return (`Stop state)
-      | `XmlStreamElement _ ->
-	send_trailer state;
-	Lwt.return (`Stop state)
-      | `Valid _
-      | `Invalid _ -> assert false
+	 let feats = Hooks.run_fold s2s_stream_features lserver [] lserver in
+	 send_element state (`XmlElement ("stream:features", [],
+					  sasl @ starttls @ feats));
+	 `Continue {state
+	   with state = Wait_for_feature_request;
+		server = lserver}
+      | "jabber:server", _, (Some lserver), true when state.authenticated ->
+	 send_string state (stream_header state.streamid " version='1.0'");
+	 let feats = Hooks.run_fold s2s_stream_features lserver [] lserver in
+	 send_element state (`XmlElement ("stream:features", [], feats));
+	 `Continue {state
+	   with state = Stream_established;
+		server = lserver}
+      | "jabber:server", "jabber:server:dialback", (Some lserver), _ ->
+	 send_string state (stream_header state.streamid "");
+	 `Continue {state
+	   with state = Stream_established;
+		server = lserver}
+      | _ ->
+	 send_element state invalid_ns_err;
+	 `Stop state
+    )
+    | `XmlStreamError _ ->
+       send_string state (stream_header state.streamid "");
+       send_element state invalid_xml_err;
+       send_trailer state;
+       `Stop state
+    | `XmlStreamEnd _ ->
+       send_trailer state;
+       `Stop state
+    | `XmlStreamElement _ ->
+       send_trailer state;
+       `Stop state
+    | `Valid _
+    | `Invalid _ -> assert false
 
   let stream_established msg state =
     match msg with
-      | `XmlStreamElement el -> (
-	(* cancel_timer(StateData#state.timer),
-	   Timer = erlang:start_timer(?S2STIMEOUT, self(), []), *)
-	(match is_key_packet el with
-	  | Key (to', from, id, key) ->
-	    let%lwt () = Lwt_log.debug_f ~section
-		       "get key: to = %s, from = %s, id = %s, key = %s"
-		       to' from id key
-	    in
-	    (match (Jlib.nameprep to', Jlib.nameprep from) with
-	      | Some lto, Some lfrom ->
-		(match (Jamler_s2s_lib.allow_host lto lfrom,
-			List.mem lto (Router.dirty_get_all_domains ())) with
-		  | true, true ->
-		    (*
-		      S2SOut.terminate_if_waiting_delay lto lfrom;
-		    *)
-		     ignore (
-                         Jamler_s2s_out.S2SOutServer.start
-		           (lto, lfrom,
-		            `Verify
-			      (state.pid, key, state.streamid)));
-		    Hashtbl.replace state.connections
-		      (lfrom, lto) Wait_for_verification;
-		    (* change_shaper(StateData, LTo, jlib:make_jid("", LFrom, "")), *)
-		    Lwt.return (`Continue state) (* timer = Timer *)
-		  | _, false ->
-		    send_element state Jlib.serr_host_unknown;
-		    Lwt.return (`Stop state)
-		  | false, _ ->
-		    send_element state Jlib.serr_invalid_from;
-		    Lwt.return (`Stop state))
-	      | _, _ ->
-		send_element state Jlib.serr_host_unknown;
-		Lwt.return (`Stop state))
-	  | Verify (to', from, id, key) ->
-	    let%lwt () = Lwt_log.debug_f ~section
-		       "verify key: to = %s, from = %s, id = %s, key =%s"
-		       to' from id key in
-	    let type' =
-	      match (Jlib.nameprep to', Jlib.nameprep from) with
-		| Some lto, Some lfrom -> (
-		    match Jamler_s2s_lib.has_key (lto, lfrom) key with
-		      | true -> "valid"
-		      | false -> "invalid")
-		| _, _ ->
-		    "invalid"
-	    in
-	      send_element state (`XmlElement ("db:verify",
-					       [("from", to');
-						("to", from);
-						("id", id);
-						("type", type')],
-					       []));
-	      Lwt.return (`Continue state) (* timer = Timer *)
-	  | None ->
-	    let newel = Jlib.remove_attr "xmlns" el in
-	    let `XmlElement (name, attrs, _els) = newel in
-	    let from_s = Xml.get_attr_s "from" attrs in
-	    let to_s = Xml.get_attr_s "to" attrs in
-	    let%lwt () =
-	      (match (Jlib.string_to_jid from_s, Jlib.string_to_jid to_s) with
-		 | Some from, Some to' ->
-		     let lfrom = from.Jlib.lserver in
-		     let lto = to'.Jlib.lserver in
-		       if state.authenticated then (
-			 if (lfrom = state.auth_domain &&
-			     List.mem lto (Router.dirty_get_all_domains ())) then (
-			   if (name = "iq" || name = "message" || name = "presence")
-			   then (
-			     let%lwt () =
-			       Hooks.run s2s_receive_packet lto (from, to', newel)
-			     in
-			       Router.route from to' newel;
-			       Lwt.return ()
-			   ) else Lwt.return ()
-			 ) else Lwt.return ()
-		       ) else (
-			 try
-			   if (Hashtbl.find state.connections (lfrom, lto) = Established
-			       && (name = "iq" || name = "message" || name = "presence"))
-			   then (
-			     let%lwt () =
-			       Hooks.run s2s_receive_packet lto (from, to', newel)
-			     in
-        		       Router.route from to' newel;
-			       Lwt.return ()
-			   ) else Lwt.return ()
-			 with Not_found ->
-			   Lwt.return ()
-		       );
-		 | _, _ ->
-		     Lwt.return ())
-	    in
-	    let%lwt () =
-	      Hooks.run s2s_loop_debug state.server (`XmlStreamElement el)
-	    in
-	      Lwt.return (`Continue state)))
-      | `Valid (from, to') ->
-	  send_element state
-	    (`XmlElement
-	       ("db:result",
-		[("from", (to' : Jlib.namepreped :> string));
-		 ("to", (from : Jlib.namepreped :> string));
-		 ("type", "valid")],
-		[]));
-	  Hashtbl.replace state.connections (from, to') Established;
-	  Lwt.return (`Continue state)
+    | `XmlStreamElement el -> (
+      (* cancel_timer(StateData#state.timer),
+	 Timer = erlang:start_timer(?S2STIMEOUT, self(), []), *)
+      (match is_key_packet el with
+       | Key (to', from, id, key) ->
+          Logs.debug ~src
+	    (fun m ->
+              m "get key: to = %s, from = %s, id = %s, key = %s"
+		to' from id key);
+	  (match (Jlib.nameprep to', Jlib.nameprep from) with
+	   | Some lto, Some lfrom ->
+	      (match (Jamler_s2s_lib.allow_host lto lfrom,
+		      List.mem lto (Router.dirty_get_all_domains ())) with
+	       | true, true ->
+		  (*
+		    S2SOut.terminate_if_waiting_delay lto lfrom;
+		   *)
+		  ignore (
+                      Jamler_s2s_out.S2SOutServer.start
+		        (lto, lfrom,
+		         `Verify
+			   (state.pid, key, state.streamid)));
+		  Hashtbl.replace state.connections
+		    (lfrom, lto) Wait_for_verification;
+		  (* change_shaper(StateData, LTo, jlib:make_jid("", LFrom, "")), *)
+		  `Continue state (* timer = Timer *)
+	       | _, false ->
+		  send_element state Jlib.serr_host_unknown;
+		  `Stop state
+	       | false, _ ->
+		  send_element state Jlib.serr_invalid_from;
+		  `Stop state
+              )
+	   | _, _ ->
+	      send_element state Jlib.serr_host_unknown;
+	      `Stop state
+          )
+       | Verify (to', from, id, key) ->
+          Logs.debug ~src
+	    (fun m ->
+              m "verify key: to = %s, from = %s, id = %s, key =%s"
+		to' from id key);
+	  let type' =
+	    match (Jlib.nameprep to', Jlib.nameprep from) with
+	    | Some lto, Some lfrom -> (
+	      match Jamler_s2s_lib.has_key (lto, lfrom) key with
+	      | true -> "valid"
+	      | false -> "invalid")
+	    | _, _ ->
+	       "invalid"
+	  in
+	  send_element state (`XmlElement ("db:verify",
+					   [("from", to');
+					    ("to", from);
+					    ("id", id);
+					    ("type", type')],
+					   []));
+	  `Continue state (* timer = Timer *)
+       | None ->
+	  let newel = Jlib.remove_attr "xmlns" el in
+	  let `XmlElement (name, attrs, _els) = newel in
+	  let from_s = Xml.get_attr_s "from" attrs in
+	  let to_s = Xml.get_attr_s "to" attrs in
+	  let () =
+	    (match (Jlib.string_to_jid from_s, Jlib.string_to_jid to_s) with
+	     | Some from, Some to' ->
+		let lfrom = from.Jlib.lserver in
+		let lto = to'.Jlib.lserver in
+		if state.authenticated then (
+		  if (lfrom = state.auth_domain &&
+			List.mem lto (Router.dirty_get_all_domains ())) then (
+		    if (name = "iq" || name = "message" || name = "presence")
+		    then (
+		      Hooks.run s2s_receive_packet lto (from, to', newel);
+		      Router.route from to' newel;
+		      ()
+		    ) else ()
+		  ) else ()
+		) else (
+		  try
+		    if (Hashtbl.find state.connections (lfrom, lto) = Established
+			&& (name = "iq" || name = "message" || name = "presence"))
+		    then (
+		      Hooks.run s2s_receive_packet lto (from, to', newel);
+        	      Router.route from to' newel;
+		      ()
+		    ) else ()
+		  with Not_found ->
+		    ()
+		);
+	     | _, _ ->
+		()
+            )
+	  in
+          Hooks.run s2s_loop_debug state.server (`XmlStreamElement el);
+	  `Continue state
+      )
+    )
+    | `Valid (from, to') ->
+       send_element state
+	 (`XmlElement
+	    ("db:result",
+	     [("from", (to' : Jlib.namepreped :> string));
+	      ("to", (from : Jlib.namepreped :> string));
+	      ("type", "valid")],
+	     []));
+       Hashtbl.replace state.connections (from, to') Established;
+       `Continue state
 
-      | `Invalid (from, to') ->
-	  send_element state
-	    (`XmlElement
-	       ("db:result",
-		[("from", (to' : Jlib.namepreped :> string));
-		 ("to", (from : Jlib.namepreped :> string));
-		 ("type", "invalid")],
-		[]));
-	  Hashtbl.remove state.connections (from, to');
-	  Lwt.return (`Continue state)
+    | `Invalid (from, to') ->
+       send_element state
+	 (`XmlElement
+	    ("db:result",
+	     [("from", (to' : Jlib.namepreped :> string));
+	      ("to", (from : Jlib.namepreped :> string));
+	      ("type", "invalid")],
+	     []));
+       Hashtbl.remove state.connections (from, to');
+       `Continue state
 
-      | `XmlStreamEnd _ ->
-	Lwt.return (`Stop state)
-      | `XmlStreamError _ ->
-	send_element state Jlib.serr_invalid_xml;
-	send_trailer state;
-	Lwt.return (`Stop state)
-      | `XmlStreamStart _ ->
-	Lwt.return (`Stop state)
+    | `XmlStreamEnd _ ->
+       `Stop state
+    | `XmlStreamError _ ->
+       send_element state Jlib.serr_invalid_xml;
+       send_trailer state;
+       `Stop state
+    | `XmlStreamStart _ ->
+       `Stop state
 
 (*
 stream_established(timeout, StateData) ->
@@ -469,13 +470,13 @@ stream_established(closed, StateData) ->
        stream_established msg {state with state = Stream_established}
     | `XmlStreamEnd _ ->
        send_trailer state;
-       Lwt.return (`Stop state)
+       `Stop state
     | `XmlStreamError _ ->
        send_element state invalid_xml_err;
        send_trailer state;
-       Lwt.return (`Stop state)
+       `Stop state
     | `XmlStreamStart _ ->
-       Lwt.return (`Stop state)
+       `Stop state
     | `Valid _
     | `Invalid _ -> assert false
 
@@ -487,32 +488,30 @@ stream_established(closed, StateData) ->
 
   let handle (msg : msg) state =
     match msg with
-      | Socket.Tcp_data (socket, data) when socket == state.socket ->
-	let%lwt () =
-            Lwt_log.debug_f ~section
-              "tcp data %d %S" (String.length data) data
-          in
-            XMLReceiver.parse state.xml_receiver data;
-            ignore (Socket.activate state.socket state.pid);
-            Lwt.return (`Continue state)
-      | Socket.Tcp_data (_socket, _data) -> assert false
-      | Socket.Tcp_close socket when socket == state.socket ->
-	let%lwt () = Lwt_log.debug ~section "tcp close" in
-        Lwt.return (`Stop state)
-      | Socket.Tcp_close _socket -> assert false
-      | XMLReceiver.Xml m ->
-         handle_xml (m :> [ XMLReceiver.xml_msg | Jamler_s2s_lib.validation_msg ]) state
-      | Jamler_s2s_lib.S2SValidation m ->
-         handle_xml (m :> [ XMLReceiver.xml_msg | Jamler_s2s_lib.validation_msg ]) state
-      | _ ->
-         (* TODO: add a warning *)
-	 Lwt.return (`Continue state)
+    | Socket.Tcp_data (socket, data) when socket == state.socket ->
+       Logs.debug ~src
+	 (fun m ->
+           m "tcp data %d %S" (String.length data) data);
+       XMLReceiver.parse state.xml_receiver data;
+       ignore (Socket.activate state.socket state.pid);
+       `Continue state
+    | Socket.Tcp_data (_socket, _data) -> assert false
+    | Socket.Tcp_close socket when socket == state.socket ->
+       Logs.debug ~src (fun m -> m "tcp close");
+       `Stop state
+    | Socket.Tcp_close _socket -> assert false
+    | XMLReceiver.Xml m ->
+       handle_xml (m :> [ XMLReceiver.xml_msg | Jamler_s2s_lib.validation_msg ]) state
+    | Jamler_s2s_lib.S2SValidation m ->
+       handle_xml (m :> [ XMLReceiver.xml_msg | Jamler_s2s_lib.validation_msg ]) state
+    | _ ->
+       (* TODO: add a warning *)
+       `Continue state
 
   let terminate state _reason =
-    let%lwt () = Lwt_log.debug ~section "terminated" in
+    Logs.debug ~src (fun m -> m "terminated");
     XMLReceiver.free state.xml_receiver;
-    let%lwt () = Socket.close state.socket in
-      Lwt.return()
+    Socket.close state.socket
 
 end
 

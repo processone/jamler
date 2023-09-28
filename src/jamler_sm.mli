@@ -42,3 +42,4 @@ val roster_in_subscription :
 
 val broadcast : Jlib.jid -> broadcast -> unit
 
+val start : unit -> unit

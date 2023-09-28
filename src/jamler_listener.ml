@@ -1,11 +1,13 @@
 open Process
 
-let section = Jamler_log.new_section "listener"
+let src = Jamler_log.new_src "listener"
 
 module type ListenModule =
 sig
   val name : string
-  val listen_parser : (Lwt_unix.file_descr -> pid) Jamler_config.p
+  val listen_parser :
+    (Eio_unix.Net.stream_socket_ty Eio.Std.r ->
+     pid) Jamler_config.p
 end
 
 let mods : (string, (module ListenModule)) Hashtbl.t =
@@ -18,6 +20,7 @@ let register_mod mod' =
 type family = INET | INET6
 
 module JSON = Yojson.Safe
+
 let listener_p name =
   Jamler_config.(
     P (fun json ->
@@ -93,45 +96,47 @@ let sockaddr_to_string addr =
     nameinfo.Unix.ni_hostname ^ ":" ^ nameinfo.Unix.ni_service
 
 let rec accept start listen_socket =
-  let%lwt (socket, _) = Lwt_unix.accept listen_socket in
-  let peername = Lwt_unix.getpeername socket in
-  let sockname = Lwt_unix.getsockname socket in
-  let%lwt () =
-    Lwt_log.notice_f
-      ~section
-      "accepted connection %s -> %s"
-      (sockaddr_to_string peername)
-      (sockaddr_to_string sockname)
+  let (socket, _peer) =
+    Eio.Net.accept
+      ~sw:(Process.get_global_switch ())
+      listen_socket
   in
+  let fd = Eio_unix.Net.fd socket in
+  let peername = Eio_unix.Fd.use_exn "getpeername" fd Unix.getpeername in
+  let sockname = Eio_unix.Fd.use_exn "getsockname" fd Unix.getsockname in
+  Logs.info ~src
+    (fun m ->
+      m "accepted connection %s -> %s"
+        (sockaddr_to_string peername)
+        (sockaddr_to_string sockname));
   let pid = start socket in
-  let%lwt () =
-    Lwt_log.notice_f
-      ~section
-      "%a is handling connection %s -> %s"
-      format_pid pid
-      (sockaddr_to_string peername)
-      (sockaddr_to_string sockname)
-  in
-    accept start listen_socket
+  Logs.info ~src
+    (fun m ->
+      m "%a is handling connection %s -> %s"
+        pp_pid pid
+        (sockaddr_to_string peername)
+        (sockaddr_to_string sockname));
+  accept start listen_socket
 
 let start_listener (port, family, start) _self =
-  let socket, addr =
+  let addr =
     match family with
-      | INET ->
-	  Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0,
-	  Unix.ADDR_INET (Unix.inet_addr_any, port)
-      | INET6 ->
-	  Lwt_unix.socket Unix.PF_INET6 Unix.SOCK_STREAM 0,
-	  Unix.ADDR_INET (Unix.inet6_addr_any, port)
+    | INET ->
+       `Tcp (Eio.Net.Ipaddr.V4.any, port)
+    | INET6 ->
+       `Tcp (Eio.Net.Ipaddr.V6.any, port)
   in
-    Lwt_unix.setsockopt socket Unix.SO_REUSEADDR true;
-    Lwt_unix.setsockopt socket Unix.TCP_NODELAY true;
-    let%lwt () = Lwt_unix.bind socket addr in
-    Lwt_unix.listen socket 1024;
-    accept start socket
+  let socket =
+    Eio.Net.listen ~reuse_addr:true ~backlog:1024
+      ~sw:(Process.get_global_switch ())
+      (Process.get_global_env ())#net
+      addr
+  in
+  accept start socket
 
 let start_listeners () =
   List.iter
     (fun data ->
-       ignore (spawn (start_listener data))
+      ignore (
+          spawn (start_listener data))
     ) (listeners ())

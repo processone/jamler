@@ -18,52 +18,51 @@ struct
 
   let get_sm_features acc (_from, _to, node, _lang) =
     match acc with
-      | Features features when node = "" ->
-	  Lwt.return (Hooks.OK, Features ([%ns "VCARD"] :: features))
-      | FEmpty when node = "" ->
-	  Lwt.return (Hooks.OK, Features [ [%ns "VCARD"]])
-      | _ ->
-	  Lwt.return (Hooks.OK, acc)
+    | Features features when node = "" ->
+       (Hooks.OK, Features ([%xmlns "VCARD"] :: features))
+    | FEmpty when node = "" ->
+       (Hooks.OK, Features [ [%xmlns "VCARD"]])
+    | _ ->
+       (Hooks.OK, acc)
 
   let remove_user (luser, lserver) =
     let username = (luser : Jlib.nodepreped :> string) in
-    let%lwt _ = Sql.transaction lserver
+    Sql.transaction lserver
       (fun () ->
-	 let delete_vcard =
-	   [%sql {|delete from vcard where username=%(username)s|}]
-	 in
-	 let delete_vcard_search =
-	   [%sql {|delete from vcard_search where lusername=%(username)s|}]
-	 in
-	 let%lwt _ = Sql.query_t delete_vcard in
-	 let%lwt _ = Sql.query_t delete_vcard_search in
-	   Lwt.return ()) in
-      Lwt.return (Hooks.OK)
+	let delete_vcard =
+	  [%sql {|delete from vcard where username=%(username)s|}]
+	in
+	let delete_vcard_search =
+	  [%sql {|delete from vcard_search where lusername=%(username)s|}]
+	in
+	let _ = Sql.query_t delete_vcard in
+	let _ = Sql.query_t delete_vcard_search in
+	());
+    Hooks.OK
 
   let process_local_iq _from _to iq =
     match iq.Jlib.iq_type with
-      | `Set subel ->
-	  Lwt.return (`IQ {iq with
-                             Jlib.iq_type =
-                          `Error (Jlib.err_not_allowed, Some subel)})
-      | `Get _ ->
-	  let desc = (Translate.translate iq.Jlib.iq_lang Cfg.synopsis)
-	    ^ "\n" ^ Cfg.copyright in
-	  Lwt.return
-	    (`IQ {iq with
-                    Jlib.iq_type =
-                 `Result
-                   (Some (`XmlElement
-                            ("vCard",
-			     [("xmlns", [%ns "VCARD"])],
-			     [`XmlElement ("FN", [],
-					   [`XmlCdata Cfg.name]);
-			      `XmlElement ("URL", [],
-					   [`XmlCdata Cfg.uri]);
-			      `XmlElement ("DESC", [],
-					   [`XmlCdata desc]);
-			      `XmlElement ("BDAY", [],
-					   [`XmlCdata Cfg.bday])])))})
+    | `Set subel ->
+       `IQ {iq with
+           Jlib.iq_type =
+             `Error (Jlib.err_not_allowed, Some subel)}
+    | `Get _ ->
+       let desc = (Translate.translate iq.Jlib.iq_lang Cfg.synopsis)
+	          ^ "\n" ^ Cfg.copyright in
+       `IQ {iq with
+           Jlib.iq_type =
+             `Result
+               (Some (`XmlElement
+                        ("vCard",
+			 [("xmlns", [%xmlns "VCARD"])],
+			 [`XmlElement ("FN", [],
+				       [`XmlCdata Cfg.name]);
+			  `XmlElement ("URL", [],
+				       [`XmlCdata Cfg.uri]);
+			  `XmlElement ("DESC", [],
+				       [`XmlCdata desc]);
+			  `XmlElement ("BDAY", [],
+				       [`XmlCdata Cfg.bday])])))}
 
   let set_vcard user luser lserver vcard =
     let fn       = Xml.get_path_s vcard [`Elem "FN";                   `Cdata] in
@@ -82,30 +81,30 @@ struct
       | "" -> email2
       | _ -> email1
     in try
-	let lfn       = Stringprep.tolower fn in
-	let lfamily   = Stringprep.tolower family in
-	let lgiven    = Stringprep.tolower given in
-	let lmiddle   = Stringprep.tolower middle in
-	let lnickname = Stringprep.tolower nickname in
-	let lbday     = Stringprep.tolower bday in
-	let lctry     = Stringprep.tolower ctry in
-	let llocality = Stringprep.tolower locality in
-	let lemail    = Stringprep.tolower email in
-	let lorgname  = Stringprep.tolower orgname in
-	let lorgunit  = Stringprep.tolower orgunit in
+      let lfn       = Stringprep.tolower fn in
+      let lfamily   = Stringprep.tolower family in
+      let lgiven    = Stringprep.tolower given in
+      let lmiddle   = Stringprep.tolower middle in
+      let lnickname = Stringprep.tolower nickname in
+      let lbday     = Stringprep.tolower bday in
+      let lctry     = Stringprep.tolower ctry in
+      let llocality = Stringprep.tolower locality in
+      let lemail    = Stringprep.tolower email in
+      let lorgname  = Stringprep.tolower orgname in
+      let lorgunit  = Stringprep.tolower orgunit in
 
-	let username = user in
-	let lusername = (luser : Jlib.nodepreped :> string) in
-	let svcard = Xml.element_to_string vcard in
-	let vcard_insert = [%sql {|
-	  insert into vcard(username, vcard)
-	  values (%(lusername)s, %(svcard)s)
-	  |}] in
-	let vcard_update = [%sql {|
-	  update vcard set vcard = %(svcard)s
-	  where username = %(lusername)s
-	  |}] in
-	let vcard_search_insert = [%sql {|
+      let username = user in
+      let lusername = (luser : Jlib.nodepreped :> string) in
+      let svcard = Xml.element_to_string vcard in
+      let vcard_insert = [%sql {|
+	                        insert into vcard(username, vcard)
+	                        values (%(lusername)s, %(svcard)s)
+	                        |}] in
+      let vcard_update = [%sql {|
+	                        update vcard set vcard = %(svcard)s
+	                        where username = %(lusername)s
+	                        |}] in
+      let vcard_search_insert = [%sql {|
 	  insert into vcard_search(
 	    username, lusername, fn, lfn, family,
             lfamily, given, lgiven, middle, lmiddle,
@@ -119,7 +118,7 @@ struct
               %(lctry)s, %(locality)s, %(llocality)s, %(email)s, %(lemail)s,
               %(orgname)s, %(lorgname)s, %(orgunit)s, %(lorgunit)s)
 	  |}] in
-	let vcard_search_update = [%sql {|
+      let vcard_search_update = [%sql {|
 	  update vcard_search
 	  set
 	    username = %(username)s,
@@ -147,64 +146,60 @@ struct
 	    lorgunit = %(lorgunit)s
 	  where lusername = %(lusername)s
 	  |}] in
-	  try%lwt
-	    Sql.transaction lserver
-	      (fun () ->
-		 let%lwt _ = Sql.update_t vcard_insert vcard_update in
-		   Sql.update_t vcard_search_insert vcard_search_update)
-	  with
-	    | _ ->
-		Lwt.return ()
+      try
+	Sql.transaction lserver
+	  (fun () ->
+	    Sql.update_t vcard_insert vcard_update;
+	    Sql.update_t vcard_search_insert vcard_search_update)
       with
-	| _ ->
-	    Lwt.return ()
+      | _ ->
+	 ()
+    with
+    | _ ->
+       ()
 
   let get_vcard luser lserver =
     let username = (luser : Jlib.nodepreped :> string) in
     let get_vcard =
       [%sql {|select @(vcard)s from vcard where username=%(username)s|}]
     in
-      Sql.query lserver get_vcard
+    Sql.query lserver get_vcard
 
   let process_sm_iq from to' iq =
     match iq.Jlib.iq_type with
-      | `Set subel ->
-	  let {Jlib.user = user;
-	       Jlib.luser = luser;
-	       Jlib.lserver = lserver; _} = from in
-	    if Config.is_my_host lserver then (
-	      (* TODO: check set_vcard's result and report error if needed *)
-	      let%lwt _ = set_vcard user luser lserver subel in
-		Lwt.return (`IQ {iq with Jlib.iq_type = `Result None})
-	    ) else (
-	      Lwt.return
-		(`IQ {iq with
-                        Jlib.iq_type =
-                     `Error (Jlib.err_not_allowed, Some subel)}))
-      | `Get subel ->
-	  let {Jlib.luser = luser; Jlib.lserver = lserver; _} = to' in
-	    try%lwt (
-	      match%lwt get_vcard luser lserver with
-		| svcard :: _ -> (
-		    try
-		      let vcard = Xml.parse_element svcard in
-			Lwt.return
-			  (`IQ {iq with Jlib.iq_type = `Result (Some vcard)})
-		    with
-		      | _ ->
-			  Lwt.return
-			    (`IQ {iq with
-				    Jlib.iq_type =
-				 `Error (Jlib.err_service_unavailable,
-					 Some subel)}))
-		| _ ->
-		    Lwt.return (`IQ {iq with Jlib.iq_type = `Result None}))
-	    with
-	      | _ ->
-		  Lwt.return
-		    (`IQ {iq with
-                            Jlib.iq_type =
-			 `Error (Jlib.err_internal_server_error, Some subel)})
+    | `Set subel ->
+       let {Jlib.user = user;
+	    Jlib.luser = luser;
+	    Jlib.lserver = lserver; _} = from in
+       if Config.is_my_host lserver then (
+	 (* TODO: check set_vcard's result and report error if needed *)
+	 set_vcard user luser lserver subel;
+	 `IQ {iq with Jlib.iq_type = `Result None}
+       ) else (
+         `IQ {iq with
+             Jlib.iq_type =
+               `Error (Jlib.err_not_allowed, Some subel)})
+    | `Get subel ->
+       let {Jlib.luser = luser; Jlib.lserver = lserver; _} = to' in
+       try (
+	 match get_vcard luser lserver with
+	 | svcard :: _ -> (
+	   try
+	     let vcard = Xml.parse_element svcard in
+	     `IQ {iq with Jlib.iq_type = `Result (Some vcard)}
+	   with
+	   | _ ->
+	      `IQ {iq with
+		  Jlib.iq_type =
+		    `Error (Jlib.err_service_unavailable,
+			    Some subel)})
+	 | _ ->
+	    `IQ {iq with Jlib.iq_type = `Result None})
+       with
+       | _ ->
+          `IQ {iq with
+              Jlib.iq_type =
+		`Error (Jlib.err_internal_server_error, Some subel)}
 
   let start host =
     (* TODO: make search *)
@@ -212,18 +207,16 @@ struct
     Search = gen_mod:get_opt(search, Opts, true),
     register(gen_mod:get_module_proc(Host, ?PROCNAME),
 	     spawn(?MODULE, init, [MyHost, Host, Search])). *)
-    Mod_disco.register_feature host [%ns "VCARD"];
-    Lwt.return (
-      [Gen_mod.hook Auth.remove_user host remove_user 50;
-       Gen_mod.fold_hook disco_sm_features host get_sm_features 50;
-       Gen_mod.iq_handler `Local host [%ns "VCARD"] process_local_iq ();
-       Gen_mod.iq_handler `SM host [%ns "VCARD"] process_sm_iq ();
-      ]
-    )
+    Mod_disco.register_feature host [%xmlns "VCARD"];
+    [Gen_mod.hook Auth.remove_user host remove_user 50;
+     Gen_mod.fold_hook disco_sm_features host get_sm_features 50;
+     Gen_mod.iq_handler `Local host [%xmlns "VCARD"] process_local_iq ();
+     Gen_mod.iq_handler `SM host [%xmlns "VCARD"] process_sm_iq ();
+    ]
 
   let stop host =
-    Mod_disco.unregister_feature host [%ns "VCARD"];
-    Lwt.return ()
+    Mod_disco.unregister_feature host [%xmlns "VCARD"];
+    ()
 
 end
 

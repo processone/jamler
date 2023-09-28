@@ -1,6 +1,6 @@
 open Process
 
-let section = Jamler_log.new_section "sm"
+let src = Jamler_log.new_src "sm"
 
 module LJID = Jlib.LJID
 module Hooks = Jamler_hooks
@@ -196,34 +196,34 @@ struct
   let node_up node =
     HashtblSID.iter
       (fun (_ts, owner) _ ->
-	 match owner with
-	   | Local pid ->
-               pid $! Node_up node
-	   | External _ ->
-	       ()
+	match owner with
+	| Local pid ->
+           pid $! Node_up node
+	| External _ ->
+	   ()
       ) sessions;
     Jamler_hooks.OK
 
   let node_down node =
     HashtblSID.iter
       (fun ((_ts, owner) as sid) _ ->
-	 match owner with
-           | Local pid ->
-               pid $! Node_down node
-	   | External (ExternalPid pid) ->
-	       if Erlang.node_of_pid pid = node
-	       then remove sid
-	   | External (ExternalNode (node', _opaque)) ->
-	       if node = node'
-	       then remove sid
+	match owner with
+        | Local pid ->
+           pid $! Node_down node
+	| External (ExternalPid pid) ->
+	   if Erlang.node_of_pid pid = node
+	   then remove sid
+	| External (ExternalNode (node', _opaque)) ->
+	   if node = node'
+	   then remove sid
       ) sessions;
     Jamler_hooks.OK
 
   let () =
     let global_host = Jlib.nameprep_exn "" in
-      Jamler_hooks.add_plain
+      Jamler_hooks.add
 	Jamler_cluster.node_up_hook global_host node_up 50;
-      Jamler_hooks.add_plain
+      Jamler_hooks.add
 	Jamler_cluster.node_down_hook global_host node_down 50
 
   let dump_tables () =
@@ -507,7 +507,7 @@ let get_user_present_resources luser lserver =
 
 let bounce_offline_message from to' packet =
   let err = Jlib.make_error_reply packet Jlib.err_service_unavailable in
-    Router.route to' from err
+  Router.route to' from err
       (*stop.*)
 
 
@@ -517,37 +517,37 @@ let route_message from to' packet =
   let prio_res = get_user_present_resources luser lserver in
   let priority =
     match prio_res with
-      | [] -> None
-      | p :: prio_res' ->
-          let (max_p, _, _) = List.fold_left max p prio_res' in
-            if max_p >= 0
-            then Some max_p
-            else None
+    | [] -> None
+    | p :: prio_res' ->
+       let (max_p, _, _) = List.fold_left max p prio_res' in
+       if max_p >= 0
+       then Some max_p
+       else None
   in
-    match priority with
-      | Some priority ->
-          (* Route messages to all priority that equals the max, if
-             positive *)
-          List.iter
-            (fun (p, _r, sid) ->
-      	       if p = priority then (
-      		 let (_, owner) = sid in
-      		   (*?DEBUG("sending to process ~p~n", [Pid]),*)
-      		   send_owner owner (Router.Route (from, to', packet))
-      	       )
-            ) prio_res
-      | _ -> (
-          match Xml.get_tag_attr_s "type" packet with
-            | "error" ->
-      		()
-            | "groupchat"
-            | "headline" ->
-      		bounce_offline_message from to' packet
-            | _ ->
-               ignore (
-      		match%lwt Auth.does_user_exist luser lserver with
-      		  | true -> (
-      		(* TODO *) Lwt.return ()
+  match priority with
+  | Some priority ->
+     (* Route messages to all priority that equals the max, if
+        positive *)
+     List.iter
+       (fun (p, _r, sid) ->
+      	 if p = priority then (
+      	   let (_, owner) = sid in
+      	   (*?DEBUG("sending to process ~p~n", [Pid]),*)
+      	   send_owner owner (Router.Route (from, to', packet))
+      	 )
+       ) prio_res
+  | _ -> (
+    match Xml.get_tag_attr_s "type" packet with
+    | "error" ->
+       ()
+    | "groupchat"
+    | "headline" ->
+       bounce_offline_message from to' packet
+    | _ ->
+       ignore (
+      	   match Auth.does_user_exist luser lserver with
+      	   | true -> (
+      		    (* TODO *) ()
       		    (*case is_privacy_allow(From, To, Packet) of
       			true ->
       			    ejabberd_hooks:run(offline_message_hook,
@@ -556,40 +556,40 @@ let route_message from to' packet =
       			false ->
       			    ok
       		    end;*)
-      		    )
-      		  | _ ->
-      		      let err =
-      			Jlib.make_error_reply
-      			  packet Jlib.err_service_unavailable
-      		      in
-      			Router.route to' from err;
-			Lwt.return ()
-      	         );
-	       ()
-        )
+      	   )
+      	   | _ ->
+      	      let err =
+      		Jlib.make_error_reply
+      		  packet Jlib.err_service_unavailable
+      	      in
+      	      Router.route to' from err;
+	      ()
+      	 );
+       ()
+  )
 
 let process_iq from to' packet =
   match Jlib.iq_query_info packet with
-    | `IQ ({Jlib.iq_xmlns = xmlns; _} as iq) -> (
-        let host = to'.Jlib.lserver in
-	let%lwt handle_res =
-	  GenIQHandler.handle `SM host xmlns from to' iq
-	in
-          if not handle_res then (
-            let err =
-      	      Jlib.make_error_reply packet Jlib.err_service_unavailable
-            in
-      	      Router.route to' from err
-          );
-	  Lwt.return ()
-      )
-    | `Reply -> Lwt.return ()
-    | _ ->
-        let err =
-          Jlib.make_error_reply packet Jlib.err_bad_request
-        in
-          Router.route to' from err;
-	  Lwt.return ()
+  | `IQ ({Jlib.iq_xmlns = xmlns; _} as iq) -> (
+    let host = to'.Jlib.lserver in
+    let handle_res =
+      GenIQHandler.handle `SM host xmlns from to' iq
+    in
+    if not handle_res then (
+      let err =
+      	Jlib.make_error_reply packet Jlib.err_service_unavailable
+      in
+      Router.route to' from err
+    );
+    ()
+  )
+  | `Reply -> ()
+  | _ ->
+     let err =
+       Jlib.make_error_reply packet Jlib.err_bad_request
+     in
+     Router.route to' from err;
+     ()
 
 
 (* The default list applies to the user as a whole,
@@ -628,107 +628,103 @@ let rec do_route1 from to' packet =
        Jlib.lserver = lserver;
        Jlib.lresource = lresource; _} = to' in
   let `XmlElement (name, attrs, _els) = packet in
-    match (lresource :> string) with
-      | "" -> (
-	  match name with
-	    | "presence" -> (
-		ignore (
-		  let%lwt pass =
-		    match Xml.get_attr_s "type" attrs with
-		      | "subscribe" ->
-			  let reason =
-			    Xml.get_path_s packet [`Elem "status"; `Cdata]
-			  in
-			    if is_privacy_allow from to' packet
-			    then
-			      (Hooks.run_fold
-				 roster_in_subscription
-				 lserver
-				 false
-				 (luser, lserver, from, `Subscribe, reason))
-			    else Lwt.return false
-		      | "subscribed" ->
-			  if is_privacy_allow from to' packet
-			  then
-			    (Hooks.run_fold
-			       roster_in_subscription
-			       lserver
-			       false
-			       (luser, lserver, from, `Subscribed, ""))
-			  else Lwt.return false
-		      | "unsubscribe" ->
-			  if is_privacy_allow from to' packet
-			  then
-			    (Hooks.run_fold
-			       roster_in_subscription
-			       lserver
-			       false
-			       (luser, lserver, from, `Unsubscribe, ""))
-			  else Lwt.return false
-		      | "unsubscribed" ->
-			  if is_privacy_allow from to' packet
-			  then
-			    (Hooks.run_fold
-			       roster_in_subscription
-			       lserver
-			       false
-			       (luser, lserver, from, `Unsubscribed, ""))
-			  else Lwt.return false
-		      | _ -> Lwt.return true
-		  in
-		    Lwt.return (
-		      if pass then (
-			let presources =
-			  get_user_present_resources luser lserver
-			in
-			  List.iter
-			    (fun (_, r, _sid) ->
-			       do_route1
-				 from (Jlib.jid_replace_resource' to' r) packet
-			    ) presources
-		      )
-		    )
-		)
-	      )
-	    | "message" ->
-		route_message from to' packet
-	    | "iq" ->
-		ignore (process_iq from to' packet)
-	    | "broadcast" ->
-		List.iter
-		  (fun r ->
-		     do_route1 from (Jlib.jid_replace_resource' to' r) packet
-		  ) (get_user_resources luser lserver)
-	    | _ ->
-		()
-	)
-      | _ -> (
-	  match find_sids_by_usr luser lserver lresource with
-	    | [] -> (
-		match name with
-		  | "message" ->
-		      route_message from to' packet
-		  | "iq" -> (
-		      match Xml.get_attr_s "type" attrs with
-			| "error"
-			| "result" -> ()
-			| _ ->
-			    let err =
-			      Jlib.make_error_reply
-				packet Jlib.err_service_unavailable
-			    in
-			      Router.route to' from err
-		    )
-		  | _ ->
-		      (*?DEBUG("packet droped~n", [])*)
-		      ()
-	      )
-	    | s :: sids ->
-		let sid = List.fold_left max s sids in
-		let (_, owner) = sid in
-		  (*?DEBUG("sending to process ~p~n", [Pid]),*)
-		  send_owner owner (Router.Route (from, to', packet))
-	)
+  match (lresource :> string) with
+  | "" -> (
+    match name with
+    | "presence" -> (
+      let pass =
+	match Xml.get_attr_s "type" attrs with
+	| "subscribe" ->
+	   let reason =
+	     Xml.get_path_s packet [`Elem "status"; `Cdata]
+	   in
+	   if is_privacy_allow from to' packet
+	   then
+	     Hooks.run_fold
+	       roster_in_subscription
+	       lserver
+	       false
+	       (luser, lserver, from, `Subscribe, reason)
+	   else false
+	| "subscribed" ->
+	   if is_privacy_allow from to' packet
+	   then
+	     Hooks.run_fold
+	       roster_in_subscription
+	       lserver
+	       false
+	       (luser, lserver, from, `Subscribed, "")
+	   else false
+	| "unsubscribe" ->
+	   if is_privacy_allow from to' packet
+	   then
+	     Hooks.run_fold
+	       roster_in_subscription
+	       lserver
+	       false
+	       (luser, lserver, from, `Unsubscribe, "")
+	   else false
+	| "unsubscribed" ->
+	   if is_privacy_allow from to' packet
+	   then
+	     Hooks.run_fold
+	       roster_in_subscription
+	       lserver
+	       false
+	       (luser, lserver, from, `Unsubscribed, "")
+	   else false
+	| _ -> true
+      in
+      if pass then (
+	let presources =
+	  get_user_present_resources luser lserver
+	in
+	List.iter
+	  (fun (_, r, _sid) ->
+	    do_route1
+	      from (Jlib.jid_replace_resource' to' r) packet
+	  ) presources
+      )
+    )
+    | "message" ->
+       route_message from to' packet
+    | "iq" ->
+       ignore (process_iq from to' packet)
+    | "broadcast" ->
+       List.iter
+	 (fun r ->
+	   do_route1 from (Jlib.jid_replace_resource' to' r) packet
+	 ) (get_user_resources luser lserver)
+    | _ ->
+       ()
+  )
+  | _ -> (
+    match find_sids_by_usr luser lserver lresource with
+    | [] -> (
+      match name with
+      | "message" ->
+	 route_message from to' packet
+      | "iq" -> (
+	match Xml.get_attr_s "type" attrs with
+	| "error"
+	| "result" -> ()
+	| _ ->
+	   let err =
+	     Jlib.make_error_reply
+	       packet Jlib.err_service_unavailable
+	   in
+	   Router.route to' from err
+      )
+      | _ ->
+	 (*?DEBUG("packet droped~n", [])*)
+	 ()
+    )
+    | s :: sids ->
+       let sid = List.fold_left max s sids in
+       let (_, owner) = sid in
+       (*?DEBUG("sending to process ~p~n", [Pid]),*)
+       send_owner owner (Router.Route (from, to', packet))
+  )
 
 let do_route from to' packet =
   let {Jlib.luser = luser;
@@ -777,16 +773,14 @@ let route from to' packet =
   try
     do_route from to' packet
   with
-    | exn ->
-	ignore (
-	  Lwt_log.error_f
-	    ~section
-	    ~exn:exn
-	    "exception when processing packet\nfrom: %s\nto: %s\npacket: %s\nexception"
-            (Jlib.jid_to_string from)
-            (Jlib.jid_to_string to')
-            (Xml.element_to_string packet)
-	)
+  | exn ->
+     Logs.err ~src
+       (fun m ->
+         m "exception when processing packet\nfrom: %s\nto: %s\npacket: %s\n%a"
+           (Jlib.jid_to_string from)
+           (Jlib.jid_to_string to')
+           (Xml.element_to_string packet)
+           Jamler_log.pp_exn exn)
 
 let broadcast to' data =
   let {Jlib.luser = luser;
@@ -868,84 +862,80 @@ struct
 
   let init () self =
     register self "ejabberd_sm";
-    Lwt.return (`Continue {pid = self})
+    `Continue {pid = self}
 
   open Erlang
 
   let handle (msg : msg) state =
     match msg with
-      | Erl (ErlTuple [| ErlAtom "route"; _; _; _ |] as term) -> (
-	  try
-	    let `Route (from, to', msg) = term_to_route term in
-	      route from to' msg;
-	      Lwt.return (`Continue state)
-	  with
-	    | exn ->
-		let%lwt () =
-		  Lwt_log.error_f
-		    ~section
-		    ~exn:exn
-		    "exception on processing packet\npacket: %s\nexception"
-		    (Erlang.term_to_string term)
-		in
-		  Lwt.return (`Continue state)
-	)
-      | Erl (ErlTuple
-		[| ErlAtom "send";
-		   ErlTuple [| ErlFloat ts;
-			       ErlBinary user;
-			       ErlBinary server;
-			       ErlBinary resource |];
-		   msg |] as term) -> (
-	  try
-	    let user = Jlib.nodeprep_exn user in
-	    let server = Jlib.nameprep_exn server in
-	    let resource = Jlib.resourceprep_exn resource in
-	      (match get_sid_by_usr user server resource with
-		 | None ->
-		     ()
-		 | Some (ts', _owner) when ts' <> ts ->
-		     ()
-		 | Some (_ts, External _) ->
-		     ()
-		 | Some (_ts, Local pid) -> (
-		     match msg with
-		       | ErlTuple [| ErlAtom "route"; _; _; _ |] ->
-			  let `Route (from, to', msg) = term_to_route msg in
-                          let route_msg = Router.Route (from, to', msg) in
-			     pid $! route_msg;
-		       | _ -> invalid_arg "unknown message"
-		   )
-	      );
-	      Lwt.return (`Continue state)
-	  with
-	    | exn ->
-		let%lwt () =
-		  Lwt_log.error_f
-		    ~section
-		    ~exn:exn
-		    "exception on processing packet\npacket: %s\nexception"
-		    (Erlang.term_to_string term)
-		in
-		  Lwt.return (`Continue state)
-	)
-      | Erl term ->
-	  let%lwt () =
-	    Lwt_log.notice_f ~section
-	      "unexpected packet %s" (Erlang.term_to_string term)
-	  in
-	    Lwt.return (`Continue state)
-      | _ ->
-         (* TODO: add a warning *)
-	 Lwt.return (`Continue state)
+    | Erl (ErlTuple [| ErlAtom "route"; _; _; _ |] as term) -> (
+      try
+	let `Route (from, to', msg) = term_to_route term in
+	route from to' msg;
+	`Continue state
+      with
+      | exn ->
+         Logs.err ~src
+	   (fun m ->
+             m "exception on processing packet\npacket: %s\n%a"
+	       (Erlang.term_to_string term)
+               Jamler_log.pp_exn exn);
+	 `Continue state
+    )
+    | Erl (ErlTuple
+	     [| ErlAtom "send";
+		ErlTuple [| ErlFloat ts;
+			    ErlBinary user;
+			    ErlBinary server;
+			    ErlBinary resource |];
+		msg |] as term) -> (
+      try
+	let user = Jlib.nodeprep_exn user in
+	let server = Jlib.nameprep_exn server in
+	let resource = Jlib.resourceprep_exn resource in
+	(match get_sid_by_usr user server resource with
+	 | None ->
+	    ()
+	 | Some (ts', _owner) when ts' <> ts ->
+	    ()
+	 | Some (_ts, External _) ->
+	    ()
+	 | Some (_ts, Local pid) -> (
+	   match msg with
+	   | ErlTuple [| ErlAtom "route"; _; _; _ |] ->
+	      let `Route (from, to', msg) = term_to_route msg in
+              let route_msg = Router.Route (from, to', msg) in
+	      pid $! route_msg;
+	   | _ -> invalid_arg "unknown message"
+	 )
+	);
+	`Continue state
+      with
+      | exn ->
+         Logs.err ~src
+	   (fun m ->
+             m "exception on processing packet\npacket: %s\n%a"
+	       (Erlang.term_to_string term)
+               Jamler_log.pp_exn exn);
+	 `Continue state
+    )
+    | Erl term ->
+       Logs.info ~src
+	 (fun m ->
+           m "unexpected packet %s" (Erlang.term_to_string term));
+       `Continue state
+    | _ ->
+       (* TODO: add a warning *)
+       `Continue state
 
   let terminate _state _reason =
-    Lwt.return ()
+    ()
 
 end
 
 module JamlerSMServer = GenServer.Make(JamlerSM)
 
-let _ =
-  JamlerSMServer.start ();
+let start () =
+  ignore (JamlerSMServer.start ());
+  ()
 

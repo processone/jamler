@@ -7,12 +7,12 @@ module ModLastSQL :
 sig
   include Gen_mod.Module
 
-  val get_last_info : Jlib.nodepreped -> Jlib.namepreped -> (int * string) Lwt.t
+  val get_last_info : Jlib.nodepreped -> Jlib.namepreped -> (int * string)
 end
   =
 struct
   let name = "mod_last_sql"
-  let _section = Jamler_log.new_section name
+  let _src = Jamler_log.new_src name
   let unset_presence_hook = Hooks.create ()
 
   let get_last luser lserver = 
@@ -24,92 +24,87 @@ struct
 	  where username=%(username)s
       |}]
     in
-      Sql.query lserver query
+    Sql.query lserver query
 
   let get_last_info luser lserver =
-    try%lwt
-      let%lwt res = get_last luser lserver in
-	match res with
-	  | [(ts, status)] -> Lwt.return (ts, status)
-	  | _ -> Lwt.fail Not_found
+    try
+      let res = get_last luser lserver in
+      match res with
+      | [(ts, status)] -> (ts, status)
+      | _ -> raise Not_found
     with
-      | _ -> Lwt.fail Not_found
+    | _ -> raise Not_found
 
   let get_last_iq iq subel luser lserver =
     match SM.get_user_resources luser lserver with
-      | [] -> (
-	  try%lwt
-	    let%lwt last = get_last luser lserver in (
-		match last with
-		  | [(ts, status)] ->
-		      let ts' = (int_of_float (Unix.time ())) - ts in
-			Lwt.return
-			  (`IQ {iq with
-				  Jlib.iq_type =
-			       `Result
-				 (Some (`XmlElement
-					  ("query",
-					   [("xmlns", [%ns "LAST"]);
-					    ("seconds", string_of_int ts')],
-					   [`XmlCdata status])))})
-		  | _ ->
-		      Lwt.return
-			(`IQ {iq with
-				Jlib.iq_type =
-                             `Error (Jlib.err_service_unavailable, Some subel)})
-	      )
-	  with
+    | [] -> (
+      try
+	let last = get_last luser lserver in (
+	    match last with
+	    | [(ts, status)] ->
+	       let ts' = (int_of_float (Unix.time ())) - ts in
+	       `IQ {iq with
+		   Jlib.iq_type =
+		     `Result
+		       (Some (`XmlElement
+				("query",
+				 [("xmlns", [%xmlns "LAST"]);
+				  ("seconds", string_of_int ts')],
+				 [`XmlCdata status])))}
 	    | _ ->
-		Lwt.return
-		  (`IQ {iq with
-			  Jlib.iq_type =
-                       `Error (Jlib.err_internal_server_error, Some subel)})
-	)
+               `IQ {iq with
+		   Jlib.iq_type =
+                     `Error (Jlib.err_service_unavailable, Some subel)}
+	  )
+      with
       | _ ->
-	  Lwt.return
-	    (`IQ {iq with
-		    Jlib.iq_type =
-		 `Result
-		   (Some (`XmlElement
-			    ("query",
-			     [("xmlns", [%ns "LAST"]);
-			      ("seconds", "0")],
-			     [])))})
+	 `IQ {iq with
+	     Jlib.iq_type =
+               `Error (Jlib.err_internal_server_error, Some subel)}
+    )
+    | _ ->
+       `IQ {iq with
+	   Jlib.iq_type =
+	     `Result
+	       (Some (`XmlElement
+			("query",
+			 [("xmlns", [%xmlns "LAST"]);
+			  ("seconds", "0")],
+			 [])))}
 
   let process_local_iq _from _to = function
-    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%ns "LAST"]; _} as iq ->
-	let secs = (int_of_float (Jlib.uptime ())) in
-	  Lwt.return
-	    (`IQ {iq with
-		    Jlib.iq_type =
-		 `Result
-		   (Some (`XmlElement
-			    ("query",
-			     [("xmlns", [%ns "LAST"]);
-			      ("seconds", string_of_int secs)],
-			     [])))})
+    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%xmlns "LAST"]; _} as iq ->
+       let secs = (int_of_float (Jlib.uptime ())) in
+       `IQ {iq with
+	   Jlib.iq_type =
+	     `Result
+	       (Some (`XmlElement
+			("query",
+			 [("xmlns", [%xmlns "LAST"]);
+			  ("seconds", string_of_int secs)],
+			 [])))}
     | {Jlib.iq_type = `Get subel; _} as iq ->
-        Lwt.return (`IQ {iq with
-                           Jlib.iq_type =
-                        `Error (Jlib.err_service_unavailable, Some subel)})
+       `IQ {iq with
+           Jlib.iq_type =
+             `Error (Jlib.err_service_unavailable, Some subel)}
     | {Jlib.iq_type = `Set subel; _} as iq ->
-        Lwt.return (`IQ {iq with
-                           Jlib.iq_type =
-                        `Error (Jlib.err_not_allowed, Some subel)})
+       `IQ {iq with
+           Jlib.iq_type =
+             `Error (Jlib.err_not_allowed, Some subel)}
 
   let process_sm_iq from to' = function
     | {Jlib.iq_type = `Set subel; _} as iq ->
-	Lwt.return (`IQ {iq with
-                           Jlib.iq_type =
-                        `Error (Jlib.err_not_allowed, Some subel)})
-    | {Jlib.iq_type = `Get subel; iq_xmlns = [%ns "LAST"]; _} as iq ->
-	let user = to'.Jlib.luser in
-	let server = to'.Jlib.lserver in
-	let%lwt (subscription, _groups) =
-	  Hooks.run_fold Gen_roster.roster_get_jid_info server
-	    (`None, []) (user, server, from) in (
-	    match subscription with
-	      | `Both | `From -> (
+       `IQ {iq with
+           Jlib.iq_type =
+             `Error (Jlib.err_not_allowed, Some subel)}
+    | {Jlib.iq_type = `Get subel; iq_xmlns = [%xmlns "LAST"]; _} as iq ->
+       let user = to'.Jlib.luser in
+       let server = to'.Jlib.lserver in
+       let (subscription, _groups) =
+	 Hooks.run_fold Gen_roster.roster_get_jid_info server
+	   (`None, []) (user, server, from) in (
+	   match subscription with
+	   | `Both | `From -> (
 		  (* TODO: privacy required
 		    UserListRecord = ejabberd_hooks:run_fold(
 				       privacy_get_user_list, Server,
@@ -122,33 +117,33 @@ struct
 			    {To, From,
 			     {xmlelement, "presence", [], []}},
 		   out]) of *)
-		  match true with
-		    | true ->
-			get_last_iq iq subel user server
-		    | false ->
-			Lwt.return (`IQ {iq with
-					   Jlib.iq_type =
-					`Error (Jlib.err_forbidden, Some subel)}
-				   ))
-	      | _ ->
-		  Lwt.return (`IQ {iq with
-				     Jlib.iq_type =
-				  `Error (Jlib.err_forbidden, Some subel)}))
+	     match true with
+	     | true ->
+		get_last_iq iq subel user server
+	     | false ->
+		`IQ {iq with
+		    Jlib.iq_type =
+		      `Error (Jlib.err_forbidden, Some subel)}
+	   )
+	   | _ ->
+	      `IQ {iq with
+		  Jlib.iq_type =
+		    `Error (Jlib.err_forbidden, Some subel)})
     | {Jlib.iq_type = `Get subel; _} as iq ->
-        Lwt.return (`IQ {iq with
-                           Jlib.iq_type =
-                        `Error (Jlib.err_service_unavailable, Some subel)})
+       `IQ {iq with
+           Jlib.iq_type =
+             `Error (Jlib.err_service_unavailable, Some subel)}
 
   let remove_user (luser, lserver) =
     let username = (luser : Jlib.nodepreped :> string) in
     let delete_last =
       [%sql {|
-	delete from last
-	where username=%(username)s
-      |}]
+	     delete from last
+	     where username=%(username)s
+             |}]
     in
-    let%lwt _ = Sql.query lserver delete_last in
-      Lwt.return (Hooks.OK)
+    let _ = Sql.query lserver delete_last in
+    Hooks.OK
 
   let store_last_info luser lserver timestamp status =
     let username = (luser : Jlib.nodepreped :> string) in
@@ -156,7 +151,7 @@ struct
       [%sql {|
 	insert into last(username, seconds, state)
 	values (%(username)s, %(timestamp)d, %(status)s)
-      |}]
+             |}]
     in
     let update_last =
       [%sql {|
@@ -166,29 +161,28 @@ struct
 	where username = %(username)s
       |}]
     in
-      (* TODO: get rid of transaction *)
-    let%lwt () =
+    (* TODO: get rid of transaction *)
+    let () =
       Sql.transaction lserver
-	(fun () -> Sql.update_t insert_last update_last) in
-      Lwt.return (Hooks.OK)
+	(fun () -> Sql.update_t insert_last update_last)
+    in
+    Hooks.OK
 
   let on_presence_update_h (luser, lserver, _resrouce, status) =
     let timestamp = int_of_float (Unix.time ()) in
-      store_last_info luser lserver timestamp status
+    store_last_info luser lserver timestamp status
 
   let start host =
-    Mod_disco.register_feature host [%ns "LAST"];
-    Lwt.return (
-      [Gen_mod.hook Auth.remove_user host remove_user 50;
-       Gen_mod.hook unset_presence_hook host on_presence_update_h 50;
-       Gen_mod.iq_handler `Local host [%ns "LAST"] process_local_iq ();
-       Gen_mod.iq_handler `SM host [%ns "LAST"] process_sm_iq ();
-      ]
-    )
+    Mod_disco.register_feature host [%xmlns "LAST"];
+    [Gen_mod.hook Auth.remove_user host remove_user 50;
+     Gen_mod.hook unset_presence_hook host on_presence_update_h 50;
+     Gen_mod.iq_handler `Local host [%xmlns "LAST"] process_local_iq ();
+     Gen_mod.iq_handler `SM host [%xmlns "LAST"] process_sm_iq ();
+    ]
 
   let stop host =
-    Mod_disco.unregister_feature host [%ns "LAST"];
-    Lwt.return ()
+    Mod_disco.unregister_feature host [%xmlns "LAST"];
+    ()
 
 end
 

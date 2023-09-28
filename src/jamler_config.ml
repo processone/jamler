@@ -1,4 +1,4 @@
-let section = Jamler_log.new_section "config"
+let src = Jamler_log.new_src "config"
 
 module JSON = Yojson.Safe
 type json = JSON.t
@@ -313,87 +313,90 @@ let process_config cfg =
   let host_path_to_string host path =
     let path =
       match host with
-	| Some h -> h :: path
-	| None -> path
+      | Some h -> h :: path
+      | None -> path
     in
-      String.concat "->" (List.map (fun p -> "\"" ^ p ^ "\"") path)
+    String.concat "->" (List.map (fun p -> "\"" ^ p ^ "\"") path)
   in
   let rec traverse path json host =
     match json with
-      | `Assoc assoc ->
-	  List.iter
-	    (fun (name, json) ->
-	       if name = "hostConfig" then (
-		 match host, path, json with
-		   | None, [], `Assoc assoc -> (
-		       try
-			 let h = List.assoc "host" assoc in
-			   (match h with
-			      | `String h ->
-				  traverse [] json (Some h)
-			      | _ ->
-				  raise (Error "host must be a string")
-			   )
-		       with
-			 | Not_found ->
-			     raise (Error "hostConfig for unknown host")
-		     )
-		   | None, [], _ ->
-		       raise (Error "hostConfig entry must be a JSON object")
-		   | None, _, _ ->
-		       raise (Error "hostConfig entry only allowed at top level")
-		   | Some _, _, _ ->
-		       raise (Error (Printf.sprintf
-				       "hostConfig inside hostConfig in %s"
-				       (host_path_to_string host path)))
-	       ) else (
-		 let path = path @ [name] in
-		 let opt =
+    | `Assoc assoc ->
+       List.iter
+	 (fun (name, json) ->
+	   if name = "hostConfig" then (
+	     match host, path, json with
+	     | None, [], `Assoc assoc -> (
+	       try
+		 let h = List.assoc "host" assoc in
+		 (match h with
+		  | `String h ->
+		     traverse [] json (Some h)
+		  | _ ->
+		     raise (Error "host must be a string")
+		 )
+	       with
+	       | Not_found ->
+		  raise (Error "hostConfig for unknown host")
+	     )
+	     | None, [], _ ->
+		raise (Error "hostConfig entry must be a JSON object")
+	     | None, _, _ ->
+		raise (Error "hostConfig entry only allowed at top level")
+	     | Some _, _, _ ->
+		raise (Error (Printf.sprintf
+				"hostConfig inside hostConfig in %s"
+				(host_path_to_string host path)))
+	   ) else (
+	     let path = path @ [name] in
+	     let opt =
+	       try
+		 Some (Hashtbl.find opts path)
+	       with
+	       | Not_found -> None
+	     in
+	     (match opt with
+	      | Some (check, is_global) ->
+		 if not (is_global && host <> None) then (
 		   try
-		     Some (Hashtbl.find opts path)
+		     check json
 		   with
-		     | Not_found -> None
-		 in
-		   (match opt with
-		      | Some (check, is_global) ->
-			  if not (is_global && host <> None) then (
-			    try
-			      check json
-			    with
-			      | Error err ->
-				  raise
-				    (Error
-				       (Printf.sprintf
-					  "error processing option %s: %s"
-					  (host_path_to_string host path) err
-				       ))
-			  )
-		      | None -> ()
-		   );
-		   traverse path json host
-	       )
-	    ) assoc
-      | _ when path = [] ->
-	  raise (Error "config must be a JSON object")
-      | _ -> ()
+		   | Error err ->
+		      raise
+			(Error
+			   (Printf.sprintf
+			      "error processing option %s: %s"
+			      (host_path_to_string host path) err
+			))
+		 )
+	      | None -> ()
+	     );
+	     traverse path json host
+	   )
+	 ) assoc
+    | _ when path = [] ->
+       raise (Error "config must be a JSON object")
+    | _ -> ()
   in
-    traverse [] cfg None;
-    config := cfg;
-    config_timestamp := Unix.gettimeofday ();
-    Lwt.return ()
+  traverse [] cfg None;
+  config := cfg;
+  config_timestamp := Unix.gettimeofday ();
+  ()
 
 let read_config filename =
-  let%lwt () = Lwt_log.notice_f ~section
-    "using config file \"%s\"" filename
-  in
-    try%lwt
-      let%lwt fd = Lwt_unix.openfile filename [Unix.O_RDONLY] 0o640 in
-      let ch = Lwt_io.of_fd ~mode:Lwt_io.input fd in
-      let%lwt content = Lwt_io.read ch in
-      let%lwt () = Lwt_io.close ch in
-      let config = Yojson.Safe.from_string content in
-      let%lwt () = process_config config in
-	Lwt.return ()
-    with
-      | exn ->
-	  Lwt.fail exn
+  Logs.info ~src
+    (fun m ->
+      m "using config file %S" filename);
+  try
+    let content =
+      Eio.Path.with_open_in
+        Eio.Path.((Process.get_global_env ())#fs / filename)
+        (fun f ->
+          Eio.Buf_read.parse_exn ~max_size:1000000
+            Eio.Buf_read.take_all f
+        )
+    in
+    let config = Yojson.Safe.from_string content in
+    process_config config
+  with
+  | exn ->
+     raise exn

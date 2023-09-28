@@ -175,7 +175,7 @@ static int compose(int ch1, int ch2)
 static value stringprep(int prohibit, int tolower, value s)
 {
    CAMLparam1(s);
-   char *buf = String_val(s);
+   const char *buf = String_val(s);
    int len = caml_string_length(s);
    int i, j, pos = 0;
    unsigned char c;
@@ -336,7 +336,7 @@ static value stringprep(int prohibit, int tolower, value s)
    }
 
    res = caml_alloc_string(pos);
-   memcpy(String_val(res), rstring, pos);
+   memcpy((char *)String_val(res), rstring, pos);
    free(rstring);
    free(str32);
 
