@@ -519,7 +519,7 @@ struct
 	Lwt.return (`IQ {iq with
 			   Jlib.iq_type =
 			`Error (Jlib.err_not_allowed, Some subel)})
-    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%ns "TIME90"]; _} as iq ->
+    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%xmlns "TIME90"]; _} as iq ->
 	let utc = Jlib.timestamp_to_iso' (Unix.gmtime (Unix.time ())) in
 	  Lwt.return (
 	    `IQ {iq with
@@ -527,10 +527,10 @@ struct
 		`Result
 		  (Some (`XmlElement
 			   ("query",
-			    [("xmlns", [%ns "TIME90"])],
+			    [("xmlns", [%xmlns "TIME90"])],
 			    [`XmlElement ("utc", [],
 					  [`XmlCdata utc])])))})
-    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%ns "TIME"]; _} as iq ->
+    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%xmlns "TIME"]; _} as iq ->
 	let utc, tzo = Jlib.timestamp_to_iso (Unix.time ()) (Jlib.get_tzo ()) in
 	  Lwt.return (
 	    `IQ {iq with
@@ -538,7 +538,7 @@ struct
 		`Result
 		  (Some (`XmlElement
 			   ("query",
-			    [("xmlns", [%ns "TIME"])],
+			    [("xmlns", [%xmlns "TIME"])],
 			    [`XmlElement ("time", [],
 					  [`XmlElement ("tzo", [],
 							[`XmlCdata tzo]);
@@ -570,7 +570,7 @@ struct
 	    Lwt.return (
 	      `Result
 		(Some
-		   (`XmlElement ("query", [("xmlns", [%ns "PRIVACY"])], []))))
+		   (`XmlElement ("query", [("xmlns", [%xmlns "PRIVACY"])], []))))
 	| names ->
 	    let items =
 	      List.map
@@ -591,7 +591,7 @@ struct
 	    in
 	      Lwt.return (
 		`Result (Some
-			   (`XmlElement ("query", [("xmlns", [%ns "PRIVACY"])],
+			   (`XmlElement ("query", [("xmlns", [%xmlns "PRIVACY"])],
 					 items))))
 
 
@@ -609,7 +609,7 @@ struct
 		    `Result
 		      (Some
 			 (`XmlElement
-			    ("query", [("xmlns", [%ns "PRIVACY"])],
+			    ("query", [("xmlns", [%xmlns "PRIVACY"])],
 			     [`XmlElement ("list",
 					   [("name", name)], litems)]))))
 	      )
@@ -970,7 +970,7 @@ let parse_items =
       Lwt.return Jamler_hooks.OK
 
   let start host =
-    Mod_disco.register_feature host [%ns "PRIVACY"];
+    Mod_disco.register_feature host [%xmlns "PRIVACY"];
     Lwt.return (
       [Gen_mod.fold_hook privacy_iq_get host process_iq_get 50;
        Gen_mod.fold_hook privacy_iq_set host process_iq_set 50;
@@ -980,12 +980,12 @@ let parse_items =
 (*    ejabberd_hooks:add(privacy_updated_list, Host,
 		       ?MODULE, updated_list, 50),
 *)
-       Gen_mod.iq_handler `SM host [%ns "PRIVACY"] process_iq ();
+       Gen_mod.iq_handler `SM host [%xmlns "PRIVACY"] process_iq ();
       ]
     )
 
   let stop host =
-    Mod_disco.register_feature host [%ns "PRIVACY"];
+    Mod_disco.register_feature host [%xmlns "PRIVACY"];
     Lwt.return ()
 
 (*

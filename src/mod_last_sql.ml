@@ -49,7 +49,7 @@ struct
 			       `Result
 				 (Some (`XmlElement
 					  ("query",
-					   [("xmlns", [%ns "LAST"]);
+					   [("xmlns", [%xmlns "LAST"]);
 					    ("seconds", string_of_int ts')],
 					   [`XmlCdata status])))})
 		  | _ ->
@@ -72,12 +72,12 @@ struct
 		 `Result
 		   (Some (`XmlElement
 			    ("query",
-			     [("xmlns", [%ns "LAST"]);
+			     [("xmlns", [%xmlns "LAST"]);
 			      ("seconds", "0")],
 			     [])))})
 
   let process_local_iq _from _to = function
-    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%ns "LAST"]; _} as iq ->
+    | {Jlib.iq_type = `Get _subel; iq_xmlns = [%xmlns "LAST"]; _} as iq ->
 	let secs = (int_of_float (Jlib.uptime ())) in
 	  Lwt.return
 	    (`IQ {iq with
@@ -85,7 +85,7 @@ struct
 		 `Result
 		   (Some (`XmlElement
 			    ("query",
-			     [("xmlns", [%ns "LAST"]);
+			     [("xmlns", [%xmlns "LAST"]);
 			      ("seconds", string_of_int secs)],
 			     [])))})
     | {Jlib.iq_type = `Get subel; _} as iq ->
@@ -102,7 +102,7 @@ struct
 	Lwt.return (`IQ {iq with
                            Jlib.iq_type =
                         `Error (Jlib.err_not_allowed, Some subel)})
-    | {Jlib.iq_type = `Get subel; iq_xmlns = [%ns "LAST"]; _} as iq ->
+    | {Jlib.iq_type = `Get subel; iq_xmlns = [%xmlns "LAST"]; _} as iq ->
 	let user = to'.Jlib.luser in
 	let server = to'.Jlib.lserver in
 	let%lwt (subscription, _groups) =
@@ -177,17 +177,17 @@ struct
       store_last_info luser lserver timestamp status
 
   let start host =
-    Mod_disco.register_feature host [%ns "LAST"];
+    Mod_disco.register_feature host [%xmlns "LAST"];
     Lwt.return (
       [Gen_mod.hook Auth.remove_user host remove_user 50;
        Gen_mod.hook unset_presence_hook host on_presence_update_h 50;
-       Gen_mod.iq_handler `Local host [%ns "LAST"] process_local_iq ();
-       Gen_mod.iq_handler `SM host [%ns "LAST"] process_sm_iq ();
+       Gen_mod.iq_handler `Local host [%xmlns "LAST"] process_local_iq ();
+       Gen_mod.iq_handler `SM host [%xmlns "LAST"] process_sm_iq ();
       ]
     )
 
   let stop host =
-    Mod_disco.unregister_feature host [%ns "LAST"];
+    Mod_disco.unregister_feature host [%xmlns "LAST"];
     Lwt.return ()
 
 end

@@ -244,7 +244,7 @@ struct
   (* Returns a list that may contain an xmlelement with the XEP-237 feature if it's enabled. *)
   let _get_versioning_feature acc host =
     if roster_versioning_enabled host then (
-      let feature = `XmlElement ("ver", [("xmlns", [%ns "ROSTER_VER"])], []) in
+      let feature = `XmlElement ("ver", [("xmlns", [%xmlns "ROSTER_VER"])], []) in
 	feature :: acc
     ) else []
 
@@ -360,10 +360,10 @@ struct
 	  match to_send with
 	    | None -> None
 	    | Some (items, None) ->
-		Some (`XmlElement ("query", [("xmlns", [%ns "ROSTER"])],
+		Some (`XmlElement ("query", [("xmlns", [%xmlns "ROSTER"])],
 				   (items :> Xml.element_cdata list)))
 	    | Some (items, Some version) ->
-		Some (`XmlElement ("query", [("xmlns", [%ns "ROSTER"]);
+		Some (`XmlElement ("query", [("xmlns", [%xmlns "ROSTER"]);
 					     ("ver", version)],
 				   (items :> Xml.element_cdata list)))
 	in
@@ -393,9 +393,9 @@ struct
     let resiq =
       {Jlib.iq_type =
 	  `Set (`XmlElement ("query",
-			     ("xmlns", [%ns "ROSTER"]) :: extra_attrs,
+			     ("xmlns", [%xmlns "ROSTER"]) :: extra_attrs,
 			     [(item_to_xml item :> Xml.element_cdata)]));
-       Jlib.iq_xmlns = [%ns "ROSTER"];
+       Jlib.iq_xmlns = [%xmlns "ROSTER"];
        Jlib.iq_id = "push" ^ Jlib.get_random_string ();
        Jlib.iq_lang = "";
       }
@@ -956,7 +956,7 @@ webadmin_user(Acc, _User, _Server, Lang) ->
 		       ?MODULE, webadmin_page, 50),
     ejabberd_hooks:add(webadmin_user, Host,
 		       ?MODULE, webadmin_user, 50),*)
-       Gen_mod.iq_handler `SM host [%ns "ROSTER"] process_iq ();
+       Gen_mod.iq_handler `SM host [%xmlns "ROSTER"] process_iq ();
       ]
     )
 

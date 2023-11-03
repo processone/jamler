@@ -131,15 +131,15 @@ struct
       Lwt.return (Hooks.OK)
 
   let start host =
-    Mod_disco.register_feature host [%ns "PRIVATE"];
+    Mod_disco.register_feature host [%xmlns "PRIVATE"];
     Lwt.return (
       [Gen_mod.hook Auth.remove_user host remove_user 50;
-       Gen_mod.iq_handler `SM host [%ns "PRIVATE"] process_sm_iq ();
+       Gen_mod.iq_handler `SM host [%xmlns "PRIVATE"] process_sm_iq ();
       ]
     )
 
   let stop host =
-    Mod_disco.unregister_feature host [%ns "PRIVATE"];
+    Mod_disco.unregister_feature host [%xmlns "PRIVATE"];
     Lwt.return ()
 
 end

@@ -37,7 +37,7 @@ struct
 		  `Result
 		    (Some (`XmlElement
 			     ("query",
-			      [("xmlns", [%ns "VERSION"])],
+			      [("xmlns", [%xmlns "VERSION"])],
 			      [`XmlElement ("name", [],
 					    [`XmlCdata Cfg.name]);
 			       `XmlElement ("version", [],
@@ -48,14 +48,14 @@ struct
       Lwt.return (`IQ iq_res)
 
   let start host =
-    Mod_disco.register_feature host [%ns "VERSION"];
+    Mod_disco.register_feature host [%xmlns "VERSION"];
     Lwt.return (
-      [Gen_mod.iq_handler `Local host [%ns "VERSION"] process_local_iq ();
+      [Gen_mod.iq_handler `Local host [%xmlns "VERSION"] process_local_iq ();
       ]
     )
 
   let stop host =
-    Mod_disco.unregister_feature host [%ns "VERSION"];
+    Mod_disco.unregister_feature host [%xmlns "VERSION"];
     Lwt.return ()
 
 end

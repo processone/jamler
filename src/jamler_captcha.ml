@@ -189,15 +189,15 @@ let create_captcha_exn sid _from to' lang limiter callback =
   (*let jid = Jlib.jid_to_string from in*)
   let cid = "sha1+" ^ (Jlib.sha1 image) ^ "@bob.xmpp.org" in
   let data = `XmlElement ("data",
-			  [("xmlns", [%ns "BOB"]); ("cid", cid);
+			  [("xmlns", [%xmlns "BOB"]); ("cid", cid);
 			   ("max-age", "0"); ("type", type')],
 			  [`XmlCdata b64image]) in
   let captcha =
     `XmlElement
-      ("captcha", [("xmlns", [%ns "CAPTCHA"])],
+      ("captcha", [("xmlns", [%xmlns "CAPTCHA"])],
        [`XmlElement
-	  ("x", [("xmlns", [%ns "XDATA"]); ("type", "form")],
-	   [vfield "hidden" "FORM_TYPE" (`XmlCdata [%ns "CAPTCHA"]);
+	  ("x", [("xmlns", [%xmlns "XDATA"]); ("type", "form")],
+	   [vfield "hidden" "FORM_TYPE" (`XmlCdata [%xmlns "CAPTCHA"]);
 	    vfield "hidden" "from" (`XmlCdata (Jlib.jid_to_string to'));
 	    vfield "hidden" "challenge" (`XmlCdata id);
 	    vfield "hidden" "sid" (`XmlCdata sid);
@@ -205,7 +205,7 @@ let create_captcha_exn sid _from to' lang limiter callback =
 	      ("field", [("var", "ocr"); ("label", captcha_text lang)],
 	       [`XmlElement ("required", [], []);
 		`XmlElement
-		  ("media", [("xmlns", [%ns "MEDIA"])],
+		  ("media", [("xmlns", [%xmlns "MEDIA"])],
 		   [`XmlElement
 		      ("uri", [("type", type')],
 		       [`XmlCdata ("cid:" ^ cid)])])])])]) in
@@ -215,7 +215,7 @@ let create_captcha_exn sid _from to' lang limiter callback =
      let body_string = Printf.sprintf body_string1 jid (get_url id) in *)
   let body_string = "Your messages are being blocked" in
   let body = `XmlElement ("body", [], [`XmlCdata body_string]) in
-  let oob = `XmlElement ("x", [("xmlns", [%ns "OOB"])],
+  let oob = `XmlElement ("x", [("xmlns", [%xmlns "OOB"])],
 			 [`XmlElement ("url", [],
 				       [`XmlCdata (get_url id)])]) in
   let timer = Process.apply_after captcha_lifetime (remove_id id) in
@@ -231,7 +231,7 @@ let create_captcha_x_exn sid to' lang limiter head_els tail_els =
   let b64image = Jlib.encode_base64 image in
   let cid = "sha1+" ^ (Jlib.sha1 image) ^ "@bob.xmpp.org" in
   let data = `XmlElement ("data",
-			  [("xmlns", [%ns "BOB"]); ("cid", cid);
+			  [("xmlns", [%xmlns "BOB"]); ("cid", cid);
 			   ("max-age", "0"); ("type", type')],
 			  [`XmlCdata b64image]) in
   let help_txt = Translate.translate lang
@@ -239,8 +239,8 @@ let create_captcha_x_exn sid to' lang limiter head_els tail_els =
   let image_url = get_url (id ^ "/image") in
   let captcha =
     `XmlElement
-      ("x", [("xmlns", [%ns "XDATA"]); ("type", "form")],
-       ((vfield "hidden" "FORM_TYPE" (`XmlCdata [%ns "CAPTCHA"])) :: head_els @
+      ("x", [("xmlns", [%xmlns "XDATA"]); ("type", "form")],
+       ((vfield "hidden" "FORM_TYPE" (`XmlCdata [%xmlns "CAPTCHA"])) :: head_els @
 	  [`XmlElement ("field", [("type", "fixed")],
 			[`XmlElement ("value", [], [`XmlCdata help_txt])]);
 	   `XmlElement ("field", [("type", "hidden");
@@ -259,7 +259,7 @@ let create_captcha_x_exn sid to' lang limiter head_els tail_els =
 	     ("field", [("var", "ocr"); ("label", captcha_text lang)],
 	      [`XmlElement ("required", [], []);
 	       `XmlElement
-		 ("media", [("xmlns", [%ns "MEDIA"])],
+		 ("media", [("xmlns", [%xmlns "MEDIA"])],
 		  [`XmlElement
 		     ("uri", [("type", type')],
 		      [`XmlCdata ("cid:" ^ cid)])])])] @ tail_els)) in

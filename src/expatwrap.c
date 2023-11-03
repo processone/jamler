@@ -44,8 +44,8 @@ value mlXML_ParserCreate (value encoding)
 
 value mlXML_Parse(value p, value s, value isFinal)
 {
-   int len = string_length(s);
-   char *str = String_val(s);
+   int len = caml_string_length(s);
+   const char *str = String_val(s);
    XML_Parser parser = (XML_Parser)Long_val(p);
    void *buf = XML_GetBuffer(parser, len);
 
@@ -67,16 +67,16 @@ static void mlXML_StartElementHandler(struct ml_parser *mlp,
    attr_list = Val_emptylist;
    for (i -= 2; i >= 0; i -= 2)
    {
-      tmp = alloc_tuple(2);
-      tmp2 = alloc_tuple(2);
+      tmp = caml_alloc_tuple(2);
+      tmp2 = caml_alloc_tuple(2);
       Store_field(tmp, 0, tmp2);
-      Store_field(tmp2, 0, copy_string(atts[i]));
-      Store_field(tmp2, 1, copy_string(atts[i+1]));
+      Store_field(tmp2, 0, caml_copy_string(atts[i]));
+      Store_field(tmp2, 1, caml_copy_string(atts[i+1]));
       Store_field(tmp, 1, attr_list);
       attr_list = tmp;
    }
 
-   str = copy_string(name);
+   str = caml_copy_string(name);
    caml_callback2(mlp->start_element_handler, str, attr_list);
    CAMLreturn0;
 }
@@ -99,7 +99,7 @@ value mlXML_SetStartElementHandler(value p, value handler)
 static void mlXML_EndElementHandler(struct ml_parser *mlp,
 				    const XML_Char *name)
 {
-   value str = copy_string(name);
+   value str = caml_copy_string(name);
    caml_callback(mlp->end_element_handler, str);
 }
 
@@ -121,8 +121,8 @@ static void mlXML_CharacterDataHandler(struct ml_parser *mlp,
 				       const XML_Char *s,
 				       int len)
 {
-   value str = alloc_string(len);
-   memcpy(String_val(str), s, len);
+   value str = caml_alloc_string(len);
+   memcpy((char *)String_val(str), s, len);
    caml_callback(mlp->character_data_handler, str);
 }
 
@@ -147,7 +147,7 @@ value mlXML_GetErrorCode(value p)
 
 value mlXML_ErrorString(value code)
 {
-   return copy_string(XML_ErrorString(Int_val(code)));
+   return caml_copy_string(XML_ErrorString(Int_val(code)));
 }
 
 value mlXML_ParserFree(value p)

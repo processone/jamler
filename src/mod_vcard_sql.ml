@@ -19,9 +19,9 @@ struct
   let get_sm_features acc (_from, _to, node, _lang) =
     match acc with
       | Features features when node = "" ->
-	  Lwt.return (Hooks.OK, Features ([%ns "VCARD"] :: features))
+	  Lwt.return (Hooks.OK, Features ([%xmlns "VCARD"] :: features))
       | FEmpty when node = "" ->
-	  Lwt.return (Hooks.OK, Features [ [%ns "VCARD"]])
+	  Lwt.return (Hooks.OK, Features [ [%xmlns "VCARD"]])
       | _ ->
 	  Lwt.return (Hooks.OK, acc)
 
@@ -55,7 +55,7 @@ struct
                  `Result
                    (Some (`XmlElement
                             ("vCard",
-			     [("xmlns", [%ns "VCARD"])],
+			     [("xmlns", [%xmlns "VCARD"])],
 			     [`XmlElement ("FN", [],
 					   [`XmlCdata Cfg.name]);
 			      `XmlElement ("URL", [],
@@ -212,17 +212,17 @@ struct
     Search = gen_mod:get_opt(search, Opts, true),
     register(gen_mod:get_module_proc(Host, ?PROCNAME),
 	     spawn(?MODULE, init, [MyHost, Host, Search])). *)
-    Mod_disco.register_feature host [%ns "VCARD"];
+    Mod_disco.register_feature host [%xmlns "VCARD"];
     Lwt.return (
       [Gen_mod.hook Auth.remove_user host remove_user 50;
        Gen_mod.fold_hook disco_sm_features host get_sm_features 50;
-       Gen_mod.iq_handler `Local host [%ns "VCARD"] process_local_iq ();
-       Gen_mod.iq_handler `SM host [%ns "VCARD"] process_sm_iq ();
+       Gen_mod.iq_handler `Local host [%xmlns "VCARD"] process_local_iq ();
+       Gen_mod.iq_handler `SM host [%xmlns "VCARD"] process_sm_iq ();
       ]
     )
 
   let stop host =
-    Mod_disco.unregister_feature host [%ns "VCARD"];
+    Mod_disco.unregister_feature host [%xmlns "VCARD"];
     Lwt.return ()
 
 end

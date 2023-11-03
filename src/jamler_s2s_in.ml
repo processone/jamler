@@ -183,9 +183,9 @@ struct
 	      if state.tls_enabled then
 		[]
 	      else if (not state.tls_enabled && not state.tls_required) then
-		[`XmlElement ("starttls", [("xmlns", [%ns "TLS"])], [])]
+		[`XmlElement ("starttls", [("xmlns", [%xmlns "TLS"])], [])]
 	      else if (not state.tls_enabled && state.tls_required) then
-		[`XmlElement ("starttls", [("xmlns", [%ns "TLS"])],
+		[`XmlElement ("starttls", [("xmlns", [%xmlns "TLS"])],
 			      [`XmlElement ("required", [], [])])]
 	      else
 		assert false in

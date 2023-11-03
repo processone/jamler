@@ -618,7 +618,7 @@ struct
 			 | `XmlElement ("mechanisms", attrs1, els1) ->
 			     let (_sext, stls, stlsreq) = acc in (
 				 match Xml.get_attr_s "xmlns" attrs1 with
-				   | [%ns "SASL"] ->
+				   | [%xmlns "SASL"] ->
 				     let new_sext = List.exists
 				       (function
 					  | `XmlElement ("mechanism", _, els2) ->
@@ -634,7 +634,7 @@ struct
 			 | `XmlElement ("starttls", attrs1, _els1) as el1 ->
 			     let (sext, _stls, _stlsreq) = acc in (
 				 match Xml.get_attr_s "xmlns" attrs1 with
-				   | [%ns "TLS"] ->
+				   | [%xmlns "TLS"] ->
 				     let req = (
 				       match Xml.get_subtag el1 "required" with
 					 | Some _ -> true;
@@ -661,7 +661,7 @@ struct
 		  ) else if sasl_ext && state.try_auth && state.new' <> None then (
 		    send_element state
 		      (`XmlElement ("auth",
-				    [("xmlns", [%ns "SASL"]);
+				    [("xmlns", [%xmlns "SASL"]);
 				     ("mechanism", "EXTERNAL")],
 				    [`XmlCdata (Jlib.encode_base64
 						  (state.myname :> string))]));
@@ -670,7 +670,7 @@ struct
 					     try_auth = false}) (* ?FSMTIMEOUT *)
 		  ) else if start_tls && state.tls && (not state.tls_enabled) then (
 		    send_element state
-		      (`XmlElement ("starttls", [("xmlns", [%ns "SASL"])], []));
+		      (`XmlElement ("starttls", [("xmlns", [%xmlns "SASL"])], []));
 		    Lwt.return (`Continue {state with
 					     state = Wait_for_starttls_proceed}) (* ?FSMTIMEOUT *)
 		  ) else if start_tls_required && (not state.tls) then (
@@ -729,7 +729,7 @@ struct
     match msg with
       | `XmlStreamElement (`XmlElement ("success", attrs, _els)) -> (
 	  match Xml.get_attr_s "xmlns" attrs with
-	    | [%ns "SASL"] ->
+	    | [%xmlns "SASL"] ->
 	      let%lwt () = Lwt_log.debug_f ~section
 		"auth: %s -> %s"
 		(state.myname :> string) (state.server :> string) in
@@ -753,7 +753,7 @@ struct
 		  Lwt.return (`Stop state))
       | `XmlStreamElement (`XmlElement ("failure", attrs, _els)) -> (
 	  match Xml.get_attr_s "xmlns" attrs with
-	    | [%ns "SASL"] ->
+	    | [%xmlns "SASL"] ->
 	      let%lwt () = Lwt_log.debug_f ~section
 		"restarted: %s -> %s"
 		(state.myname :> string) (state.server :> string)
@@ -804,7 +804,7 @@ struct
     match msg with
       | `XmlStreamElement (`XmlElement ("proceed", attrs, _els)) -> (
 	  match Xml.get_attr_s "xmlns" attrs with
-	    | [%ns "TLS"] ->
+	    | [%xmlns "TLS"] ->
 	      let%lwt () = Lwt_log.debug_f ~section
 		"starttls: %s -> %s"
 		(state.myname :> string) (state.server :> string) in

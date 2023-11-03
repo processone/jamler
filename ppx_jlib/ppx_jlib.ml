@@ -91,14 +91,14 @@ let patt_expander ~ctxt str =
 
 let jlib_expr_extension =
   Extension.V3.declare
-    "ns"
+    "xmlns"
     Extension.Context.expression
     Ast_pattern.(single_expr_payload (estring __))
     expr_expander
 
 let jlib_patt_extension =
   Extension.V3.declare
-    "ns"
+    "xmlns"
     Extension.Context.pattern
     Ast_pattern.(single_expr_payload (estring __))
     patt_expander

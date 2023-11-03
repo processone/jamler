@@ -252,7 +252,7 @@ struct
   let is_auth_packet el =
     match Jlib.iq_query_info el with
       | `IQ {Jlib.iq_id = id; Jlib.iq_type = (`Set subel | `Get subel) as type';
-	     Jlib.iq_xmlns = [%ns "AUTH"]; _} ->
+	     Jlib.iq_xmlns = [%xmlns "AUTH"]; _} ->
 	  let `XmlElement (_, _, els) = subel in
 	  let type' =
 	    match type' with
@@ -799,7 +799,7 @@ struct
       | `XmlStreamStart (_name, attrs) -> (
 	  let default_lang = "en" in	(* TODO *)
 	    match Xml.get_attr_s "xmlns:stream" attrs with
-	      | [%ns "STREAM"] -> (
+	      | [%xmlns "STREAM"] -> (
 		  let server = Jlib.nameprep (Xml.get_attr_s "to" attrs) in
 		    match server with
 		      | Some server when Jamler_config.is_my_host server -> (
@@ -841,7 +841,7 @@ struct
 					[`XmlElement
 					   ("compression",
 					    [("xmlns",
-					      [%ns "FEATURE_COMPRESS"])],
+					      [%xmlns "FEATURE_COMPRESS"])],
 					    [`XmlElement
 					       ("method",
 						[], [`XmlCdata "zlib"])])]
@@ -859,13 +859,13 @@ struct
 					then
 					  [`XmlElement
 					     ("starttls",
-					      [("xmlns", [%ns "TLS"])],
+					      [("xmlns", [%xmlns "TLS"])],
 					      [`XmlElement ("required",
 							    [], [])])]
 					else
 					  [`XmlElement
 					     ("starttls",
-					      [("xmlns", [%ns "TLS"])], [])]
+					      [("xmlns", [%xmlns "TLS"])], [])]
 				      ) else []
 				    in
 				    let%lwt stream_feat_els =
@@ -879,7 +879,7 @@ struct
 					      compress_feature @
 					      [`XmlElement
 						 ("mechanisms",
-						  [("xmlns", [%ns "SASL"])],
+						  [("xmlns", [%xmlns "SASL"])],
 						  mechs)] @ stream_feat_els));
 				      fsm_next_state
 					{state with
@@ -896,10 +896,10 @@ struct
 					  let stream_features =
 					    [`XmlElement
 					       ("bind",
-						[("xmlns", [%ns "BIND"])], []);
+						[("xmlns", [%xmlns "BIND"])], []);
 					     `XmlElement
 					       ("session",
-						[("xmlns", [%ns "SESSION"])], [])]
+						[("xmlns", [%xmlns "SESSION"])], [])]
 					      (*++ RosterVersioningFeature
 						++ ejabberd_hooks:run_fold(
 						c2s_stream_features,
@@ -1000,7 +1000,7 @@ struct
 			  `XmlElement
 			    (name, attrs,
 			     [`XmlElement
-				("query", [("xmlns", [%ns "AUTH"])],
+				("query", [("xmlns", [%xmlns "AUTH"])],
 				 [`XmlElement ("username", [], ucdata);
 				  `XmlElement ("password", [], []);
 				  `XmlElement ("digest", [], []);
@@ -1010,7 +1010,7 @@ struct
 			  `XmlElement
 			    (name, attrs,
 			     [`XmlElement
-				("query", [("xmlns", [%ns "AUTH"])],
+				("query", [("xmlns", [%xmlns "AUTH"])],
 				 [`XmlElement ("username", [], ucdata);
 				  `XmlElement ("password", [], []);
 				  `XmlElement ("resource", [], [])
@@ -1181,7 +1181,7 @@ struct
 	  let tls_required = state.tls_required in
 	  let sockmod = Socket.get_name state.socket in
 	    match (Xml.get_attr_s "xmlns" attrs), name with
-	      | [%ns "SASL"], "auth" when (not (sockmod = `Tcp &&
+	      | [%xmlns "SASL"], "auth" when (not (sockmod = `Tcp &&
 					      tls_required)) -> (
 		  let mech = Xml.get_attr_s "mechanism" attrs in
 		  let client_in = Jlib.decode_base64 (Xml.get_cdata els) in
@@ -1221,7 +1221,7 @@ struct
 			  in
                             send_element state
                               (`XmlElement ("success",
-                                            [("xmlns", [%ns "SASL"])], []));
+                                            [("xmlns", [%xmlns "SASL"])], []));
                             fsm_next_state
 			      {state with
 				 state = Wait_for_stream;
@@ -1234,7 +1234,7 @@ struct
 			  send_element state
 			    (`XmlElement
 			       ("challenge",
-				[("xmlns", [%ns "SASL"])],
+				[("xmlns", [%xmlns "SASL"])],
 				[`XmlCdata (Jlib.encode_base64 server_out)]));
 			  fsm_next_state
 			    {state with
@@ -1253,7 +1253,7 @@ struct
 			    send_element state
 			      (`XmlElement
 				 ("failure",
-				  [("xmlns", [%ns "SASL"])],
+				  [("xmlns", [%xmlns "SASL"])],
 				  [`XmlElement (error, [], [])]));
 			    fsm_next_state
 			      {state with
@@ -1262,13 +1262,13 @@ struct
 			  send_element state
 			    (`XmlElement
 			       ("failure",
-				[("xmlns", [%ns "SASL"])],
+				[("xmlns", [%xmlns "SASL"])],
 				[`XmlElement (error, [], [])]));
 			  fsm_next_state
 			    {state with
 			       state = Wait_for_feature_request}
 		)
-	      | [%ns "TLS"], "starttls" when (tls && not tls_enabled &&
+	      | [%xmlns "TLS"], "starttls" when (tls && not tls_enabled &&
 					       sockmod = `Tcp) ->
 		let tlsopts =		(* TODO *)
 		  (*case ejabberd_config:get_local_option(
@@ -1286,7 +1286,7 @@ struct
 		  XMLReceiver.reset_stream state.xml_receiver;
 		  send_element
 		    state
-		    (`XmlElement ("proceed", [("xmlns", [%ns "TLS"])], []));
+		    (`XmlElement ("proceed", [("xmlns", [%xmlns "TLS"])], []));
 		  Socket.starttls socket tlsopts;
 		  let receiver = Socket.activate state.socket state.pid in
 		    fsm_next_state
@@ -1296,14 +1296,14 @@ struct
 			 streamid = new_id();
 			 tls_enabled = true;
 		      }
-	      | [%ns "COMPRESS"], "compress" when (
+	      | [%xmlns "COMPRESS"], "compress" when (
 		  zlib && (sockmod = `Tcp (*|| SockMod == tls*))) -> (
 		  match Xml.get_subtag el "method" with
 		    | None ->
 			send_element state
 			  (`XmlElement
 			     ("failure",
-			      [("xmlns", [%ns "COMPRESS"])],
+			      [("xmlns", [%xmlns "COMPRESS"])],
 			      [`XmlElement ("setup-failed", [], [])]));
 			fsm_next_state state
 		    | Some method' -> (
@@ -1316,7 +1316,7 @@ struct
 				  state
 				  (`XmlElement
 				     ("compressed",
-				      [("xmlns", [%ns "COMPRESS"])], []));
+				      [("xmlns", [%xmlns "COMPRESS"])], []));
 				Socket.compress socket;
 				let receiver =
 				  Socket.activate state.socket state.pid
@@ -1331,7 +1331,7 @@ struct
 			      send_element state
 				(`XmlElement
 				   ("failure",
-				    [("xmlns", [%ns "COMPRESS"])],
+				    [("xmlns", [%xmlns "COMPRESS"])],
 				    [`XmlElement
 				       ("unsupported-method",
 					[], [])]));
@@ -1374,7 +1374,7 @@ struct
       | `XmlStreamElement el -> (
 	  let `XmlElement (name, attrs, els) = el in
 	    match Xml.get_attr_s "xmlns" attrs, name with
-	      | [%ns "SASL"], "response" -> (
+	      | [%xmlns "SASL"], "response" -> (
 		  let client_in = Jlib.decode_base64 (Xml.get_cdata els) in
 		    match%lwt SASL.server_step sasl_state client_in with
 		      | SASL.Done props -> (
@@ -1391,7 +1391,7 @@ struct
 			  in
                             send_element state
                               (`XmlElement ("success",
-                                            [("xmlns", [%ns "SASL"])], []));
+                                            [("xmlns", [%xmlns "SASL"])], []));
                             fsm_next_state
 			      {state with
 				 state = Wait_for_stream;
@@ -1404,7 +1404,7 @@ struct
 			  send_element state
 			    (`XmlElement
 			       ("challenge",
-				[("xmlns", [%ns "SASL"])],
+				[("xmlns", [%xmlns "SASL"])],
 				[`XmlCdata (Jlib.encode_base64 server_out)]));
 			  fsm_next_state
 			    {state with
@@ -1419,7 +1419,7 @@ struct
 			    send_element state
 			      (`XmlElement
 				 ("failure",
-				  [("xmlns", [%ns "SASL"])],
+				  [("xmlns", [%xmlns "SASL"])],
 				  [`XmlElement (error, [], [])]));
 			    fsm_next_state
 			      {state with
@@ -1428,7 +1428,7 @@ struct
 			  send_element state
 			    (`XmlElement
 			       ("failure",
-				[("xmlns", [%ns "SASL"])],
+				[("xmlns", [%xmlns "SASL"])],
 				[`XmlElement (error, [], [])]));
 			  fsm_next_state
 			    {state with
@@ -1460,7 +1460,7 @@ struct
       | `XmlStreamElement el -> (
 	  match Jlib.iq_query_info el with
 	    | `IQ ({Jlib.iq_type = `Set sub_el;
-		    Jlib.iq_xmlns = [%ns "BIND"]; _} as iq) -> (
+		    Jlib.iq_xmlns = [%xmlns "BIND"]; _} as iq) -> (
 		let u = state.user in
 		let r = Xml.get_path_s sub_el [`Elem "resource"; `Cdata] in
 		let r =
@@ -1489,7 +1489,7 @@ struct
 			      `Result
 				(Some (`XmlElement
 					 ("bind",
-					  [("xmlns", [%ns "BIND"])],
+					  [("xmlns", [%xmlns "BIND"])],
 					  [`XmlElement
 					     ("jid", [],
 					      [`XmlCdata
@@ -1526,7 +1526,7 @@ struct
       | `XmlStreamElement el -> (
 	  match Jlib.iq_query_info el with
 	    | `IQ ({Jlib.iq_type = `Set _sub_el;
-		    Jlib.iq_xmlns = [%ns "SESSION"]; _} as _iq) -> (
+		    Jlib.iq_xmlns = [%xmlns "SESSION"]; _} as _iq) -> (
 		let u = state.user in
 		let jid = state.jid in
 		  match (Jamler_acl.match_rule
@@ -1681,7 +1681,7 @@ struct
 		)
 	      | "iq" -> (
 		  match Jlib.iq_query_info el with
-		    | `IQ ({Jlib.iq_xmlns = [%ns "PRIVACY"]; _} as iq) ->
+		    | `IQ ({Jlib.iq_xmlns = [%xmlns "PRIVACY"]; _} as iq) ->
 				(*ejabberd_hooks:run(
 				  user_send_packet,
 				  Server,

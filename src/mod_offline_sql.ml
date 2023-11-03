@@ -102,9 +102,9 @@ struct
 	  find_x_event_chatstates els (a, b, c)
       | ((`XmlElement _) as el) :: els -> (
 	  match Xml.get_tag_attr_s "xmlns" el with
-	    | [%ns "EVENT"] ->
+	    | [%xmlns "EVENT"] ->
 	      find_x_event_chatstates els (el, b, c)
-	    | [%ns "CHATSTATES"] ->
+	    | [%xmlns "CHATSTATES"] ->
 	      find_x_event_chatstates els (a, el, c)
 	    | _ ->
 		find_x_event_chatstates els (a, b, `True))
@@ -139,7 +139,7 @@ struct
 			    (`XmlElement (name, attrs,
 					  [`XmlElement
 					     ("x",
-					      [("xmlns", [%ns "EVENT"])],
+					      [("xmlns", [%xmlns "EVENT"])],
 					      [id;
 					       `XmlElement ("offline", [], [])])]));
 			  true)
@@ -154,7 +154,7 @@ struct
 	  find_x_expire timestamp els
       | ((`XmlElement _) as el) :: els -> (
 	  match Xml.get_tag_attr_s "xmlns" el with
-	    | [%ns "EXPIRE"] ->
+	    | [%xmlns "EXPIRE"] ->
 	      let val' = Xml.get_tag_attr_s "seconds" el in (
 		  try
 		    let int = int_of_string val' in
@@ -242,8 +242,8 @@ struct
 	      | Features i -> i
 	      | _ -> []
 	  in
-	    Lwt.return (Hooks.OK, Features (feats @ [ [%ns "FEATURE_MSGOFFLINE"]]))
-      | [%ns "FEATURE_MSGOFFLINE"] ->
+	    Lwt.return (Hooks.OK, Features (feats @ [ [%xmlns "FEATURE_MSGOFFLINE"]]))
+      | [%xmlns "FEATURE_MSGOFFLINE"] ->
 	(* override all lesser features... *)
 	Lwt.return (Hooks.OK, Features [])
       | _ ->

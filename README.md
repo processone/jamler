@@ -5,7 +5,7 @@ attempt to rewrite [ejabberd](https://github.com/processone/ejabberd) in OCaml
 to see how static typing would affect it.
 As ejabberd has evolved a lot since 2011, please use ejabberd version 2.1.8 to
 compare it to jamler.
-Currently (2020) it's updated to use actual versions of OCaml and libraries,
+Currently (2023) it's updated to use actual versions of OCaml and libraries,
 but no new features are added.
 
 ## Comparision with Erlang and ejabberd

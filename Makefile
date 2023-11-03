@@ -5,7 +5,7 @@
 default: build
 
 build:
-	dune build
+	eval `opam config env`; dune build
 
 test:
 	dune runtest -f

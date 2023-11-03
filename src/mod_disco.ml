@@ -380,7 +380,7 @@ struct
 			     `Result
 			       (Some (`XmlElement
 					("query",
-					 ("xmlns", [%ns "DISCO_ITEMS"]) :: anode,
+					 ("xmlns", [%xmlns "DISCO_ITEMS"]) :: anode,
 					 (items :> Xml.element_cdata list))))})
 		| IError error ->
 		    Lwt.return (`IQ {iq with
@@ -416,7 +416,7 @@ struct
 			     `Result
 			       (Some (`XmlElement
 					("query",
-					 ("xmlns", [%ns "DISCO_INFO"]) :: anode,
+					 ("xmlns", [%xmlns "DISCO_INFO"]) :: anode,
 					 (res_els :> Xml.element_cdata list))))})
 		| FError error ->
 		    Lwt.return (`IQ {iq with
@@ -449,7 +449,7 @@ struct
 				   `Result
 				     (Some (`XmlElement
 					      ("query",
-					       ("xmlns", [%ns "DISCO_ITEMS"])
+					       ("xmlns", [%xmlns "DISCO_ITEMS"])
 					       :: anode,
 					       (items :> Xml.element_cdata list)
 					      )))})
@@ -492,7 +492,7 @@ struct
 				   `Result
 				     (Some (`XmlElement
 					      ("query",
-					       ("xmlns", [%ns "DISCO_INFO"])
+					       ("xmlns", [%xmlns "DISCO_INFO"])
 					       :: anode,
 					       (res_els :> Xml.element_cdata list))))})
 		      | FError error ->
@@ -510,14 +510,14 @@ struct
     register_feature host "iq";
     register_feature host "presence";
     register_feature host "presence-invisible";
-    register_feature host [%ns "DISCO_ITEMS"];
-    register_feature host [%ns "DISCO_INFO"];
+    register_feature host [%xmlns "DISCO_ITEMS"];
+    register_feature host [%xmlns "DISCO_INFO"];
     List.iter (fun domain -> register_extra_domain host domain) (extra_domains host);
     Lwt.return (
-      [Gen_mod.iq_handler `Local host [%ns "DISCO_ITEMS"] process_local_iq_items ();
-       Gen_mod.iq_handler `Local host [%ns "DISCO_INFO"] process_local_iq_info ();
-       Gen_mod.iq_handler `SM host [%ns "DISCO_ITEMS"] process_sm_iq_items ();
-       Gen_mod.iq_handler `SM host [%ns "DISCO_INFO"] process_sm_iq_info ();
+      [Gen_mod.iq_handler `Local host [%xmlns "DISCO_ITEMS"] process_local_iq_items ();
+       Gen_mod.iq_handler `Local host [%xmlns "DISCO_INFO"] process_local_iq_info ();
+       Gen_mod.iq_handler `SM host [%xmlns "DISCO_ITEMS"] process_sm_iq_items ();
+       Gen_mod.iq_handler `SM host [%xmlns "DISCO_INFO"] process_sm_iq_info ();
        Gen_mod.fold_hook disco_local_items host get_local_services 100;
        Gen_mod.fold_hook disco_local_features host get_local_features 100;
        Gen_mod.fold_hook disco_local_identity host get_local_identity 100;
