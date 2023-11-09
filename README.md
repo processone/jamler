@@ -8,7 +8,7 @@ compare it to jamler.
 Currently (2023) it's updated to use actual versions of OCaml and libraries,
 but no new features are added.
 
-## Comparision with Erlang and ejabberd
+## Comparison with Erlang and ejabberd
 
 This section compares implementation details, not features.
 
@@ -37,7 +37,7 @@ To compare JIDs, they must be normalized first
 profiles for corresponing JID parts (e.g. `(user, server, resource)` must be
 normalized into `(nodeprep(user), nameprep(server), resourceprep(resource))`).
 It's error-prone (e.g. using `nodeprep` where `nameprep` is needed, or
-foregeting to normalize).  As a result, some ejabberd functions always do
+foregetting to normalize).  As a result, some ejabberd functions always do
 normalization to be on a safe side, and some values are normalized several
 times during processing.
 
@@ -89,7 +89,7 @@ Nowadays you can find similar functionality in
 
 ### Processes
 
-Erlang processes are mimiced in jamler using Lwt threads.  Processes have the
+Erlang processes are mimicked in jamler using Lwt threads.  Processes have the
 following type:
 ```ocaml
 type -'a pid
@@ -97,7 +97,7 @@ type -'a pid
 where `'a` is a type of messages the process can receive.
 
 Internally `pid` is `int` pointing to a record in the processes table.  That
-was probably not a good decision, as forgeting to cleanup pid references can
+was probably not a good decision, as forgetting to cleanup pid references can
 lead to a bug where another process gets the same pid as a now-dead process and
 receives incompatible messages.
 
@@ -111,7 +111,7 @@ API is very similar to erlang:
 
 ### gen_server
 
-Erlang's `gen_server` module is also mimiced.  A callback module should have the
+Erlang's `gen_server` module is also mimicked.  A callback module should have the
 following type:
 ```ocaml
 module type Type =
@@ -162,10 +162,10 @@ opam install yojson lwt lwt_log lwt_ppx lwt_ssl cryptokit pgocaml ppxlib
 
 Also install development libraries for expat and GNU Libidn.  E.g. in Debian:
 ```
-apt-get install libidn11-dev libexpat1=dev
+apt-get install libidn11-dev libexpat1-dev
 ```
 
-Then run `make`.  Create a config basing on `jamler.cfg.example` and start it with
+Then run `make`.  Create a config based on `jamler.cfg.example` and start it with
 ```
 _build/default/src/main.exe -c jamler.cfg
 ```
