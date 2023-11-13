@@ -37,7 +37,7 @@ To compare JIDs, they must be normalized first
 profiles for corresponing JID parts (e.g. `(user, server, resource)` must be
 normalized into `(nodeprep(user), nameprep(server), resourceprep(resource))`).
 It's error-prone (e.g. using `nodeprep` where `nameprep` is needed, or
-foregetting to normalize).  As a result, some ejabberd functions always do
+forgetting to normalize).  As a result, some ejabberd functions always do
 normalization to be on a safe side, and some values are normalized several
 times during processing.
 
